@@ -473,6 +473,7 @@ fn glass_surface_with_padding<'a>(
         .width(Length::Fixed(bounds.width))
         .height(Length::Fixed(bounds.height))
         .padding(padding)
+        .align_y(iced::Alignment::Center)
         .into();
     stack![background, foreground].into()
 }
@@ -485,7 +486,7 @@ fn compositor_navigation(
 ) -> AppElement<'static> {
     let mut overlay_material = GlassMaterial::clear();
     overlay_material.tint = liquid_glass::Color::transparent();
-    GlassNavigationControl::new(id, Rect::new(0.0, 0.0, 76.0, 36.0))
+    GlassNavigationControl::new(id, Rect::new(0.0, 0.0, 72.0, 36.0))
         .material(overlay_material)
         .chrome(UiTheme::new(scheme).compositor_chrome(GlassRole::FloatingControl))
         .into_element::<Message, Theme, Renderer>(on_back, on_forward)

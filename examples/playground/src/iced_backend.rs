@@ -454,8 +454,8 @@ fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorSch
             .material(theme.glass_material(GlassRole::SearchField)),
     );
     scene.push(
-        GlassNode::new(GlassId(12), Rect::new(content_x + 8.0, 10.0, 76.0, 36.0))
-            .shape(GlassShape::RoundedRect { radius: 10.0 })
+        GlassNode::new(GlassId(12), Rect::new(content_x + 8.0, 10.0, 72.0, 36.0))
+            .shape(GlassShape::Capsule)
             .material(theme.glass_material(GlassRole::FloatingControl)),
     );
     scale_scene(&mut scene, scale_factor);

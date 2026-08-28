@@ -463,7 +463,7 @@ impl GlassNavigationControl {
     pub fn new(id: GlassId, bounds: Rect) -> Self {
         Self {
             node: GlassNode::new(id, bounds)
-                .shape(GlassShape::RoundedRect { radius: 10.0 })
+                .shape(GlassShape::Capsule)
                 .material(GlassMaterial::interactive()),
             chrome: GlassChrome::default(),
         }
@@ -584,10 +584,7 @@ where
 
         let half_width = bounds.width * 0.5;
         if let Some(segment) = self.hovered {
-            let x = match segment {
-                NavigationSegment::Back => bounds.x + 3.0,
-                NavigationSegment::Forward => bounds.x + half_width + 3.0,
-            };
+            let hover_bounds = navigation_hover_bounds(bounds, segment);
             let overlay = if self.pressed == Some(segment) {
                 self.control.chrome.pressed_overlay
             } else {
@@ -595,13 +592,8 @@ where
             };
             renderer.fill_quad(
                 renderer::Quad {
-                    bounds: Rectangle {
-                        x,
-                        y: bounds.y + 3.0,
-                        width: half_width - 6.0,
-                        height: bounds.height - 6.0,
-                    },
-                    border: Border::default().rounded(7.0),
+                    bounds: hover_bounds,
+                    border: Border::default().rounded(hover_bounds.height * 0.5),
                     shadow: Shadow::default(),
                     snap: true,
                 },
@@ -609,20 +601,22 @@ where
             );
         }
 
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: Rectangle {
-                    x: bounds.x + half_width - 0.5,
-                    y: bounds.y + 8.0,
-                    width: 1.0,
-                    height: bounds.height - 16.0,
+        if self.hovered.is_none() {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: bounds.x + half_width - 0.5,
+                        y: bounds.y + 8.0,
+                        width: 1.0,
+                        height: bounds.height - 16.0,
+                    },
+                    border: Border::default(),
+                    shadow: Shadow::default(),
+                    snap: true,
                 },
-                border: Border::default(),
-                shadow: Shadow::default(),
-                snap: true,
-            },
-            Background::Color(iced_color(self.control.chrome.divider)),
-        );
+                Background::Color(iced_color(self.control.chrome.divider)),
+            );
+        }
 
         let icon_color = iced_color(self.control.chrome.text);
         renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
@@ -721,6 +715,20 @@ fn navigation_segment_at(bounds: Rectangle, cursor: mouse::Cursor) -> Option<Nav
     })
 }
 
+fn navigation_hover_bounds(bounds: Rectangle, segment: NavigationSegment) -> Rectangle {
+    let diameter = bounds.height;
+    let segment_center_x = match segment {
+        NavigationSegment::Back => bounds.x + bounds.width * 0.25,
+        NavigationSegment::Forward => bounds.x + bounds.width * 0.75,
+    };
+    Rectangle {
+        x: segment_center_x - diameter * 0.5,
+        y: bounds.center_y() - diameter * 0.5,
+        width: diameter,
+        height: diameter,
+    }
+}
+
 fn iced_color(color: liquid_glass_scene::Color) -> IcedColor {
     IcedColor::from_rgba(color.r, color.g, color.b, color.a)
 }
@@ -803,11 +811,21 @@ mod tests {
     }
 
     #[test]
-    fn navigation_control_uses_one_rounded_glass_node() {
-        let control = GlassNavigationControl::new(GlassId(12), Rect::new(0.0, 0.0, 76.0, 36.0));
+    fn navigation_control_uses_one_capsule_glass_node() {
+        let control = GlassNavigationControl::new(GlassId(12), Rect::new(0.0, 0.0, 72.0, 36.0));
 
         assert_eq!(control.node().id, GlassId(12));
-        assert_eq!(control.node().shape, GlassShape::RoundedRect { radius: 10.0 });
-        assert!((control.node().bounds.width - 76.0).abs() < f32::EPSILON);
+        assert_eq!(control.node().shape, GlassShape::Capsule);
+        assert!((control.node().bounds.width - 72.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn navigation_hover_feedback_is_a_centered_circle() {
+        let bounds = Rectangle { x: 10.0, y: 20.0, width: 72.0, height: 36.0 };
+        let hover = navigation_hover_bounds(bounds, NavigationSegment::Forward);
+
+        assert!((hover.width - hover.height).abs() < f32::EPSILON);
+        assert!((hover.center_x() - (bounds.x + bounds.width * 0.75)).abs() < f32::EPSILON);
+        assert!((hover.center_y() - bounds.center_y()).abs() < f32::EPSILON);
     }
 }
