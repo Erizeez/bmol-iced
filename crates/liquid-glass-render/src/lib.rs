@@ -1,7 +1,7 @@
 //! Renderer contracts and render-graph foundation.
 //!
-//! The first milestone keeps this layer backend-neutral. The next milestone
-//! will provide the `wgpu` implementation without changing scene or UI APIs.
+//! The scene and render-graph contracts stay backend-neutral while the crate
+//! also exposes the first `wgpu` compositor implementation.
 
 #![deny(unsafe_code)]
 

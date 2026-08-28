@@ -5,8 +5,9 @@ struct GlassUniform {
 };
 
 @group(0) @binding(0) var scene_texture: texture_2d<f32>;
-@group(0) @binding(1) var scene_sampler: sampler;
-@group(0) @binding(2) var<uniform> glass: GlassUniform;
+@group(0) @binding(1) var blur_texture: texture_2d<f32>;
+@group(0) @binding(2) var scene_sampler: sampler;
+@group(0) @binding(3) var<uniform> glass: GlassUniform;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -47,6 +48,43 @@ fn background_fragment(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 
 @fragment
+fn downsample_fragment(input: VertexOutput) -> @location(0) vec4<f32> {
+    let texel = 1.0 / vec2<f32>(textureDimensions(scene_texture, 0));
+    let offset = texel * 0.5;
+    let top_left = textureSample(scene_texture, scene_sampler, input.uv + vec2<f32>(-offset.x, -offset.y));
+    let top_right = textureSample(scene_texture, scene_sampler, input.uv + vec2<f32>( offset.x, -offset.y));
+    let bottom_left = textureSample(scene_texture, scene_sampler, input.uv + vec2<f32>(-offset.x,  offset.y));
+    let bottom_right = textureSample(scene_texture, scene_sampler, input.uv + vec2<f32>( offset.x,  offset.y));
+    return (top_left + top_right + bottom_left + bottom_right) * 0.25;
+}
+
+fn separable_blur(uv: vec2<f32>, direction: vec2<f32>) -> vec4<f32> {
+    let texel = 1.0 / vec2<f32>(textureDimensions(scene_texture, 0));
+    let step = max(glass.size_radius_blur.w / 8.0, 1.0);
+    let offset = texel * direction * step;
+    var result = textureSample(scene_texture, scene_sampler, uv) * 0.227027;
+    result += textureSample(scene_texture, scene_sampler, uv + offset) * 0.1945946;
+    result += textureSample(scene_texture, scene_sampler, uv - offset) * 0.1945946;
+    result += textureSample(scene_texture, scene_sampler, uv + offset * 2.0) * 0.1216216;
+    result += textureSample(scene_texture, scene_sampler, uv - offset * 2.0) * 0.1216216;
+    result += textureSample(scene_texture, scene_sampler, uv + offset * 3.0) * 0.054054;
+    result += textureSample(scene_texture, scene_sampler, uv - offset * 3.0) * 0.054054;
+    result += textureSample(scene_texture, scene_sampler, uv + offset * 4.0) * 0.016216;
+    result += textureSample(scene_texture, scene_sampler, uv - offset * 4.0) * 0.016216;
+    return result;
+}
+
+@fragment
+fn blur_horizontal_fragment(input: VertexOutput) -> @location(0) vec4<f32> {
+    return separable_blur(input.uv, vec2<f32>(1.0, 0.0));
+}
+
+@fragment
+fn blur_vertical_fragment(input: VertexOutput) -> @location(0) vec4<f32> {
+    return separable_blur(input.uv, vec2<f32>(0.0, 1.0));
+}
+
+@fragment
 fn glass_fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     let viewport = glass.viewport_and_origin.xy;
     let origin = glass.viewport_and_origin.zw;
@@ -59,16 +97,12 @@ fn glass_fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     let mask = 1.0 - smoothstep(0.0, 1.5, distance_to_edge);
 
     let refraction = normalize(local - size * 0.5) * 0.0025 * glass.tint_opacity_refraction_time.w;
-    let blur_step = blur_radius / max(viewport.x, viewport.y) * 0.25;
     let sample_uv = input.uv + refraction;
     let background = textureSample(scene_texture, scene_sampler, sample_uv);
-    let blur_a = textureSample(scene_texture, scene_sampler, sample_uv + vec2<f32>( blur_step, 0.0));
-    let blur_b = textureSample(scene_texture, scene_sampler, sample_uv + vec2<f32>(-blur_step, 0.0));
-    let blurred = (background + blur_a + blur_b) / 3.0;
+    let blurred = textureSample(blur_texture, scene_sampler, sample_uv);
     let edge = pow(saturate(1.0 - abs(distance_to_edge) / max(radius, 1.0)), 2.0);
     let tint = glass.tint_opacity_refraction_time.rgb;
     let fresnel = vec3<f32>(0.55, 0.72, 1.0) * edge * 0.20;
     let glass_color = blurred.rgb * 0.76 + tint * 0.24 + fresnel;
     return vec4<f32>(mix(background.rgb, glass_color, mask), 1.0);
 }
-

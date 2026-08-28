@@ -1,2 +1,2 @@
-// Separable horizontal blur entry point will be added with the wgpu backend.
-
+// The live horizontal entry point is kept with the shared fullscreen vertex
+// shader in ../glass/panel.wgsl so all compositor stages share one interface.
