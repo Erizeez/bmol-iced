@@ -400,68 +400,24 @@ fn scene_for_viewport(_size: GpuSize, scale_factor: f32) -> GlassScene {
     let margin = 24.0;
     let sidebar_width = 220.0;
     let content_x = margin + sidebar_width + 18.0;
-    let card_width = 300.0;
-    let cards_y = 82.0;
-    let lower_y = cards_y + 112.0 + 16.0;
-    let footer_y = lower_y + 250.0 + 16.0;
+    let content_width = 1034.0;
     let mut scene = GlassScene::default();
 
-    let sidebar_material = reference_material(18.0, GlassColor::rgba(0.12, 0.34, 0.72, 0.05));
     scene.push(
-        GlassNode::new(GlassId(10), Rect::new(margin, margin, sidebar_width, 620.0))
-            .shape(GlassShape::Superellipse { exponent: 5.0 })
-            .material(sidebar_material),
-    );
-
-    for (index, tint) in [
-        GlassColor::rgba(0.15, 0.62, 1.0, 0.05),
-        GlassColor::rgba(0.48, 0.28, 1.0, 0.05),
-        GlassColor::rgba(0.04, 0.82, 0.64, 0.05),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let material = reference_material(9.0, tint);
-        scene.push(
-            GlassNode::new(
-                GlassId(20 + index as u64),
-                Rect::new(
-                    content_x + (card_width + 14.0) * index as f32,
-                    cards_y,
-                    card_width,
-                    112.0,
-                ),
-            )
+        GlassNode::new(GlassId(10), Rect::new(content_x, margin, content_width, 72.0))
             .shape(GlassShape::Superellipse { exponent: 4.5 })
-            .material(material),
-        );
-    }
-
-    for (index, x) in [content_x, content_x + 484.0].into_iter().enumerate() {
-        let material = if index == 0 {
-            reference_material(16.0, GlassColor::rgba(0.10, 0.36, 0.80, 0.05))
-        } else {
-            reference_material(16.0, GlassColor::rgba(0.08, 0.78, 0.68, 0.04))
-        };
-        scene.push(
-            GlassNode::new(GlassId(30 + index as u64), Rect::new(x, lower_y, 470.0, 250.0))
-                .shape(GlassShape::Superellipse { exponent: 4.5 })
-                .material(material),
-        );
-    }
-
-    let footer_material = reference_material(10.0, GlassColor::rgba(0.30, 0.48, 0.90, 0.05));
+            .material(reference_material(14.0, GlassColor::rgba(0.16, 0.30, 0.62, 0.05))),
+    );
     scene.push(
-        GlassNode::new(GlassId(32), Rect::new(content_x, footer_y, 954.0, 82.0))
+        GlassNode::new(GlassId(11), Rect::new(content_x + 718.0, margin + 16.0, 250.0, 40.0))
             .shape(GlassShape::Superellipse { exponent: 4.5 })
-            .material(footer_material),
+            .material(reference_material(10.0, GlassColor::rgba(0.25, 0.42, 0.82, 0.06))),
     );
-    for (index, x) in [content_x + 580.0, content_x + 774.0].into_iter().enumerate() {
-        let material = reference_material(12.0, GlassColor::rgba(0.34, 0.52, 1.0, 0.04));
+    for (id, x) in [(12, content_x + 12.0), (13, content_x + 56.0)] {
         scene.push(
-            GlassNode::new(GlassId(40 + index as u64), Rect::new(x, footer_y + 17.0, 180.0, 48.0))
+            GlassNode::new(GlassId(id), Rect::new(x, margin + 16.0, 36.0, 40.0))
                 .shape(GlassShape::Capsule)
-                .material(material),
+                .material(reference_material(8.0, GlassColor::rgba(0.30, 0.48, 0.90, 0.07))),
         );
     }
     scale_scene(&mut scene, scale_factor.max(1.0));

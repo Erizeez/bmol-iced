@@ -34,7 +34,7 @@ cargo run -p liquid-glass-playground --bin liquid-glass-playground
 cargo run -p liquid-glass-playground --bin liquid-glass-iced-demo
 ```
 
-该示例是一个可交互的 Liquid Glass Dashboard：前景组合了侧栏、工具栏、统计卡片、搜索框、滑杆、进度条、开关、复选框、活动列表和两个 `GlassButton`。它使用自定义 Iced renderer/compositor，在同一份 `wgpu` `Device/Queue/Surface` 上先执行完整玻璃场景，再绘制 Iced 控件；因此这里就是标准 Iced 窗口中的真实 shader 入口。
+该示例是一个 Apple Settings 风格的可交互窗口：侧栏、分组列表、分割线和设置条目保持常规 UI 材质；顶部工具栏、搜索框以及前进/后退按钮才使用 `GlassNode` 的液态玻璃效果。页面覆盖导航、搜索、开关、分段控件、颜色选择、滑杆、进度条和可滚动列表等常用组件，用来验证玻璃组件与普通 UI 共存时的层级关系。它使用自定义 Iced renderer/compositor，在同一份 `wgpu` `Device/Queue/Surface` 上先执行选择性的玻璃场景，再绘制 Iced 控件。
 
 如果本机没有可用 GPU，playground 会保留打印纯 Rust foundation 信息，并报告 GPU backend 不可用；这不影响 workspace 的单元测试。
 
