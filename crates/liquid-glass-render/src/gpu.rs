@@ -1152,7 +1152,8 @@ fn shape_roundness(node: &GlassNode) -> f32 {
     match node.shape {
         GlassShape::Superellipse { exponent } => exponent,
         GlassShape::RoundedRect { .. } => node.corner_curve.exponent(),
-        GlassShape::Capsule | GlassShape::Circle | GlassShape::Ellipse => 2.0,
+        GlassShape::Capsule => GlassShape::CONTINUOUS_CAPSULE_EXPONENT,
+        GlassShape::Circle | GlassShape::Ellipse => 2.0,
     }
 }
 
@@ -1185,7 +1186,7 @@ mod tests {
     }
 
     #[test]
-    fn rounded_rects_use_node_curves_and_capsules_stay_circular() {
+    fn rounded_rects_and_capsules_use_continuous_curves() {
         let continuous = GlassNode::new(GlassId(3), Rect::new(0.0, 0.0, 72.0, 36.0))
             .shape(GlassShape::RoundedRect { radius: 12.0 });
         let circular = continuous.clone().corner_curve(CornerCurve::Circular);
@@ -1194,7 +1195,10 @@ mod tests {
 
         assert!((shape_roundness(&continuous) - 5.0).abs() < f32::EPSILON);
         assert!((shape_roundness(&circular) - 2.0).abs() < f32::EPSILON);
-        assert!((shape_roundness(&capsule) - 2.0).abs() < f32::EPSILON);
+        assert!(
+            (shape_roundness(&capsule) - GlassShape::CONTINUOUS_CAPSULE_EXPONENT).abs()
+                < f32::EPSILON
+        );
         assert!((shape_roundness(&circle) - 2.0).abs() < f32::EPSILON);
     }
 

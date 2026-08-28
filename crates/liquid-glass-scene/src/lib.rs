@@ -75,7 +75,7 @@ impl Default for Color {
 }
 
 /// The curvature model used by radius-based rounded rectangles.
-/// Capsules, circles, and ellipses preserve their exact circular geometry.
+/// Circles and ellipses preserve their exact circular geometry.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CornerCurve {
     /// A quarter-circle corner with a curvature discontinuity at the join.
@@ -127,6 +127,12 @@ pub enum GlassShape {
     Capsule,
     Circle,
     Ellipse,
+}
+
+impl GlassShape {
+    /// A near-circular exponent that removes the curvature jump where a
+    /// capsule cap meets its straight middle edge.
+    pub const CONTINUOUS_CAPSULE_EXPONENT: f32 = 2.5;
 }
 
 impl Default for GlassShape {

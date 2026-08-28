@@ -184,10 +184,9 @@ impl UiTheme {
     pub const fn glass_shape(self, role: GlassRole) -> GlassShape {
         match role {
             GlassRole::Toolbar => GlassShape::RoundedRect { radius: 0.0 },
-            GlassRole::InputField | GlassRole::SearchField => {
-                GlassShape::RoundedRect { radius: 10.0 }
+            GlassRole::InputField | GlassRole::SearchField | GlassRole::FloatingControl => {
+                GlassShape::Capsule
             }
-            GlassRole::FloatingControl => GlassShape::Capsule,
         }
     }
 
@@ -296,13 +295,10 @@ mod tests {
     }
 
     #[test]
-    fn input_fields_default_to_continuous_rounded_rectangles() {
+    fn input_fields_default_to_continuous_capsules() {
         let theme = UiTheme::light();
 
-        assert_eq!(
-            theme.glass_shape(GlassRole::InputField),
-            GlassShape::RoundedRect { radius: 10.0 }
-        );
+        assert_eq!(theme.glass_shape(GlassRole::InputField), GlassShape::Capsule);
     }
 
     #[test]
