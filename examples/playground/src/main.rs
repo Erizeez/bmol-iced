@@ -1,6 +1,9 @@
 use std::{sync::Arc, time::Instant};
 
-use liquid_glass::{GlassId, GlassMaterial, GlassNode, GlassShape, GpuRenderer, GpuSize, Rect};
+use iced::Size as IcedSize;
+use liquid_glass::{
+    GlassContainer, GlassId, GlassMaterial, GlassNode, GlassShape, GpuRenderer, GpuSize, Rect,
+};
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalSize, Size},
@@ -24,6 +27,7 @@ struct WindowState {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     renderer: GpuRenderer,
+    panel_widget: GlassContainer,
     panel: GlassNode,
     started_at: Instant,
 }
@@ -70,14 +74,31 @@ impl Playground {
             GpuSize::new(config.width, config.height),
             config.format,
         );
-        let panel = GlassNode::new(GlassId(1), Rect::new(220.0, 150.0, 520.0, 340.0))
-            .shape(GlassShape::Superellipse { exponent: 4.5 })
-            .material(GlassMaterial::regular());
+        let mut panel_widget =
+            GlassContainer::new(GlassId(1), Rect::new(220.0, 150.0, 520.0, 340.0))
+                .shape(GlassShape::Superellipse { exponent: 4.5 })
+                .material(GlassMaterial::regular());
+        let panel = panel_widget.layout_scene_node(iced_viewport_size(config.width, config.height));
+        let panel_bounds = panel.bounds;
 
         self.window = Some(window);
-        self.state =
-            Some(WindowState { surface, config, renderer, panel, started_at: Instant::now() });
-        println!("Liquid Glass window initialized: {}x{}", size.width, size.height);
+        self.state = Some(WindowState {
+            surface,
+            config,
+            renderer,
+            panel_widget,
+            panel,
+            started_at: Instant::now(),
+        });
+        println!(
+            "Liquid Glass window initialized: {}x{}; Iced layout -> scene node {:.0}x{:.0} at ({:.0}, {:.0})",
+            size.width,
+            size.height,
+            panel_bounds.width,
+            panel_bounds.height,
+            panel_bounds.x,
+            panel_bounds.y,
+        );
     }
 }
 
@@ -129,6 +150,8 @@ impl WindowState {
         self.config.height = size.height;
         self.renderer.resize(GpuSize::new(size.width, size.height)).expect("resize GPU targets");
         self.surface.configure(self.renderer.device(), &self.config);
+        self.panel =
+            self.panel_widget.layout_scene_node(iced_viewport_size(size.width, size.height));
     }
 
     fn reconfigure(&mut self) {
@@ -170,6 +193,11 @@ fn preferred_surface_format(capabilities: &wgpu::SurfaceCapabilities) -> wgpu::T
         .copied()
         .find(wgpu::TextureFormat::is_srgb)
         .unwrap_or(capabilities.formats[0])
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn iced_viewport_size(width: u32, height: u32) -> IcedSize {
+    IcedSize::new(width as f32, height as f32)
 }
 
 fn main() {

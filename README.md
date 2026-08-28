@@ -18,7 +18,7 @@ Iced UI → Liquid Scene → Liquid Compositor → wgpu → Metal / Vulkan / DX1
 - `liquid-glass-platform`：DPI 与窗口配置边界
 - `liquid-glass`：对外统一 facade
 
-`liquid-glass-render` 已包含第一个真实 `wgpu` offscreen backend：背景场景 Pass、SDF Glass Pass 和最终离屏纹理。`liquid-glass-ui` 已包含第一版 Iced custom widget，独立 separable blur 仍在后续阶段。
+`liquid-glass-render` 已包含第一个真实 `wgpu` offscreen backend：背景场景 Pass、SDF Glass Pass 和最终离屏纹理。`liquid-glass-ui` 已包含第一版 Iced custom widget，并提供 `layout_scene_node` 将实际 Iced layout 结果桥接为 `GlassNode`；原生 playground 会在初始化和 Resize 时使用这份结果。独立 separable blur 仍在后续阶段。
 
 ## 运行 playground
 
@@ -46,9 +46,8 @@ cargo run -p liquid-glass-playground --bin liquid-glass-iced-demo
 
 1. 将现有多点采样模糊拆成 downsample + horizontal/vertical blur passes。
 2. 将 `GpuRenderer` 接入 Surface 之外的完整 DPI 与色彩空间生命周期。
-3. 将 Iced layout bounds 接入 Liquid Scene 的 Backdrop region。
-4. 在 playground 中加入 blur、refraction、tint 的实时调节。
-5. 再扩展 Button、Panel、Toolbar 和 Spring interaction。
+3. 在 playground 中加入 blur、refraction、tint 的实时调节。
+4. 再扩展 Button、Panel、Toolbar 和 Spring interaction。
 
 ## License
 

@@ -61,6 +61,23 @@ impl GlassContainer {
             .material(self.node.material)
     }
 
+    /// Runs the widget's Iced layout contract and converts the result into a
+    /// renderer-independent scene node.
+    #[must_use]
+    pub fn layout_scene_node(&mut self, viewport: Size) -> GlassNode {
+        let widget: &dyn Widget<(), (), ()> = self;
+        let mut tree = Tree::new(widget);
+        let limits = layout::Limits::new(Size::ZERO, viewport);
+        let layout = <Self as Widget<(), (), ()>>::layout(self, &mut tree, &(), &limits);
+        let size = layout.size();
+        self.scene_node_for(Rectangle {
+            x: self.node.bounds.x,
+            y: self.node.bounds.y,
+            width: size.width,
+            height: size.height,
+        })
+    }
+
     /// Converts this widget into an Iced element for any compatible renderer.
     #[must_use]
     pub fn into_element<Message, Theme, Renderer>(
@@ -203,5 +220,20 @@ impl GlassButton {
     #[must_use]
     pub const fn node(&self) -> &GlassNode {
         &self.node
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn layout_bridge_uses_widget_layout_size_and_origin() {
+        let mut container = GlassContainer::new(GlassId(7), Rect::new(40.0, 24.0, 320.0, 180.0));
+
+        let node = container.layout_scene_node(Size::new(960.0, 640.0));
+
+        assert_eq!(node.id, GlassId(7));
+        assert_eq!(node.bounds, Rect::new(40.0, 24.0, 320.0, 180.0));
     }
 }
