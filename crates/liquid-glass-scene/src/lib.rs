@@ -74,6 +74,51 @@ impl Default for Color {
     }
 }
 
+/// The curvature model used by radius-based rounded rectangles.
+/// Capsules, circles, and ellipses preserve their exact circular geometry.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CornerCurve {
+    /// A quarter-circle corner with a curvature discontinuity at the join.
+    Circular,
+    /// A continuous superellipse corner. Exponents around 5 match the
+    /// continuous visual language used by Apple system controls.
+    Continuous { exponent: f32 },
+}
+
+impl CornerCurve {
+    pub const DEFAULT_CONTINUOUS_EXPONENT: f32 = 5.0;
+
+    #[must_use]
+    pub const fn continuous() -> Self {
+        Self::Continuous { exponent: Self::DEFAULT_CONTINUOUS_EXPONENT }
+    }
+
+    #[must_use]
+    pub const fn continuous_with_exponent(exponent: f32) -> Self {
+        Self::Continuous { exponent }
+    }
+
+    #[must_use]
+    pub const fn exponent(self) -> f32 {
+        match self {
+            Self::Circular => 2.0,
+            Self::Continuous { exponent } => {
+                if exponent >= 2.0 {
+                    exponent
+                } else {
+                    2.0
+                }
+            }
+        }
+    }
+}
+
+impl Default for CornerCurve {
+    fn default() -> Self {
+        Self::continuous()
+    }
+}
+
 /// A shape evaluated by the SDF shader.
 #[derive(Clone, Debug, PartialEq)]
 pub enum GlassShape {
@@ -190,6 +235,7 @@ pub struct GlassNode {
     pub id: GlassId,
     pub bounds: Rect,
     pub shape: GlassShape,
+    pub corner_curve: CornerCurve,
     pub material: GlassMaterial,
     pub backdrop: BackdropRegion,
     pub z_index: i32,
@@ -203,6 +249,7 @@ impl GlassNode {
             id,
             bounds,
             shape: GlassShape::default(),
+            corner_curve: CornerCurve::default(),
             backdrop: BackdropRegion { bounds, padding: 8.0, blur_radius: material.blur.radius },
             material,
             z_index: 0,
@@ -212,6 +259,12 @@ impl GlassNode {
     #[must_use]
     pub fn shape(mut self, shape: GlassShape) -> Self {
         self.shape = shape;
+        self
+    }
+
+    #[must_use]
+    pub const fn corner_curve(mut self, corner_curve: CornerCurve) -> Self {
+        self.corner_curve = corner_curve;
         self
     }
 
@@ -313,5 +366,24 @@ mod tests {
         let order = scene.nodes_in_render_order();
 
         assert_eq!(order.iter().map(|node| node.id).collect::<Vec<_>>(), [GlassId(1), GlassId(2)]);
+    }
+
+    #[test]
+    fn glass_nodes_default_to_continuous_corners() {
+        let node = GlassNode::new(GlassId(3), Rect::new(0.0, 0.0, 72.0, 36.0));
+
+        assert_eq!(node.corner_curve, CornerCurve::continuous());
+        assert!(
+            (node.corner_curve.exponent() - CornerCurve::DEFAULT_CONTINUOUS_EXPONENT).abs()
+                < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn circular_and_invalid_curves_resolve_safely() {
+        assert!((CornerCurve::Circular.exponent() - 2.0).abs() < f32::EPSILON);
+        assert!(
+            (CornerCurve::continuous_with_exponent(f32::NAN).exponent() - 2.0).abs() < f32::EPSILON
+        );
     }
 }

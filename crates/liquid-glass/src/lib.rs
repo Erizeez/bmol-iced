@@ -16,7 +16,8 @@ pub use render::{
     GpuError, GpuRenderer, GpuSize, LiquidRenderer, RenderGraph, RenderPass, TexturePool,
 };
 pub use scene::{
-    BackdropRegion, Color, GlassId, GlassMaterial, GlassNode, GlassScene, GlassShape, Rect,
+    BackdropRegion, Color, CornerCurve, GlassId, GlassMaterial, GlassNode, GlassScene, GlassShape,
+    Rect,
 };
 pub use ui::{
     GlassButton, GlassButtonIcon, GlassChrome, GlassContainer, GlassNavigationControl, GlassRole,

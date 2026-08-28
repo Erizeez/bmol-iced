@@ -14,7 +14,7 @@ use iced::{
     Background, Border, Color as IcedColor, Event, Length, Pixels, Rectangle, Shadow, Size, Vector,
     advanced::{self, Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget::Tree},
 };
-use liquid_glass_scene::{GlassId, GlassMaterial, GlassNode, GlassShape, Rect};
+use liquid_glass_scene::{CornerCurve, GlassId, GlassMaterial, GlassNode, GlassShape, Rect};
 
 /// A container that can later host any Iced widget tree.
 #[derive(Clone, Debug)]
@@ -39,6 +39,12 @@ impl GlassContainer {
     #[must_use]
     pub fn shape(mut self, shape: GlassShape) -> Self {
         self.node = self.node.shape(shape);
+        self
+    }
+
+    #[must_use]
+    pub fn corner_curve(mut self, corner_curve: CornerCurve) -> Self {
+        self.node = self.node.corner_curve(corner_curve);
         self
     }
 
@@ -75,6 +81,7 @@ impl GlassContainer {
     pub fn scene_node_for(&self, bounds: Rectangle) -> GlassNode {
         GlassNode::new(self.node.id, Rect::new(bounds.x, bounds.y, bounds.width, bounds.height))
             .shape(self.node.shape.clone())
+            .corner_curve(self.node.corner_curve)
             .material(self.node.material)
     }
 
@@ -256,6 +263,12 @@ impl GlassButton {
     #[must_use]
     pub fn shape(mut self, shape: GlassShape) -> Self {
         self.node = self.node.shape(shape);
+        self
+    }
+
+    #[must_use]
+    pub fn corner_curve(mut self, corner_curve: CornerCurve) -> Self {
+        self.node = self.node.corner_curve(corner_curve);
         self
     }
 
@@ -915,7 +928,7 @@ fn divider_touches_hovered(divider_index: usize, hovered: Option<usize>) -> bool
     hovered.is_some_and(|index| divider_index == index || divider_index == index.saturating_add(1))
 }
 
-const SEGMENT_HOVER_INSET: f32 = 3.0;
+const SEGMENT_HOVER_INSET: f32 = 4.0;
 
 fn segment_hover_bounds(bounds: Rectangle, segment_count: usize, index: usize) -> Rectangle {
     let segment_width = bounds.width / count_as_f32(segment_count);
@@ -939,12 +952,14 @@ mod tests {
 
     #[test]
     fn layout_bridge_uses_widget_layout_size_and_origin() {
-        let mut container = GlassContainer::new(GlassId(7), Rect::new(40.0, 24.0, 320.0, 180.0));
+        let mut container = GlassContainer::new(GlassId(7), Rect::new(40.0, 24.0, 320.0, 180.0))
+            .corner_curve(CornerCurve::Circular);
 
         let node = container.layout_scene_node(Size::new(960.0, 640.0));
 
         assert_eq!(node.id, GlassId(7));
         assert_eq!(node.bounds, Rect::new(40.0, 24.0, 320.0, 180.0));
+        assert_eq!(node.corner_curve, CornerCurve::Circular);
     }
 
     #[test]
@@ -1025,7 +1040,7 @@ mod tests {
         let hover = segment_hover_bounds(bounds, 2, 1);
 
         assert!((hover.width - hover.height).abs() < f32::EPSILON);
-        assert!((hover.width - 30.0).abs() < f32::EPSILON);
+        assert!((hover.width - 28.0).abs() < f32::EPSILON);
         assert!((hover.y - bounds.y - SEGMENT_HOVER_INSET).abs() < f32::EPSILON);
         assert!((hover.center_x() - (bounds.x + bounds.width * 0.75)).abs() < f32::EPSILON);
         assert!((hover.center_y() - bounds.center_y()).abs() < f32::EPSILON);

@@ -11,14 +11,14 @@ Iced UI → Liquid Scene → Liquid Compositor → wgpu → Metal / Vulkan / DX1
 
 当前是 foundation 版本，已建立以下边界：
 
-- `liquid-glass-scene`：Shape、Material、Backdrop、GlassNode、z-order scene
+- `liquid-glass-scene`：Shape、continuous/circular `CornerCurve`、Material、Backdrop、GlassNode、z-order scene
 - `liquid-glass-render`：RenderGraph、TexturePool、Renderer contract
 - `liquid-glass-animation`：Spring 基础类型
 - `liquid-glass-ui`：Iced `GlassContainer` / `GlassButton` / 任意数量的 `GlassSegmentedControl`、逐段 enabled/disabled 状态，以及 Light/Dark 语义主题
 - `liquid-glass-platform`：DPI 与窗口配置边界
 - `liquid-glass`：对外统一 facade
 
-`liquid-glass-render` 已包含真实 `wgpu` compositor：参考项目的背景 Pass、full-resolution horizontal/vertical Gaussian blur、SDF、折射、色散、Fresnel、glare、tint 合成，以及按 `z_index` 绘制多个玻璃节点。`liquid-glass-ui` 提供 Iced layout 到 `GlassNode` 的桥接；原生 playground 会使用这份布局结果驱动 compositor。
+`liquid-glass-render` 已包含真实 `wgpu` compositor：参考项目的背景 Pass、full-resolution horizontal/vertical Gaussian blur、连续超椭圆角 SDF、折射、色散、Fresnel、glare、tint 合成，以及按 `z_index` 绘制多个玻璃节点。圆角矩形默认使用 exponent 5 的 continuous curve，也可显式切换为 circular 或自定义 exponent；胶囊和圆始终保持精确圆弧。`liquid-glass-ui` 提供 Iced layout 到 `GlassNode` 的桥接；原生 playground 会使用这份布局结果驱动 compositor。
 
 ## 运行 playground
 

@@ -4,9 +4,10 @@ fn sdCircle(p: vec2f, r: f32) -> f32 {
   return length(p) - r;
 }
 
-fn superellipseCornerSDF(p_in: vec2f, r: f32, n: f32) -> f32 {
+fn continuousCornerSDF(p_in: vec2f, r: f32, n: f32) -> f32 {
   let p = abs(p_in);
-  let v = pow(pow(p.x, n) + pow(p.y, n), 1.0 / n);
+  let exponent = max(n, 2.0);
+  let v = pow(pow(p.x, exponent) + pow(p.y, exponent), 1.0 / exponent);
   return v - r;
 }
 
@@ -25,7 +26,7 @@ fn roundedRectSDF(
   if (d.x > -cr && d.y > -cr) {
     let cornerCenter = sign(p) * (vec2f(width * u.u_dpr, height * u.u_dpr) * 0.5 - vec2f(cr));
     let cornerP = p - cornerCenter;
-    dist = superellipseCornerSDF(cornerP, cr, n);
+    dist = continuousCornerSDF(cornerP, cr, n);
   } else {
     dist = min(max(d.x, d.y), 0.0) + length(max(d, vec2f(0.0)));
   }
