@@ -451,6 +451,276 @@ where
     }
 }
 
+/// A macOS-style back/forward control backed by one continuous glass surface.
+#[derive(Clone, Debug)]
+pub struct GlassNavigationControl {
+    node: GlassNode,
+    chrome: GlassChrome,
+}
+
+impl GlassNavigationControl {
+    #[must_use]
+    pub fn new(id: GlassId, bounds: Rect) -> Self {
+        Self {
+            node: GlassNode::new(id, bounds)
+                .shape(GlassShape::RoundedRect { radius: 10.0 })
+                .material(GlassMaterial::interactive()),
+            chrome: GlassChrome::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn material(mut self, material: GlassMaterial) -> Self {
+        self.node = self.node.material(material);
+        self
+    }
+
+    #[must_use]
+    pub const fn chrome(mut self, chrome: GlassChrome) -> Self {
+        self.chrome = chrome;
+        self
+    }
+
+    #[must_use]
+    pub const fn node(&self) -> &GlassNode {
+        &self.node
+    }
+
+    /// Converts the segmented control into an Iced element with one message
+    /// for each half.
+    #[must_use]
+    pub fn into_element<Message, Theme, Renderer>(
+        self,
+        on_back: Message,
+        on_forward: Message,
+    ) -> iced::Element<'static, Message, Theme, Renderer>
+    where
+        Message: Clone + 'static,
+        Theme: 'static,
+        Renderer: advanced::Renderer + advanced::graphics::geometry::Renderer + 'static,
+    {
+        iced::Element::new(GlassNavigationWidget {
+            control: self,
+            on_back,
+            on_forward,
+            hovered: None,
+            pressed: None,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NavigationSegment {
+    Back,
+    Forward,
+}
+
+struct GlassNavigationWidget<Message> {
+    control: GlassNavigationControl,
+    on_back: Message,
+    on_forward: Message,
+    hovered: Option<NavigationSegment>,
+    pressed: Option<NavigationSegment>,
+}
+
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for GlassNavigationWidget<Message>
+where
+    Message: Clone,
+    Renderer: advanced::Renderer + advanced::graphics::geometry::Renderer,
+{
+    fn size(&self) -> Size<Length> {
+        Size::new(
+            Length::Fixed(self.control.node.bounds.width),
+            Length::Fixed(self.control.node.bounds.height),
+        )
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut Tree,
+        _renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        layout::atomic(
+            limits,
+            Length::Fixed(self.control.node.bounds.width),
+            Length::Fixed(self.control.node.bounds.height),
+        )
+    }
+
+    fn draw(
+        &self,
+        _tree: &Tree,
+        renderer: &mut Renderer,
+        _theme: &Theme,
+        _style: &renderer::Style,
+        layout: Layout<'_>,
+        _cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        use advanced::graphics::geometry::{Frame, LineCap, LineJoin, Path, Stroke};
+
+        let bounds = layout.bounds();
+        if bounds.intersection(viewport).is_none() {
+            return;
+        }
+
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds,
+                border: Border::default()
+                    .rounded(shape_radius(&self.control.node))
+                    .width(1.0)
+                    .color(iced_color(self.control.chrome.border)),
+                shadow: Shadow {
+                    color: iced_color(self.control.chrome.shadow),
+                    offset: Vector::new(0.0, self.control.chrome.shadow_offset_y),
+                    blur_radius: self.control.chrome.shadow_blur,
+                },
+                snap: true,
+            },
+            Background::Color(iced_color(self.control.node.material.tint)),
+        );
+
+        let half_width = bounds.width * 0.5;
+        if let Some(segment) = self.hovered {
+            let x = match segment {
+                NavigationSegment::Back => bounds.x + 3.0,
+                NavigationSegment::Forward => bounds.x + half_width + 3.0,
+            };
+            let overlay = if self.pressed == Some(segment) {
+                self.control.chrome.pressed_overlay
+            } else {
+                self.control.chrome.hover_overlay
+            };
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x,
+                        y: bounds.y + 3.0,
+                        width: half_width - 6.0,
+                        height: bounds.height - 6.0,
+                    },
+                    border: Border::default().rounded(7.0),
+                    shadow: Shadow::default(),
+                    snap: true,
+                },
+                Background::Color(iced_color(overlay)),
+            );
+        }
+
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: Rectangle {
+                    x: bounds.x + half_width - 0.5,
+                    y: bounds.y + 8.0,
+                    width: 1.0,
+                    height: bounds.height - 16.0,
+                },
+                border: Border::default(),
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            Background::Color(iced_color(self.control.chrome.divider)),
+        );
+
+        let icon_color = iced_color(self.control.chrome.text);
+        renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
+            let mut frame = Frame::new(renderer, bounds.size());
+            let center_y = bounds.height * 0.5;
+            let centers = [half_width * 0.5, half_width * 1.5];
+            let stroke = Stroke::default()
+                .with_color(icon_color)
+                .with_width(1.8)
+                .with_line_cap(LineCap::Round)
+                .with_line_join(LineJoin::Round);
+
+            let back = Path::new(|path| {
+                path.move_to(iced::Point::new(centers[0] + 2.5, center_y - 5.0));
+                path.line_to(iced::Point::new(centers[0] - 2.5, center_y));
+                path.line_to(iced::Point::new(centers[0] + 2.5, center_y + 5.0));
+            });
+            let forward = Path::new(|path| {
+                path.move_to(iced::Point::new(centers[1] - 2.5, center_y - 5.0));
+                path.line_to(iced::Point::new(centers[1] + 2.5, center_y));
+                path.line_to(iced::Point::new(centers[1] - 2.5, center_y + 5.0));
+            });
+            frame.stroke(&back, stroke);
+            frame.stroke(&forward, stroke);
+            renderer.draw_geometry(frame.into_geometry());
+        });
+    }
+
+    fn update(
+        &mut self,
+        _tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _renderer: &Renderer,
+        _clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        _viewport: &Rectangle,
+    ) {
+        let hovered = navigation_segment_at(layout.bounds(), cursor);
+        let previous_hovered = self.hovered;
+        let previous_pressed = self.pressed;
+        self.hovered = hovered;
+
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if hovered.is_some() => {
+                self.pressed = hovered;
+                shell.capture_event();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if self.pressed.is_some() =>
+            {
+                let pressed = self.pressed.take();
+                shell.capture_event();
+                if pressed == hovered {
+                    match pressed {
+                        Some(NavigationSegment::Back) => shell.publish(self.on_back.clone()),
+                        Some(NavigationSegment::Forward) => {
+                            shell.publish(self.on_forward.clone());
+                        }
+                        None => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        if previous_hovered != self.hovered || previous_pressed != self.pressed {
+            shell.request_redraw();
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        _tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+        _renderer: &Renderer,
+    ) -> mouse::Interaction {
+        if navigation_segment_at(layout.bounds(), cursor).is_some() {
+            mouse::Interaction::Pointer
+        } else {
+            mouse::Interaction::default()
+        }
+    }
+}
+
+fn navigation_segment_at(bounds: Rectangle, cursor: mouse::Cursor) -> Option<NavigationSegment> {
+    cursor.position_over(bounds).map(|position| {
+        if position.x < bounds.center_x() {
+            NavigationSegment::Back
+        } else {
+            NavigationSegment::Forward
+        }
+    })
+}
+
 fn iced_color(color: liquid_glass_scene::Color) -> IcedColor {
     IcedColor::from_rgba(color.r, color.g, color.b, color.a)
 }
@@ -530,5 +800,14 @@ mod tests {
 
         assert_eq!(button.node().shape, GlassShape::Circle);
         assert_eq!(button.icon, Some(GlassButtonIcon::Back));
+    }
+
+    #[test]
+    fn navigation_control_uses_one_rounded_glass_node() {
+        let control = GlassNavigationControl::new(GlassId(12), Rect::new(0.0, 0.0, 76.0, 36.0));
+
+        assert_eq!(control.node().id, GlassId(12));
+        assert_eq!(control.node().shape, GlassShape::RoundedRect { radius: 10.0 });
+        assert!((control.node().bounds.width - 76.0).abs() < f32::EPSILON);
     }
 }

@@ -35,6 +35,7 @@ pub enum GlassRole {
 pub struct GlassChrome {
     pub border: GlassColor,
     pub hover_border: GlassColor,
+    pub divider: GlassColor,
     pub shadow: GlassColor,
     pub text: GlassColor,
     pub hover_overlay: GlassColor,
@@ -177,25 +178,27 @@ impl UiTheme {
     /// Builds the Iced-side border, text, state overlay, and shadow colors.
     #[must_use]
     pub fn glass_chrome(self, role: GlassRole) -> GlassChrome {
-        let (border, hover_border, shadow, text, hover_overlay, pressed_overlay) = match self.scheme
-        {
-            UiColorScheme::Light => (
-                GlassColor::rgba(0.0, 0.0, 0.0, 0.10),
-                GlassColor::rgba(0.0, 0.0, 0.0, 0.20),
-                GlassColor::rgba(0.0, 0.0, 0.0, 0.14),
-                GlassColor::rgba(0.08, 0.08, 0.09, 1.0),
-                GlassColor::rgba(0.0, 0.0, 0.0, 0.04),
-                GlassColor::rgba(0.0, 0.0, 0.0, 0.09),
-            ),
-            UiColorScheme::Dark => (
-                GlassColor::rgba(1.0, 1.0, 1.0, 0.16),
-                GlassColor::rgba(1.0, 1.0, 1.0, 0.30),
-                GlassColor::rgba(0.0, 0.0, 0.0, 0.30),
-                GlassColor::rgba(0.95, 0.95, 0.97, 1.0),
-                GlassColor::rgba(1.0, 1.0, 1.0, 0.055),
-                GlassColor::rgba(1.0, 1.0, 1.0, 0.11),
-            ),
-        };
+        let (border, hover_border, divider, shadow, text, hover_overlay, pressed_overlay) =
+            match self.scheme {
+                UiColorScheme::Light => (
+                    GlassColor::rgba(0.0, 0.0, 0.0, 0.10),
+                    GlassColor::rgba(0.0, 0.0, 0.0, 0.20),
+                    GlassColor::rgba(0.0, 0.0, 0.0, 0.14),
+                    GlassColor::rgba(0.0, 0.0, 0.0, 0.14),
+                    GlassColor::rgba(0.08, 0.08, 0.09, 1.0),
+                    GlassColor::rgba(0.0, 0.0, 0.0, 0.04),
+                    GlassColor::rgba(0.0, 0.0, 0.0, 0.09),
+                ),
+                UiColorScheme::Dark => (
+                    GlassColor::rgba(1.0, 1.0, 1.0, 0.16),
+                    GlassColor::rgba(1.0, 1.0, 1.0, 0.30),
+                    GlassColor::rgba(1.0, 1.0, 1.0, 0.18),
+                    GlassColor::rgba(0.0, 0.0, 0.0, 0.30),
+                    GlassColor::rgba(0.95, 0.95, 0.97, 1.0),
+                    GlassColor::rgba(1.0, 1.0, 1.0, 0.055),
+                    GlassColor::rgba(1.0, 1.0, 1.0, 0.11),
+                ),
+            };
         let (shadow_offset_y, shadow_blur) = match role {
             GlassRole::Toolbar => (2.0, 10.0),
             GlassRole::SearchField => (3.0, 9.0),
@@ -204,6 +207,7 @@ impl UiTheme {
         GlassChrome {
             border,
             hover_border,
+            divider,
             shadow,
             text,
             hover_overlay,

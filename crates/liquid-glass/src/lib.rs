@@ -19,6 +19,6 @@ pub use scene::{
     BackdropRegion, Color, GlassId, GlassMaterial, GlassNode, GlassScene, GlassShape, Rect,
 };
 pub use ui::{
-    GlassButton, GlassButtonIcon, GlassChrome, GlassContainer, GlassRole, UiColorScheme, UiPalette,
-    UiTheme,
+    GlassButton, GlassButtonIcon, GlassChrome, GlassContainer, GlassNavigationControl, GlassRole,
+    UiColorScheme, UiPalette, UiTheme,
 };
