@@ -18,7 +18,7 @@ Iced UI → Liquid Scene → Liquid Compositor → wgpu → Metal / Vulkan / DX1
 - `liquid-glass-platform`：DPI 与窗口配置边界
 - `liquid-glass`：对外统一 facade
 
-`liquid-glass-render` 已包含第一个真实 `wgpu` offscreen backend：背景场景 Pass、SDF Glass Pass 和最终离屏纹理。Iced Widget adapter、独立 separable blur 和 Surface/present 生命周期仍在后续阶段。
+`liquid-glass-render` 已包含第一个真实 `wgpu` offscreen backend：背景场景 Pass、SDF Glass Pass 和最终离屏纹理。`liquid-glass-ui` 已包含第一版 Iced custom widget，独立 separable blur 仍在后续阶段。
 
 ## 运行 playground
 
@@ -27,6 +27,14 @@ cargo run -p liquid-glass-playground
 ```
 
 该命令会创建一个原生 `winit` 窗口，配置 `wgpu` Surface，并持续渲染一个 SDF GlassPanel。窗口支持 Resize、Surface 重建和关闭事件。
+
+运行 Iced custom widget 示例：
+
+```bash
+cargo run -p liquid-glass-playground --bin liquid-glass-iced-demo
+```
+
+该示例使用标准 Iced application runtime，展示 `GlassContainer` 的 layout、quad 绘制、hover 状态和鼠标命中逻辑。
 
 如果本机没有可用 GPU，playground 会保留打印纯 Rust foundation 信息，并报告 GPU backend 不可用；这不影响 workspace 的单元测试。
 
@@ -38,7 +46,7 @@ cargo run -p liquid-glass-playground
 
 1. 将现有多点采样模糊拆成 downsample + horizontal/vertical blur passes。
 2. 将 `GpuRenderer` 接入 Surface 之外的完整 DPI 与色彩空间生命周期。
-3. 实现 `GlassContainer` 的 Iced adapter。
+3. 将 Iced layout bounds 接入 Liquid Scene 的 Backdrop region。
 4. 在 playground 中加入 blur、refraction、tint 的实时调节。
 5. 再扩展 Button、Panel、Toolbar 和 Spring interaction。
 
