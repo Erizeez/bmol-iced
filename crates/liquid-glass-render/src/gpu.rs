@@ -6,6 +6,13 @@ use liquid_glass_scene::{GlassNode, GlassScene, GlassShape};
 const DEFAULT_OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 #[allow(clippy::cast_possible_truncation)]
 const GLASS_UNIFORM_SIZE: u32 = std::mem::size_of::<GlassUniform>() as u32;
+const MAX_BLUR_RADIUS: usize = 200;
+
+const FULLSCREEN_VERTEX_ATTRIBUTES: &[wgpu::VertexAttribute] = &[wgpu::VertexAttribute {
+    format: wgpu::VertexFormat::Float32x2,
+    offset: 0,
+    shader_location: 0,
+}];
 
 /// Maximum number of glass nodes that can be drawn in one frame.
 pub const MAX_GLASS_NODES: usize = 64;
@@ -60,16 +67,30 @@ impl std::error::Error for GpuError {}
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct GlassUniform {
-    viewport_and_origin: [f32; 4],
-    size_radius_blur: [f32; 4],
-    tint_opacity_refraction_time: [f32; 4],
+    resolution_dpr_pad: [f32; 4],
+    mouse_and_spring: [f32; 4],
+    shape: [f32; 4],
+    merge_glare_shadow: [f32; 4],
+    shadow_position_bg_ratio: [f32; 3],
+    bg_type: i32,
+    flags: [i32; 4],
+    tint: [f32; 4],
+    refraction_and_fresnel: [f32; 6],
+    glare: [f32; 5],
+    _pad: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct BlurUniform {
+    resolution: [f32; 2],
+    radius: i32,
+    _pad: i32,
 }
 
 struct FrameTargets {
     _scene: wgpu::Texture,
     scene_view: wgpu::TextureView,
-    _downsampled: wgpu::Texture,
-    downsampled_view: wgpu::TextureView,
     _blur_horizontal: wgpu::Texture,
     blur_horizontal_view: wgpu::TextureView,
     _blur_vertical: wgpu::Texture,
@@ -96,17 +117,13 @@ impl FrameTargets {
                 | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         };
-        let blur_size = GpuSize::new(size.width.div_ceil(2), size.height.div_ceil(2));
         let scene = device.create_texture(&descriptor("liquid-glass scene texture", size));
-        let downsampled =
-            device.create_texture(&descriptor("liquid-glass downsampled texture", blur_size));
         let blur_horizontal =
-            device.create_texture(&descriptor("liquid-glass horizontal blur texture", blur_size));
+            device.create_texture(&descriptor("liquid-glass horizontal blur texture", size));
         let blur_vertical =
-            device.create_texture(&descriptor("liquid-glass vertical blur texture", blur_size));
+            device.create_texture(&descriptor("liquid-glass vertical blur texture", size));
         let output = device.create_texture(&descriptor("liquid-glass output texture", size));
         let scene_view = scene.create_view(&wgpu::TextureViewDescriptor::default());
-        let downsampled_view = downsampled.create_view(&wgpu::TextureViewDescriptor::default());
         let blur_horizontal_view =
             blur_horizontal.create_view(&wgpu::TextureViewDescriptor::default());
         let blur_vertical_view = blur_vertical.create_view(&wgpu::TextureViewDescriptor::default());
@@ -115,8 +132,6 @@ impl FrameTargets {
         Self {
             _scene: scene,
             scene_view,
-            _downsampled: downsampled,
-            downsampled_view,
             _blur_horizontal: blur_horizontal,
             blur_horizontal_view,
             _blur_vertical: blur_vertical,
@@ -130,9 +145,10 @@ impl FrameTargets {
 /// A real `wgpu` offscreen compositor for a scene of SDF Glass nodes.
 ///
 /// This backend intentionally has no window or Iced dependency. It renders a
-/// gradient scene into an offscreen texture, downsamples it, applies
-/// horizontal and vertical blur passes, and samples the result while
-/// evaluating a rounded SDF and glass material.
+/// reference background into an offscreen texture, applies full-resolution
+/// horizontal and vertical Gaussian blur passes, and samples the result while
+/// evaluating the reference SDF, refraction, dispersion, Fresnel, glare, and
+/// tint composition.
 pub struct GpuRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -140,15 +156,18 @@ pub struct GpuRenderer {
     output_format: wgpu::TextureFormat,
     targets: FrameTargets,
     sampler: wgpu::Sampler,
-    downsample_bind_group: wgpu::BindGroup,
+    fullscreen_vertex_buffer: wgpu::Buffer,
+    background_bind_group: wgpu::BindGroup,
     blur_horizontal_bind_group: wgpu::BindGroup,
     blur_vertical_bind_group: wgpu::BindGroup,
     glass_bind_group_layout: wgpu::BindGroupLayout,
     glass_bind_group: wgpu::BindGroup,
     glass_uniform: wgpu::Buffer,
+    blur_uniform: wgpu::Buffer,
+    blur_weights: wgpu::Buffer,
     glass_uniform_stride: u32,
+    placeholder_texture: wgpu::Texture,
     background_pipeline: wgpu::RenderPipeline,
-    downsample_pipeline: wgpu::RenderPipeline,
     blur_horizontal_pipeline: wgpu::RenderPipeline,
     blur_vertical_pipeline: wgpu::RenderPipeline,
     glass_pipeline: wgpu::RenderPipeline,
@@ -230,6 +249,7 @@ impl GpuRenderer {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
+        let fullscreen_vertex_buffer = create_fullscreen_vertex_buffer(&device, &queue);
         let glass_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("liquid-glass backdrop layout"),
@@ -238,6 +258,7 @@ impl GpuRenderer {
                     texture_binding(1),
                     sampler_binding(2),
                     uniform_binding(3, std::mem::size_of::<GlassUniform>()),
+                    storage_binding(4),
                 ],
             });
         let glass_uniform_stride = uniform_stride(&device);
@@ -247,6 +268,14 @@ impl GpuRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let blur_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("liquid-glass blur uniform"),
+            size: u64::from(GLASS_UNIFORM_SIZE),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let blur_weights = create_blur_weights_buffer(&device);
+        let placeholder_texture = create_placeholder_texture(&device);
         let glass_bind_group = create_glass_bind_group(
             &device,
             &glass_bind_group_layout,
@@ -254,36 +283,35 @@ impl GpuRenderer {
             &targets.blur_vertical_view,
             &sampler,
             &glass_uniform,
+            &blur_weights,
         );
-        let downsample_bind_group = create_blur_bind_group(
+        let background_bind_group = create_background_bind_group(
             &device,
             &glass_bind_group_layout,
-            &targets.scene_view,
+            &placeholder_texture,
             &sampler,
             &glass_uniform,
+            &blur_weights,
         );
         let blur_horizontal_bind_group = create_blur_bind_group(
             &device,
             &glass_bind_group_layout,
-            &targets.downsampled_view,
+            &targets.scene_view,
             &sampler,
-            &glass_uniform,
+            &blur_uniform,
+            &blur_weights,
         );
         let blur_vertical_bind_group = create_blur_bind_group(
             &device,
             &glass_bind_group_layout,
             &targets.blur_horizontal_view,
             &sampler,
-            &glass_uniform,
+            &blur_uniform,
+            &blur_weights,
         );
 
-        let (
-            background_pipeline,
-            downsample_pipeline,
-            blur_horizontal_pipeline,
-            blur_vertical_pipeline,
-            glass_pipeline,
-        ) = create_pipelines(&device, &glass_bind_group_layout, output_format);
+        let (background_pipeline, blur_horizontal_pipeline, blur_vertical_pipeline, glass_pipeline) =
+            create_pipelines(&device, &glass_bind_group_layout, output_format);
 
         Self {
             device,
@@ -292,15 +320,18 @@ impl GpuRenderer {
             output_format,
             targets,
             sampler,
-            downsample_bind_group,
+            fullscreen_vertex_buffer,
+            background_bind_group,
             blur_horizontal_bind_group,
             blur_vertical_bind_group,
             glass_bind_group_layout,
             glass_bind_group,
             glass_uniform,
+            blur_uniform,
+            blur_weights,
             glass_uniform_stride,
+            placeholder_texture,
             background_pipeline,
-            downsample_pipeline,
             blur_horizontal_pipeline,
             blur_vertical_pipeline,
             glass_pipeline,
@@ -325,27 +356,31 @@ impl GpuRenderer {
             &self.targets.blur_vertical_view,
             &self.sampler,
             &self.glass_uniform,
+            &self.blur_weights,
         );
-        self.downsample_bind_group = create_blur_bind_group(
+        self.background_bind_group = create_background_bind_group(
             &self.device,
             &self.glass_bind_group_layout,
-            &self.targets.scene_view,
+            &self.placeholder_texture,
             &self.sampler,
             &self.glass_uniform,
+            &self.blur_weights,
         );
         self.blur_horizontal_bind_group = create_blur_bind_group(
             &self.device,
             &self.glass_bind_group_layout,
-            &self.targets.downsampled_view,
+            &self.targets.scene_view,
             &self.sampler,
-            &self.glass_uniform,
+            &self.blur_uniform,
+            &self.blur_weights,
         );
         self.blur_vertical_bind_group = create_blur_bind_group(
             &self.device,
             &self.glass_bind_group_layout,
             &self.targets.blur_horizontal_view,
             &self.sampler,
-            &self.glass_uniform,
+            &self.blur_uniform,
+            &self.blur_weights,
         );
         Ok(())
     }
@@ -445,6 +480,12 @@ impl GpuRenderer {
             let uniform = uniform_for_node(self.size, node, time_seconds);
             self.queue.write_buffer(&self.glass_uniform, offset, bytemuck::bytes_of(&uniform));
         }
+        let blur_radius = blur_radius_for_nodes(nodes);
+        let blur_uniform =
+            BlurUniform { resolution: gpu_size_as_f32(self.size), radius: blur_radius, _pad: 0 };
+        self.queue.write_buffer(&self.blur_uniform, 0, bytemuck::bytes_of(&blur_uniform));
+        let blur_weights = gaussian_weights(blur_radius);
+        self.queue.write_buffer(&self.blur_weights, 0, bytemuck::cast_slice(&blur_weights));
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("liquid-glass frame encoder"),
@@ -454,22 +495,16 @@ impl GpuRenderer {
             "liquid-glass scene pass",
             &self.targets.scene_view,
             &self.background_pipeline,
-            None,
+            &self.fullscreen_vertex_buffer,
+            Some(&self.background_bind_group),
             wgpu::Color { r: 0.04, g: 0.06, b: 0.12, a: 1.0 },
-        );
-        encode_fullscreen_pass(
-            &mut encoder,
-            "liquid-glass downsample pass",
-            &self.targets.downsampled_view,
-            &self.downsample_pipeline,
-            Some(&self.downsample_bind_group),
-            wgpu::Color::BLACK,
         );
         encode_fullscreen_pass(
             &mut encoder,
             "liquid-glass horizontal blur pass",
             &self.targets.blur_horizontal_view,
             &self.blur_horizontal_pipeline,
+            &self.fullscreen_vertex_buffer,
             Some(&self.blur_horizontal_bind_group),
             wgpu::Color::BLACK,
         );
@@ -478,7 +513,17 @@ impl GpuRenderer {
             "liquid-glass vertical blur pass",
             &self.targets.blur_vertical_view,
             &self.blur_vertical_pipeline,
+            &self.fullscreen_vertex_buffer,
             Some(&self.blur_vertical_bind_group),
+            wgpu::Color::BLACK,
+        );
+        encode_fullscreen_pass(
+            &mut encoder,
+            "liquid-glass output background pass",
+            output_view,
+            &self.background_pipeline,
+            &self.fullscreen_vertex_buffer,
+            Some(&self.background_bind_group),
             wgpu::Color::BLACK,
         );
         encode_glass_pass(
@@ -486,6 +531,7 @@ impl GpuRenderer {
             output_view,
             &self.glass_pipeline,
             &self.glass_bind_group,
+            &self.fullscreen_vertex_buffer,
             nodes.len(),
             self.glass_uniform_stride,
         );
@@ -535,6 +581,7 @@ fn encode_fullscreen_pass(
     label: &str,
     target: &wgpu::TextureView,
     pipeline: &wgpu::RenderPipeline,
+    vertex_buffer: &wgpu::Buffer,
     bind_group: Option<&wgpu::BindGroup>,
     clear: wgpu::Color,
 ) {
@@ -549,10 +596,11 @@ fn encode_fullscreen_pass(
         ..Default::default()
     });
     pass.set_pipeline(pipeline);
+    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
     if let Some(bind_group) = bind_group {
         pass.set_bind_group(0, bind_group, &[0]);
     }
-    pass.draw(0..3, 0..1);
+    pass.draw(0..4, 0..1);
 }
 
 fn encode_glass_pass(
@@ -560,6 +608,7 @@ fn encode_glass_pass(
     target: &wgpu::TextureView,
     pipeline: &wgpu::RenderPipeline,
     bind_group: &wgpu::BindGroup,
+    vertex_buffer: &wgpu::Buffer,
     node_count: usize,
     uniform_stride: u32,
 ) {
@@ -569,39 +618,116 @@ fn encode_glass_pass(
             view: target,
             depth_slice: None,
             resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                store: wgpu::StoreOp::Store,
-            },
+            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
         })],
         ..Default::default()
     });
     pass.set_pipeline(pipeline);
+    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
     for index in 0..node_count {
         let offset =
             uniform_stride * u32::try_from(index).expect("scene node index fits in dynamic offset");
         pass.set_bind_group(0, bind_group, &[offset]);
-        pass.draw(0..3, 0..1);
+        pass.draw(0..4, 0..1);
+    }
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
+fn uniform_for_node(size: GpuSize, node: &GlassNode, time_seconds: f32) -> GlassUniform {
+    let center_x = node.bounds.x + node.bounds.width * 0.5;
+    let center_y = size.height as f32 - node.bounds.y - node.bounds.height * 0.5;
+    let material = node.material;
+    let shape_radius = shape_radius(node);
+    let shape_roundness = shape_roundness(node);
+    GlassUniform {
+        resolution_dpr_pad: [size.width as f32, size.height as f32, 1.0, 0.0],
+        mouse_and_spring: [center_x, center_y, center_x, center_y],
+        shape: [node.bounds.width, node.bounds.height, shape_radius, shape_roundness],
+        merge_glare_shadow: [0.05, time_seconds * 0.20, 25.0, 0.15],
+        shadow_position_bg_ratio: [0.0, 0.0, 1.0],
+        bg_type: 0,
+        flags: [0, 0, material.blur.radius.round() as i32, i32::from(material.blur.edge_blur)],
+        tint: [material.tint.r, material.tint.g, material.tint.b, material.tint.a],
+        refraction_and_fresnel: [
+            (material.refraction.thickness * 100.0).max(1.0),
+            material.refraction.index,
+            (material.dispersion.strength * 100.0).max(0.0),
+            (material.fresnel.range * 40.0).max(1.0),
+            material.fresnel.hardness,
+            material.fresnel.strength,
+        ],
+        glare: [30.0, 0.2, 0.5, 0.8, 0.9],
+        _pad: material.opacity,
     }
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn uniform_for_node(size: GpuSize, node: &GlassNode, time_seconds: f32) -> GlassUniform {
-    GlassUniform {
-        viewport_and_origin: [size.width as f32, size.height as f32, node.bounds.x, node.bounds.y],
-        size_radius_blur: [
-            node.bounds.width,
-            node.bounds.height,
-            shape_radius(node),
-            node.material.blur.radius,
-        ],
-        tint_opacity_refraction_time: [
-            node.material.tint.r,
-            node.material.tint.g,
-            node.material.tint.b,
-            node.material.opacity + node.material.refraction.strength * 0.05 + time_seconds * 0.0,
-        ],
+fn gpu_size_as_f32(size: GpuSize) -> [f32; 2] {
+    [size.width as f32, size.height as f32]
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
+fn blur_radius_for_nodes(nodes: &[&GlassNode]) -> i32 {
+    nodes
+        .iter()
+        .map(|node| node.material.blur.radius.round().clamp(0.0, MAX_BLUR_RADIUS as f32) as i32)
+        .max()
+        .unwrap_or(20)
+}
+
+#[allow(clippy::cast_precision_loss, clippy::needless_range_loop)]
+fn gaussian_weights(radius: i32) -> [f32; MAX_BLUR_RADIUS + 1] {
+    let mut weights = [0.0; MAX_BLUR_RADIUS + 1];
+    let radius = usize::try_from(radius).expect("blur radius is non-negative");
+    let sigma = (radius as f32 / 3.0).max(f32::EPSILON);
+    let mut sum = 0.0;
+    for index in 0..=radius {
+        let index_f32 = index as f32;
+        let weight = (-0.5 * index_f32 * index_f32 / (sigma * sigma)).exp();
+        weights[index] = weight;
+        sum += if index == 0 { weight } else { weight * 2.0 };
     }
+    if sum > 0.0 {
+        for weight in &mut weights[..=radius] {
+            *weight /= sum;
+        }
+    }
+    weights
+}
+
+fn create_blur_weights_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("liquid-glass gaussian weights"),
+        size: u64::try_from((MAX_BLUR_RADIUS + 1) * std::mem::size_of::<f32>())
+            .expect("blur weights size fits in u64"),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+fn create_placeholder_texture(device: &wgpu::Device) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("liquid-glass placeholder texture"),
+        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
+fn create_fullscreen_vertex_buffer(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer {
+    let vertices = [-1.0_f32, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("liquid-glass fullscreen vertices"),
+        size: u64::try_from(std::mem::size_of_val(&vertices)).expect("vertex buffer size fits"),
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&vertices));
+    buffer
 }
 
 fn create_glass_bind_group(
@@ -611,6 +737,7 @@ fn create_glass_bind_group(
     blur_view: &wgpu::TextureView,
     sampler: &wgpu::Sampler,
     uniform: &wgpu::Buffer,
+    blur_weights: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("liquid-glass backdrop bind group"),
@@ -636,6 +763,59 @@ fn create_glass_bind_group(
                     ),
                 }),
             },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: blur_weights,
+                    offset: 0,
+                    size: None,
+                }),
+            },
+        ],
+    })
+}
+
+fn create_background_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    placeholder_texture: &wgpu::Texture,
+    sampler: &wgpu::Sampler,
+    uniform: &wgpu::Buffer,
+    blur_weights: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    let placeholder_view = placeholder_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("liquid-glass background bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&placeholder_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&placeholder_view),
+            },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: uniform,
+                    offset: 0,
+                    size: Some(
+                        wgpu::BufferSize::new(u64::from(GLASS_UNIFORM_SIZE))
+                            .expect("glass uniform size is non-zero"),
+                    ),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: blur_weights,
+                    offset: 0,
+                    size: None,
+                }),
+            },
         ],
     })
 }
@@ -646,6 +826,7 @@ fn create_blur_bind_group(
     source_view: &wgpu::TextureView,
     sampler: &wgpu::Sampler,
     uniform: &wgpu::Buffer,
+    blur_weights: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("liquid-glass blur bind group"),
@@ -669,6 +850,14 @@ fn create_blur_bind_group(
                         wgpu::BufferSize::new(u64::from(GLASS_UNIFORM_SIZE))
                             .expect("glass uniform size is non-zero"),
                     ),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: blur_weights,
+                    offset: 0,
+                    size: None,
                 }),
             },
         ],
@@ -697,6 +886,19 @@ fn sampler_binding(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
+fn storage_binding(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
 fn uniform_binding(binding: u32, size: usize) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -721,6 +923,7 @@ fn create_pipeline(
     shader: &wgpu::ShaderModule,
     bind_group_layout: Option<&wgpu::BindGroupLayout>,
     fragment_entry: &str,
+    blend: Option<wgpu::BlendState>,
     output_format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -733,11 +936,18 @@ fn create_pipeline(
         layout: Some(&layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some("fullscreen_vertex"),
-            buffers: &[],
+            entry_point: Some("vs_main"),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: 8,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: FULLSCREEN_VERTEX_ATTRIBUTES,
+            })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         },
-        primitive: wgpu::PrimitiveState::default(),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            ..Default::default()
+        },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
@@ -745,7 +955,7 @@ fn create_pipeline(
             entry_point: Some(fragment_entry),
             targets: &[Some(wgpu::ColorTargetState {
                 format: output_format,
-                blend: None,
+                blend,
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -759,61 +969,117 @@ fn create_pipelines(
     device: &wgpu::Device,
     bind_group_layout: &wgpu::BindGroupLayout,
     output_format: wgpu::TextureFormat,
-) -> (
-    wgpu::RenderPipeline,
-    wgpu::RenderPipeline,
-    wgpu::RenderPipeline,
-    wgpu::RenderPipeline,
-    wgpu::RenderPipeline,
-) {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("liquid-glass panel shader"),
-        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-            "../../../shaders/glass/panel.wgsl"
+) -> (wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline) {
+    let background_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("liquid-glass reference background shader"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Owned(reference_shader(
+            include_str!("../../../shaders/glass/reference/fragment-bg.wgsl"),
+            ReferencePass::Background,
+        ))),
+    });
+    let horizontal_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("liquid-glass reference horizontal blur shader"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Owned(reference_shader(
+            include_str!("../../../shaders/glass/reference/fragment-bg-hblur.wgsl"),
+            ReferencePass::Blur,
+        ))),
+    });
+    let vertical_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("liquid-glass reference vertical blur shader"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Owned(reference_shader(
+            include_str!("../../../shaders/glass/reference/fragment-bg-vblur.wgsl"),
+            ReferencePass::Blur,
+        ))),
+    });
+    let glass_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("liquid-glass reference main shader"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Owned(reference_shader(
+            include_str!("../../../shaders/glass/reference/fragment-main.wgsl"),
+            ReferencePass::Main,
         ))),
     });
     let background = create_pipeline(
         device,
         "liquid-glass background pipeline",
-        &shader,
-        None,
-        "background_fragment",
-        output_format,
-    );
-    let downsample = create_pipeline(
-        device,
-        "liquid-glass downsample pipeline",
-        &shader,
+        &background_shader,
         Some(bind_group_layout),
-        "downsample_fragment",
+        "fs_main",
+        None,
         output_format,
     );
     let horizontal = create_pipeline(
         device,
         "liquid-glass horizontal blur pipeline",
-        &shader,
+        &horizontal_shader,
         Some(bind_group_layout),
-        "blur_horizontal_fragment",
+        "fs_main",
+        None,
         output_format,
     );
     let vertical = create_pipeline(
         device,
         "liquid-glass vertical blur pipeline",
-        &shader,
+        &vertical_shader,
         Some(bind_group_layout),
-        "blur_vertical_fragment",
+        "fs_main",
+        None,
         output_format,
     );
     let glass = create_pipeline(
         device,
         "liquid-glass SDF pipeline",
-        &shader,
+        &glass_shader,
         Some(bind_group_layout),
-        "glass_fragment",
+        "fs_main",
+        Some(wgpu::BlendState::ALPHA_BLENDING),
         output_format,
     );
 
-    (background, downsample, horizontal, vertical, glass)
+    (background, horizontal, vertical, glass)
+}
+
+#[derive(Clone, Copy)]
+enum ReferencePass {
+    Background,
+    Blur,
+    Main,
+}
+
+fn reference_shader(fragment: &str, pass: ReferencePass) -> String {
+    let vertex = include_str!("../../../shaders/glass/reference/vertex.wgsl");
+    let mut fragment = fragment.to_owned();
+    match pass {
+        ReferencePass::Background => {
+            fragment = fragment
+                .replace(
+                    "@binding(0) var<uniform> u: Uniforms",
+                    "@binding(3) var<uniform> u: Uniforms",
+                )
+                .replace("@binding(1) var u_bgTexture", "@binding(0) var u_bgTexture");
+        }
+        ReferencePass::Blur => {
+            fragment = fragment
+                .replace(
+                    "@binding(0) var<uniform> u: BlurUniforms",
+                    "@binding(3) var<uniform> u: BlurUniforms",
+                )
+                .replace("@binding(1) var u_prevPassTexture", "@binding(0) var u_prevPassTexture")
+                .replace(
+                    "@binding(3) var<storage, read> u_blurWeights",
+                    "@binding(4) var<storage, read> u_blurWeights",
+                );
+        }
+        ReferencePass::Main => {
+            fragment = fragment
+                .replace(
+                    "@binding(0) var<uniform> u: Uniforms",
+                    "@binding(3) var<uniform> u: Uniforms",
+                )
+                .replace("@binding(2) var u_bg", "@binding(0) var u_bg")
+                .replace("@binding(3) var u_sampler", "@binding(2) var u_sampler");
+        }
+    }
+    format!("{vertex}\n{fragment}")
 }
 
 fn shape_radius(node: &GlassNode) -> f32 {
@@ -823,6 +1089,16 @@ fn shape_radius(node: &GlassNode) -> f32 {
         GlassShape::Capsule => node.bounds.height * 0.5,
         GlassShape::Circle => node.bounds.width.min(node.bounds.height) * 0.5,
         GlassShape::Ellipse => node.bounds.width.min(node.bounds.height) * 0.25,
+    }
+}
+
+fn shape_roundness(node: &GlassNode) -> f32 {
+    match node.shape {
+        GlassShape::Superellipse { exponent } => exponent,
+        GlassShape::RoundedRect { .. }
+        | GlassShape::Capsule
+        | GlassShape::Circle
+        | GlassShape::Ellipse => 2.0,
     }
 }
 

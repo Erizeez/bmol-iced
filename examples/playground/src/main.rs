@@ -29,7 +29,6 @@ struct WindowState {
     config: wgpu::SurfaceConfiguration,
     renderer: GpuRenderer,
     panel_widget: GlassContainer,
-    secondary_panel: GlassNode,
     scene: GlassScene,
     started_at: Instant,
 }
@@ -82,13 +81,8 @@ impl Playground {
                 .material(GlassMaterial::regular());
         let panel = panel_widget.layout_scene_node(iced_viewport_size(config.width, config.height));
         let panel_bounds = panel.bounds;
-        let mut secondary_panel = GlassNode::new(GlassId(2), Rect::new(390.0, 260.0, 280.0, 190.0))
-            .shape(GlassShape::RoundedRect { radius: 42.0 })
-            .material(GlassMaterial::interactive());
-        secondary_panel.z_index = 1;
-        let mut scene = GlassScene::default();
-        scene.push(panel);
-        scene.push(secondary_panel.clone());
+        let scene = demo_scene(panel);
+        let scene_nodes = scene.nodes().len();
 
         self.window = Some(window);
         self.state = Some(WindowState {
@@ -96,7 +90,6 @@ impl Playground {
             config,
             renderer,
             panel_widget,
-            secondary_panel,
             scene,
             started_at: Instant::now(),
         });
@@ -104,7 +97,7 @@ impl Playground {
             "Liquid Glass window initialized: {}x{}; Iced layout -> {} scene nodes; primary {:.0}x{:.0} at ({:.0}, {:.0})",
             size.width,
             size.height,
-            2,
+            scene_nodes,
             panel_bounds.width,
             panel_bounds.height,
             panel_bounds.x,
@@ -163,9 +156,7 @@ impl WindowState {
         self.surface.configure(self.renderer.device(), &self.config);
         let panel =
             self.panel_widget.layout_scene_node(iced_viewport_size(size.width, size.height));
-        self.scene = GlassScene::default();
-        self.scene.push(panel);
-        self.scene.push(self.secondary_panel.clone());
+        self.scene = demo_scene(panel);
     }
 
     fn reconfigure(&mut self) {
@@ -211,6 +202,58 @@ fn preferred_surface_format(capabilities: &wgpu::SurfaceCapabilities) -> wgpu::T
         .copied()
         .find(wgpu::TextureFormat::is_srgb)
         .unwrap_or(capabilities.formats[0])
+}
+
+fn demo_scene(primary_panel: GlassNode) -> GlassScene {
+    let mut scene = GlassScene::default();
+
+    let mut sidebar_material = GlassMaterial::thick();
+    sidebar_material.tint = liquid_glass::Color::rgba(0.12, 0.34, 0.72, 0.20);
+    let mut sidebar = GlassNode::new(GlassId(10), Rect::new(36.0, 36.0, 168.0, 568.0))
+        .shape(GlassShape::Superellipse { exponent: 5.0 })
+        .material(sidebar_material);
+    sidebar.z_index = 0;
+    scene.push(sidebar);
+
+    let mut toolbar_material = GlassMaterial::clear();
+    toolbar_material.tint = liquid_glass::Color::rgba(0.30, 0.58, 1.0, 0.16);
+    let mut toolbar = GlassNode::new(GlassId(11), Rect::new(220.0, 36.0, 700.0, 82.0))
+        .shape(GlassShape::RoundedRect { radius: 28.0 })
+        .material(toolbar_material);
+    toolbar.z_index = 0;
+    scene.push(toolbar);
+
+    let mut card_material = GlassMaterial::regular();
+    card_material.tint = liquid_glass::Color::rgba(0.12, 0.72, 0.92, 0.15);
+    for (index, x) in [220.0, 430.0, 640.0].into_iter().enumerate() {
+        let mut card = GlassNode::new(GlassId(20 + index as u64), Rect::new(x, 138.0, 190.0, 86.0))
+            .shape(GlassShape::Superellipse { exponent: 4.5 })
+            .material(card_material);
+        card.z_index = 0;
+        scene.push(card);
+    }
+
+    let mut front_panel = primary_panel;
+    front_panel.z_index = 1;
+    scene.push(front_panel);
+
+    let mut interactive_material = GlassMaterial::interactive();
+    interactive_material.tint = liquid_glass::Color::rgba(0.52, 0.22, 0.95, 0.20);
+    let mut secondary = GlassNode::new(GlassId(30), Rect::new(560.0, 270.0, 300.0, 190.0))
+        .shape(GlassShape::RoundedRect { radius: 42.0 })
+        .material(interactive_material);
+    secondary.z_index = 2;
+    scene.push(secondary);
+
+    let mut footer_material = GlassMaterial::clear();
+    footer_material.tint = liquid_glass::Color::rgba(0.08, 0.82, 0.64, 0.16);
+    let mut footer = GlassNode::new(GlassId(31), Rect::new(220.0, 540.0, 700.0, 64.0))
+        .shape(GlassShape::Capsule)
+        .material(footer_material);
+    footer.z_index = 1;
+    scene.push(footer);
+
+    scene
 }
 
 #[allow(clippy::cast_precision_loss)]
