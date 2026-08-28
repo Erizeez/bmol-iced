@@ -10,8 +10,8 @@ use iced::{
 };
 use iced_backend::Renderer;
 use liquid_glass::{
-    GlassContainer, GlassId, GlassMaterial, GlassNavigationControl, GlassRole, GlassShape, Rect,
-    UiColorScheme, UiPalette, UiTheme,
+    GlassContainer, GlassId, GlassMaterial, GlassRole, GlassSegment, GlassSegmentContent,
+    GlassSegmentedControl, GlassShape, Rect, UiColorScheme, UiPalette, UiTheme,
 };
 
 struct State {
@@ -486,10 +486,17 @@ fn compositor_navigation(
 ) -> AppElement<'static> {
     let mut overlay_material = GlassMaterial::clear();
     overlay_material.tint = liquid_glass::Color::transparent();
-    GlassNavigationControl::new(id, Rect::new(0.0, 0.0, 72.0, 36.0))
-        .material(overlay_material)
-        .chrome(UiTheme::new(scheme).compositor_chrome(GlassRole::FloatingControl))
-        .into_element::<Message, Theme, Renderer>(on_back, on_forward)
+    GlassSegmentedControl::new(
+        id,
+        Rect::new(0.0, 0.0, 72.0, 36.0),
+        [
+            GlassSegment::new(GlassSegmentContent::ChevronLeft, on_back),
+            GlassSegment::new(GlassSegmentContent::ChevronRight, on_forward).enabled(false),
+        ],
+    )
+    .material(overlay_material)
+    .chrome(UiTheme::new(scheme).compositor_chrome(GlassRole::FloatingControl))
+    .into_element::<Theme, Renderer>()
 }
 
 fn palette(theme: &Theme) -> UiPalette {

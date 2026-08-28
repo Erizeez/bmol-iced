@@ -38,6 +38,7 @@ pub struct GlassChrome {
     pub divider: GlassColor,
     pub shadow: GlassColor,
     pub text: GlassColor,
+    pub disabled_text: GlassColor,
     pub hover_overlay: GlassColor,
     pub pressed_overlay: GlassColor,
     pub shadow_offset_y: f32,
@@ -178,27 +179,37 @@ impl UiTheme {
     /// Builds the Iced-side border, text, state overlay, and shadow colors.
     #[must_use]
     pub fn glass_chrome(self, role: GlassRole) -> GlassChrome {
-        let (border, hover_border, divider, shadow, text, hover_overlay, pressed_overlay) =
-            match self.scheme {
-                UiColorScheme::Light => (
-                    GlassColor::rgba(0.0, 0.0, 0.0, 0.10),
-                    GlassColor::rgba(0.0, 0.0, 0.0, 0.20),
-                    GlassColor::rgba(0.0, 0.0, 0.0, 0.14),
-                    GlassColor::rgba(0.0, 0.0, 0.0, 0.14),
-                    GlassColor::rgba(0.08, 0.08, 0.09, 1.0),
-                    GlassColor::rgba(0.0, 0.0, 0.0, 0.04),
-                    GlassColor::rgba(0.0, 0.0, 0.0, 0.09),
-                ),
-                UiColorScheme::Dark => (
-                    GlassColor::rgba(1.0, 1.0, 1.0, 0.16),
-                    GlassColor::rgba(1.0, 1.0, 1.0, 0.30),
-                    GlassColor::rgba(1.0, 1.0, 1.0, 0.18),
-                    GlassColor::rgba(0.0, 0.0, 0.0, 0.30),
-                    GlassColor::rgba(0.95, 0.95, 0.97, 1.0),
-                    GlassColor::rgba(1.0, 1.0, 1.0, 0.055),
-                    GlassColor::rgba(1.0, 1.0, 1.0, 0.11),
-                ),
-            };
+        let (
+            border,
+            hover_border,
+            divider,
+            shadow,
+            text,
+            disabled_text,
+            hover_overlay,
+            pressed_overlay,
+        ) = match self.scheme {
+            UiColorScheme::Light => (
+                GlassColor::rgba(0.0, 0.0, 0.0, 0.10),
+                GlassColor::rgba(0.0, 0.0, 0.0, 0.20),
+                GlassColor::rgba(0.0, 0.0, 0.0, 0.14),
+                GlassColor::rgba(0.0, 0.0, 0.0, 0.14),
+                GlassColor::rgba(0.08, 0.08, 0.09, 1.0),
+                GlassColor::rgba(0.08, 0.08, 0.09, 0.34),
+                GlassColor::rgba(0.0, 0.0, 0.0, 0.04),
+                GlassColor::rgba(0.0, 0.0, 0.0, 0.09),
+            ),
+            UiColorScheme::Dark => (
+                GlassColor::rgba(1.0, 1.0, 1.0, 0.16),
+                GlassColor::rgba(1.0, 1.0, 1.0, 0.30),
+                GlassColor::rgba(1.0, 1.0, 1.0, 0.18),
+                GlassColor::rgba(0.0, 0.0, 0.0, 0.30),
+                GlassColor::rgba(0.95, 0.95, 0.97, 1.0),
+                GlassColor::rgba(0.95, 0.95, 0.97, 0.34),
+                GlassColor::rgba(1.0, 1.0, 1.0, 0.055),
+                GlassColor::rgba(1.0, 1.0, 1.0, 0.11),
+            ),
+        };
         let (shadow_offset_y, shadow_blur) = match role {
             GlassRole::Toolbar => (2.0, 10.0),
             GlassRole::SearchField => (3.0, 9.0),
@@ -210,6 +221,7 @@ impl UiTheme {
             divider,
             shadow,
             text,
+            disabled_text,
             hover_overlay,
             pressed_overlay,
             shadow_offset_y,
@@ -274,5 +286,14 @@ mod tests {
         assert!(chrome.border.a.abs() < f32::EPSILON);
         assert!(chrome.hover_border.a.abs() < f32::EPSILON);
         assert!(chrome.shadow.a.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn disabled_glass_content_is_visually_muted() {
+        let light = UiTheme::light().glass_chrome(GlassRole::FloatingControl);
+        let dark = UiTheme::dark().glass_chrome(GlassRole::FloatingControl);
+
+        assert!(light.disabled_text.a < light.text.a);
+        assert!(dark.disabled_text.a < dark.text.a);
     }
 }

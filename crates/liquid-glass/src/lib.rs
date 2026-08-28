@@ -20,5 +20,5 @@ pub use scene::{
 };
 pub use ui::{
     GlassButton, GlassButtonIcon, GlassChrome, GlassContainer, GlassNavigationControl, GlassRole,
-    UiColorScheme, UiPalette, UiTheme,
+    GlassSegment, GlassSegmentContent, GlassSegmentedControl, UiColorScheme, UiPalette, UiTheme,
 };

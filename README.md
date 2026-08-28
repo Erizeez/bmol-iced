@@ -14,7 +14,7 @@ Iced UI → Liquid Scene → Liquid Compositor → wgpu → Metal / Vulkan / DX1
 - `liquid-glass-scene`：Shape、Material、Backdrop、GlassNode、z-order scene
 - `liquid-glass-render`：RenderGraph、TexturePool、Renderer contract
 - `liquid-glass-animation`：Spring 基础类型
-- `liquid-glass-ui`：Iced `GlassContainer` / `GlassButton`、`UiTheme` 语义颜色与 Light/Dark `GlassChrome`
+- `liquid-glass-ui`：Iced `GlassContainer` / `GlassButton` / 任意数量的 `GlassSegmentedControl`、逐段 enabled/disabled 状态，以及 Light/Dark 语义主题
 - `liquid-glass-platform`：DPI 与窗口配置边界
 - `liquid-glass`：对外统一 facade
 
@@ -34,7 +34,7 @@ cargo run -p liquid-glass-playground --bin liquid-glass-playground
 cargo run -p liquid-glass-playground --bin liquid-glass-iced-demo
 ```
 
-该示例按 macOS System Settings 的 split-view 结构组织：232px 侧栏、侧栏搜索、右侧工具栏和收窄的分组设置列表。侧栏、列表、分割线和设置条目保持常规 UI 材质；顶部工具栏、搜索框以及前进/后退按钮才使用 `GlassNode`。`Automatic / Light / Dark` 会同步切换 Iced 标准控件、普通 UI 语义颜色、窗口背景纹理以及玻璃 material/chrome，用来验证玻璃组件与普通 UI 在两种外观下的共存关系。
+该示例按 macOS System Settings 的 split-view 结构组织：232px 侧栏、侧栏搜索、右侧工具栏和收窄的分组设置列表。侧栏、列表、分割线和设置条目保持常规 UI 材质；顶部工具栏、搜索框以及前进/后退分段控件才使用 `GlassNode`。示例中的“前进”段为 disabled，用来检查弱化图标以及 hover 不改变圆形反馈和分隔线的行为。`Automatic / Light / Dark` 会同步切换 Iced 标准控件、普通 UI 语义颜色、窗口背景纹理以及玻璃 material/chrome，用来验证玻璃组件与普通 UI 在两种外观下的共存关系。
 
 如果本机没有可用 GPU，playground 会保留打印纯 Rust foundation 信息，并报告 GPU backend 不可用；这不影响 workspace 的单元测试。
 

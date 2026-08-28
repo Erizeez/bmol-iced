@@ -451,21 +451,84 @@ where
     }
 }
 
-/// A macOS-style back/forward control backed by one continuous glass surface.
-#[derive(Clone, Debug)]
-pub struct GlassNavigationControl {
-    node: GlassNode,
-    chrome: GlassChrome,
+/// Content rendered in one equal-width glass control segment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GlassSegmentContent {
+    ChevronLeft,
+    ChevronRight,
+    Glyph(String),
 }
 
-impl GlassNavigationControl {
+impl GlassSegmentContent {
     #[must_use]
-    pub fn new(id: GlassId, bounds: Rect) -> Self {
+    pub fn glyph(value: impl Into<String>) -> Self {
+        Self::Glyph(value.into())
+    }
+}
+
+/// One independently enabled item in a [`GlassSegmentedControl`].
+#[derive(Clone, Debug)]
+pub struct GlassSegment<Message> {
+    content: GlassSegmentContent,
+    on_press: Message,
+    enabled: bool,
+}
+
+impl<Message> GlassSegment<Message> {
+    #[must_use]
+    pub const fn new(content: GlassSegmentContent, on_press: Message) -> Self {
+        Self { content, on_press, enabled: true }
+    }
+
+    #[must_use]
+    pub const fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    #[must_use]
+    pub const fn content(&self) -> &GlassSegmentContent {
+        &self.content
+    }
+}
+
+/// A reusable equal-width segmented control backed by one glass surface.
+#[derive(Clone, Debug)]
+pub struct GlassSegmentedControl<Message> {
+    node: GlassNode,
+    chrome: GlassChrome,
+    segments: Vec<GlassSegment<Message>>,
+}
+
+impl<Message> GlassSegmentedControl<Message> {
+    /// Builds a control from one or more equal-width segments.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `segments` is empty or contains more than 65,535 items.
+    #[must_use]
+    pub fn new(
+        id: GlassId,
+        bounds: Rect,
+        segments: impl IntoIterator<Item = GlassSegment<Message>>,
+    ) -> Self {
+        let segments = segments.into_iter().collect::<Vec<_>>();
+        assert!(!segments.is_empty(), "a segmented control needs at least one segment");
+        assert!(
+            u16::try_from(segments.len()).is_ok(),
+            "a segmented control supports at most 65535 segments"
+        );
         Self {
             node: GlassNode::new(id, bounds)
                 .shape(GlassShape::Capsule)
                 .material(GlassMaterial::interactive()),
             chrome: GlassChrome::default(),
+            segments,
         }
     }
 
@@ -486,8 +549,74 @@ impl GlassNavigationControl {
         &self.node
     }
 
-    /// Converts the segmented control into an Iced element with one message
-    /// for each half.
+    #[must_use]
+    pub fn segments(&self) -> &[GlassSegment<Message>] {
+        &self.segments
+    }
+
+    #[must_use]
+    pub fn into_element<Theme, Renderer>(self) -> iced::Element<'static, Message, Theme, Renderer>
+    where
+        Message: Clone + 'static,
+        Theme: 'static,
+        Renderer:
+            advanced::Renderer + advanced::graphics::geometry::Renderer + TextRenderer + 'static,
+    {
+        iced::Element::new(GlassSegmentedWidget { control: self, hovered: None, pressed: None })
+    }
+}
+
+/// Convenience wrapper for the common two-segment back/forward control.
+#[derive(Clone, Debug)]
+pub struct GlassNavigationControl {
+    node: GlassNode,
+    chrome: GlassChrome,
+    back_enabled: bool,
+    forward_enabled: bool,
+}
+
+impl GlassNavigationControl {
+    #[must_use]
+    pub fn new(id: GlassId, bounds: Rect) -> Self {
+        Self {
+            node: GlassNode::new(id, bounds)
+                .shape(GlassShape::Capsule)
+                .material(GlassMaterial::interactive()),
+            chrome: GlassChrome::default(),
+            back_enabled: true,
+            forward_enabled: true,
+        }
+    }
+
+    #[must_use]
+    pub fn material(mut self, material: GlassMaterial) -> Self {
+        self.node = self.node.material(material);
+        self
+    }
+
+    #[must_use]
+    pub const fn chrome(mut self, chrome: GlassChrome) -> Self {
+        self.chrome = chrome;
+        self
+    }
+
+    #[must_use]
+    pub const fn back_enabled(mut self, enabled: bool) -> Self {
+        self.back_enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn forward_enabled(mut self, enabled: bool) -> Self {
+        self.forward_enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn node(&self) -> &GlassNode {
+        &self.node
+    }
+
     #[must_use]
     pub fn into_element<Message, Theme, Renderer>(
         self,
@@ -497,36 +626,33 @@ impl GlassNavigationControl {
     where
         Message: Clone + 'static,
         Theme: 'static,
-        Renderer: advanced::Renderer + advanced::graphics::geometry::Renderer + 'static,
+        Renderer:
+            advanced::Renderer + advanced::graphics::geometry::Renderer + TextRenderer + 'static,
     {
-        iced::Element::new(GlassNavigationWidget {
-            control: self,
-            on_back,
-            on_forward,
-            hovered: None,
-            pressed: None,
-        })
+        GlassSegmentedControl {
+            node: self.node,
+            chrome: self.chrome,
+            segments: vec![
+                GlassSegment::new(GlassSegmentContent::ChevronLeft, on_back)
+                    .enabled(self.back_enabled),
+                GlassSegment::new(GlassSegmentContent::ChevronRight, on_forward)
+                    .enabled(self.forward_enabled),
+            ],
+        }
+        .into_element()
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NavigationSegment {
-    Back,
-    Forward,
+struct GlassSegmentedWidget<Message> {
+    control: GlassSegmentedControl<Message>,
+    hovered: Option<usize>,
+    pressed: Option<usize>,
 }
 
-struct GlassNavigationWidget<Message> {
-    control: GlassNavigationControl,
-    on_back: Message,
-    on_forward: Message,
-    hovered: Option<NavigationSegment>,
-    pressed: Option<NavigationSegment>,
-}
-
-impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for GlassNavigationWidget<Message>
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for GlassSegmentedWidget<Message>
 where
     Message: Clone,
-    Renderer: advanced::Renderer + advanced::graphics::geometry::Renderer,
+    Renderer: advanced::Renderer + advanced::graphics::geometry::Renderer + TextRenderer,
 {
     fn size(&self) -> Size<Length> {
         Size::new(
@@ -558,8 +684,6 @@ where
         _cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        use advanced::graphics::geometry::{Frame, LineCap, LineJoin, Path, Stroke};
-
         let bounds = layout.bounds();
         if bounds.intersection(viewport).is_none() {
             return;
@@ -582,10 +706,11 @@ where
             Background::Color(iced_color(self.control.node.material.tint)),
         );
 
-        let half_width = bounds.width * 0.5;
-        if let Some(segment) = self.hovered {
-            let hover_bounds = navigation_hover_bounds(bounds, segment);
-            let overlay = if self.pressed == Some(segment) {
+        let segment_count = self.control.segments.len();
+        let segment_width = bounds.width / count_as_f32(segment_count);
+        if let Some(index) = self.hovered {
+            let hover_bounds = segment_hover_bounds(bounds, segment_count, index);
+            let overlay = if self.pressed == Some(index) {
                 self.control.chrome.pressed_overlay
             } else {
                 self.control.chrome.hover_overlay
@@ -601,11 +726,14 @@ where
             );
         }
 
-        if self.hovered.is_none() {
+        for divider_index in 1..segment_count {
+            if divider_touches_hovered(divider_index, self.hovered) {
+                continue;
+            }
             renderer.fill_quad(
                 renderer::Quad {
                     bounds: Rectangle {
-                        x: bounds.x + half_width - 0.5,
+                        x: bounds.x + segment_width * count_as_f32(divider_index) - 0.5,
                         y: bounds.y + 8.0,
                         width: 1.0,
                         height: bounds.height - 16.0,
@@ -618,31 +746,13 @@ where
             );
         }
 
-        let icon_color = iced_color(self.control.chrome.text);
-        renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
-            let mut frame = Frame::new(renderer, bounds.size());
-            let center_y = bounds.height * 0.5;
-            let centers = [half_width * 0.5, half_width * 1.5];
-            let stroke = Stroke::default()
-                .with_color(icon_color)
-                .with_width(1.8)
-                .with_line_cap(LineCap::Round)
-                .with_line_join(LineJoin::Round);
-
-            let back = Path::new(|path| {
-                path.move_to(iced::Point::new(centers[0] + 2.5, center_y - 5.0));
-                path.line_to(iced::Point::new(centers[0] - 2.5, center_y));
-                path.line_to(iced::Point::new(centers[0] + 2.5, center_y + 5.0));
-            });
-            let forward = Path::new(|path| {
-                path.move_to(iced::Point::new(centers[1] - 2.5, center_y - 5.0));
-                path.line_to(iced::Point::new(centers[1] + 2.5, center_y));
-                path.line_to(iced::Point::new(centers[1] - 2.5, center_y + 5.0));
-            });
-            frame.stroke(&back, stroke);
-            frame.stroke(&forward, stroke);
-            renderer.draw_geometry(frame.into_geometry());
-        });
+        draw_segment_content(
+            renderer,
+            &self.control.segments,
+            self.control.chrome,
+            bounds,
+            *viewport,
+        );
     }
 
     fn update(
@@ -656,7 +766,7 @@ where
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
-        let hovered = navigation_segment_at(layout.bounds(), cursor);
+        let hovered = enabled_segment_at(&self.control.segments, layout.bounds(), cursor);
         let previous_hovered = self.hovered;
         let previous_pressed = self.pressed;
         self.hovered = hovered;
@@ -671,14 +781,10 @@ where
             {
                 let pressed = self.pressed.take();
                 shell.capture_event();
-                if pressed == hovered {
-                    match pressed {
-                        Some(NavigationSegment::Back) => shell.publish(self.on_back.clone()),
-                        Some(NavigationSegment::Forward) => {
-                            shell.publish(self.on_forward.clone());
-                        }
-                        None => {}
-                    }
+                if pressed == hovered
+                    && let Some(index) = pressed
+                {
+                    shell.publish(self.control.segments[index].on_press.clone());
                 }
             }
             _ => {}
@@ -697,7 +803,7 @@ where
         _viewport: &Rectangle,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
-        if navigation_segment_at(layout.bounds(), cursor).is_some() {
+        if enabled_segment_at(&self.control.segments, layout.bounds(), cursor).is_some() {
             mouse::Interaction::Pointer
         } else {
             mouse::Interaction::default()
@@ -705,22 +811,114 @@ where
     }
 }
 
-fn navigation_segment_at(bounds: Rectangle, cursor: mouse::Cursor) -> Option<NavigationSegment> {
-    cursor.position_over(bounds).map(|position| {
-        if position.x < bounds.center_x() {
-            NavigationSegment::Back
-        } else {
-            NavigationSegment::Forward
+fn draw_segment_content<Message, Renderer>(
+    renderer: &mut Renderer,
+    segments: &[GlassSegment<Message>],
+    chrome: GlassChrome,
+    bounds: Rectangle,
+    viewport: Rectangle,
+) where
+    Renderer: advanced::Renderer + advanced::graphics::geometry::Renderer + TextRenderer,
+{
+    use advanced::graphics::geometry::{Frame, LineCap, LineJoin, Path, Stroke};
+
+    let segment_width = bounds.width / count_as_f32(segments.len());
+    renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let center_y = bounds.height * 0.5;
+
+        for (index, segment) in segments.iter().enumerate() {
+            let center_x = segment_width * (count_as_f32(index) + 0.5);
+            let icon_color = iced_color(segment_text_color(segment, chrome));
+            let stroke = Stroke::default()
+                .with_color(icon_color)
+                .with_width(1.8)
+                .with_line_cap(LineCap::Round)
+                .with_line_join(LineJoin::Round);
+            let path = match segment.content {
+                GlassSegmentContent::ChevronLeft => Some(Path::new(|path| {
+                    path.move_to(iced::Point::new(center_x + 2.5, center_y - 5.0));
+                    path.line_to(iced::Point::new(center_x - 2.5, center_y));
+                    path.line_to(iced::Point::new(center_x + 2.5, center_y + 5.0));
+                })),
+                GlassSegmentContent::ChevronRight => Some(Path::new(|path| {
+                    path.move_to(iced::Point::new(center_x - 2.5, center_y - 5.0));
+                    path.line_to(iced::Point::new(center_x + 2.5, center_y));
+                    path.line_to(iced::Point::new(center_x - 2.5, center_y + 5.0));
+                })),
+                GlassSegmentContent::Glyph(_) => None,
+            };
+            if let Some(path) = path {
+                frame.stroke(&path, stroke);
+            }
         }
-    })
+        renderer.draw_geometry(frame.into_geometry());
+    });
+
+    for (index, segment) in segments.iter().enumerate() {
+        let GlassSegmentContent::Glyph(content) = &segment.content else {
+            continue;
+        };
+        renderer.fill_text(
+            advanced::Text {
+                content: content.clone(),
+                bounds: Size::new(segment_width, bounds.height),
+                size: Pixels(14.0),
+                line_height: advanced::text::LineHeight::default(),
+                font: renderer.default_font(),
+                align_x: advanced::text::Alignment::Center,
+                align_y: iced::alignment::Vertical::Center,
+                shaping: advanced::text::Shaping::Auto,
+                wrapping: advanced::text::Wrapping::None,
+            },
+            iced::Point::new(
+                bounds.x + segment_width * (count_as_f32(index) + 0.5),
+                bounds.center_y(),
+            ),
+            iced_color(segment_text_color(segment, chrome)),
+            viewport,
+        );
+    }
 }
 
-fn navigation_hover_bounds(bounds: Rectangle, segment: NavigationSegment) -> Rectangle {
-    let diameter = bounds.height;
-    let segment_center_x = match segment {
-        NavigationSegment::Back => bounds.x + bounds.width * 0.25,
-        NavigationSegment::Forward => bounds.x + bounds.width * 0.75,
-    };
+fn segment_text_color<Message>(
+    segment: &GlassSegment<Message>,
+    chrome: GlassChrome,
+) -> liquid_glass_scene::Color {
+    if segment.enabled { chrome.text } else { chrome.disabled_text }
+}
+
+fn count_as_f32(value: usize) -> f32 {
+    f32::from(u16::try_from(value).expect("segment count was validated during construction"))
+}
+
+fn segment_index_at(
+    bounds: Rectangle,
+    segment_count: usize,
+    cursor: mouse::Cursor,
+) -> Option<usize> {
+    let position = cursor.position_over(bounds)?;
+    let segment_width = bounds.width / count_as_f32(segment_count);
+    (0..segment_count)
+        .find(|index| position.x < bounds.x + segment_width * count_as_f32(index.saturating_add(1)))
+}
+
+fn enabled_segment_at<Message>(
+    segments: &[GlassSegment<Message>],
+    bounds: Rectangle,
+    cursor: mouse::Cursor,
+) -> Option<usize> {
+    segment_index_at(bounds, segments.len(), cursor).filter(|index| segments[*index].enabled)
+}
+
+fn divider_touches_hovered(divider_index: usize, hovered: Option<usize>) -> bool {
+    hovered.is_some_and(|index| divider_index == index || divider_index == index.saturating_add(1))
+}
+
+fn segment_hover_bounds(bounds: Rectangle, segment_count: usize, index: usize) -> Rectangle {
+    let segment_width = bounds.width / count_as_f32(segment_count);
+    let diameter = segment_width.min(bounds.height);
+    let segment_center_x = bounds.x + segment_width * (count_as_f32(index) + 0.5);
     Rectangle {
         x: segment_center_x - diameter * 0.5,
         y: bounds.center_y() - diameter * 0.5,
@@ -822,10 +1020,40 @@ mod tests {
     #[test]
     fn navigation_hover_feedback_is_a_centered_circle() {
         let bounds = Rectangle { x: 10.0, y: 20.0, width: 72.0, height: 36.0 };
-        let hover = navigation_hover_bounds(bounds, NavigationSegment::Forward);
+        let hover = segment_hover_bounds(bounds, 2, 1);
 
         assert!((hover.width - hover.height).abs() < f32::EPSILON);
         assert!((hover.center_x() - (bounds.x + bounds.width * 0.75)).abs() < f32::EPSILON);
         assert!((hover.center_y() - bounds.center_y()).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn segmented_control_accepts_more_than_two_items() {
+        let control = GlassSegmentedControl::new(
+            GlassId(13),
+            Rect::new(0.0, 0.0, 108.0, 36.0),
+            [
+                GlassSegment::new(GlassSegmentContent::ChevronLeft, 1_u8),
+                GlassSegment::new(GlassSegmentContent::glyph("⌂"), 2_u8),
+                GlassSegment::new(GlassSegmentContent::ChevronRight, 3_u8),
+            ],
+        );
+
+        assert_eq!(control.segments().len(), 3);
+        assert_eq!(control.segments()[1].content(), &GlassSegmentContent::glyph("⌂"));
+    }
+
+    #[test]
+    fn disabled_segment_does_not_hover_or_hide_dividers() {
+        let segments = [
+            GlassSegment::new(GlassSegmentContent::ChevronLeft, 1_u8),
+            GlassSegment::new(GlassSegmentContent::ChevronRight, 2_u8).enabled(false),
+        ];
+        let bounds = Rectangle { x: 0.0, y: 0.0, width: 72.0, height: 36.0 };
+        let cursor = mouse::Cursor::Available(iced::Point::new(54.0, 18.0));
+        let hovered = enabled_segment_at(&segments, bounds, cursor);
+
+        assert_eq!(hovered, None);
+        assert!(!divider_touches_hovered(1, hovered));
     }
 }
