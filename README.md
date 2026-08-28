@@ -34,7 +34,7 @@ cargo run -p liquid-glass-playground --bin liquid-glass-playground
 cargo run -p liquid-glass-playground --bin liquid-glass-iced-demo
 ```
 
-该示例使用标准 Iced application runtime，展示 `GlassContainer` 的 layout、quad 绘制、hover 状态，以及 `GlassButton` 的文字绘制、pressed 状态和 `on_press` 消息。
+该示例是一个可交互的 Liquid Glass Dashboard：背景包含网格、光斑、环形高光和斜向纹理，前景组合了侧栏、工具栏、统计卡片、搜索框、滑杆、进度条、开关、复选框、活动列表和两个 `GlassButton`。可以直接调节 blur、切换材质选项并观察玻璃表面与复杂背景的叠加效果。
 
 如果本机没有可用 GPU，playground 会保留打印纯 Rust foundation 信息，并报告 GPU backend 不可用；这不影响 workspace 的单元测试。
 
