@@ -133,7 +133,7 @@ fn view(state: &State) -> AppElement<'_> {
     let toolbar = glass_surface_with_padding(
         GlassId(10),
         Rect::new(0.0, 0.0, 1087.0, 56.0),
-        GlassShape::RoundedRect { radius: 0.0 },
+        UiTheme::new(state.color_scheme()).glass_shape(GlassRole::Toolbar),
         GlassRole::Toolbar,
         state.color_scheme(),
         8.0,
@@ -445,8 +445,8 @@ fn glass_search(value: &str, scheme: UiColorScheme) -> AppElement<'_> {
     glass_surface_with_padding(
         GlassId(11),
         Rect::new(0.0, 0.0, 212.0, 36.0),
-        GlassShape::Superellipse { exponent: 4.5 },
-        GlassRole::SearchField,
+        UiTheme::new(scheme).glass_shape(GlassRole::InputField),
+        GlassRole::InputField,
         scheme,
         2.0,
         field,

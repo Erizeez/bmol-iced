@@ -170,6 +170,8 @@ pub struct FresnelStyle {
 pub struct GlassMaterial {
     pub blur: BlurStyle,
     pub tint: Color,
+    /// Neutral white mixed into the tint independently of its hue.
+    pub whiteness: f32,
     pub refraction: RefractionStyle,
     pub dispersion: DispersionStyle,
     pub fresnel: FresnelStyle,
@@ -182,6 +184,7 @@ impl GlassMaterial {
         Self {
             blur: BlurStyle { radius: 10.0, edge_blur: true },
             tint: Color::rgba(1.0, 1.0, 1.0, 0.12),
+            whiteness: 0.0,
             refraction: RefractionStyle { thickness: 0.18, index: 1.45, strength: 0.35 },
             dispersion: DispersionStyle { strength: 0.08, spread: 0.02 },
             fresnel: FresnelStyle { range: 0.75, hardness: 0.6, strength: 0.35 },

@@ -1,7 +1,7 @@
 //! Semantic colors and glass materials shared by Iced integrations.
 
 use iced::{Color as IcedColor, Theme};
-use liquid_glass_scene::{Color as GlassColor, GlassMaterial};
+use liquid_glass_scene::{Color as GlassColor, GlassMaterial, GlassShape};
 
 /// The resolved light or dark tone used to render an application window.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -26,6 +26,8 @@ impl UiColorScheme {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GlassRole {
     Toolbar,
+    InputField,
+    /// Compatibility role for search-specific input fields.
     SearchField,
     FloatingControl,
 }
@@ -142,30 +144,31 @@ impl UiTheme {
     /// Builds a scheme-aware material for a selective glass surface.
     #[must_use]
     pub fn glass_material(self, role: GlassRole) -> GlassMaterial {
-        let (blur_radius, tint) = match (self.scheme, role) {
+        let (blur_radius, tint, whiteness) = match (self.scheme, role) {
             (UiColorScheme::Light, GlassRole::Toolbar) => {
-                (16.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.08))
+                (16.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.04), 0.04)
             }
-            (UiColorScheme::Light, GlassRole::SearchField) => {
-                (12.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.12))
+            (UiColorScheme::Light, GlassRole::InputField | GlassRole::SearchField) => {
+                (14.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.06), 0.14)
             }
             (UiColorScheme::Light, GlassRole::FloatingControl) => {
-                (9.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.14))
+                (9.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.06), 0.06)
             }
             (UiColorScheme::Dark, GlassRole::Toolbar) => {
-                (16.0, GlassColor::rgba(0.10, 0.13, 0.20, 0.10))
+                (16.0, GlassColor::rgba(0.10, 0.13, 0.20, 0.08), 0.025)
             }
-            (UiColorScheme::Dark, GlassRole::SearchField) => {
-                (12.0, GlassColor::rgba(0.14, 0.18, 0.27, 0.12))
+            (UiColorScheme::Dark, GlassRole::InputField | GlassRole::SearchField) => {
+                (14.0, GlassColor::rgba(0.14, 0.18, 0.27, 0.09), 0.10)
             }
             (UiColorScheme::Dark, GlassRole::FloatingControl) => {
-                (9.0, GlassColor::rgba(0.17, 0.22, 0.34, 0.13))
+                (9.0, GlassColor::rgba(0.17, 0.22, 0.34, 0.10), 0.05)
             }
         };
 
         let mut material = GlassMaterial::clear();
         material.blur.radius = blur_radius;
         material.tint = tint;
+        material.whiteness = whiteness;
         material.refraction.thickness = 0.20;
         material.refraction.index = 1.40;
         material.dispersion.strength = 0.07;
@@ -174,6 +177,18 @@ impl UiTheme {
         material.fresnel.strength = 0.20;
         material.opacity = 1.0;
         material
+    }
+
+    /// Returns the default geometry associated with a semantic glass role.
+    #[must_use]
+    pub const fn glass_shape(self, role: GlassRole) -> GlassShape {
+        match role {
+            GlassRole::Toolbar => GlassShape::RoundedRect { radius: 0.0 },
+            GlassRole::InputField | GlassRole::SearchField => {
+                GlassShape::RoundedRect { radius: 10.0 }
+            }
+            GlassRole::FloatingControl => GlassShape::Capsule,
+        }
     }
 
     /// Builds the Iced-side border, text, state overlay, and shadow colors.
@@ -212,7 +227,7 @@ impl UiTheme {
         };
         let (shadow_offset_y, shadow_blur) = match role {
             GlassRole::Toolbar => (2.0, 10.0),
-            GlassRole::SearchField => (3.0, 9.0),
+            GlassRole::InputField | GlassRole::SearchField => (3.0, 9.0),
             GlassRole::FloatingControl => (4.0, 10.0),
         };
         GlassChrome {
@@ -272,10 +287,21 @@ mod tests {
     #[test]
     fn glass_roles_use_different_blur_radii() {
         let theme = UiTheme::dark();
+        let input = theme.glass_material(GlassRole::InputField);
+        let button = theme.glass_material(GlassRole::FloatingControl);
 
-        assert!(
-            theme.glass_material(GlassRole::Toolbar).blur.radius
-                > theme.glass_material(GlassRole::FloatingControl).blur.radius
+        assert!(theme.glass_material(GlassRole::Toolbar).blur.radius > button.blur.radius);
+        assert!(input.blur.radius > button.blur.radius);
+        assert!(input.whiteness > button.whiteness);
+    }
+
+    #[test]
+    fn input_fields_default_to_continuous_rounded_rectangles() {
+        let theme = UiTheme::light();
+
+        assert_eq!(
+            theme.glass_shape(GlassRole::InputField),
+            GlassShape::RoundedRect { radius: 10.0 }
         );
     }
 

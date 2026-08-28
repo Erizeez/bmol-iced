@@ -9,8 +9,7 @@ mod background;
 
 use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
 use liquid_glass::{
-    GlassId, GlassNode, GlassRole, GlassScene, GlassShape, GpuRenderer, GpuSize, Rect,
-    UiColorScheme, UiTheme,
+    GlassId, GlassNode, GlassRole, GlassScene, GpuRenderer, GpuSize, Rect, UiColorScheme, UiTheme,
 };
 
 static ACTIVE_COLOR_SCHEME: AtomicU8 = AtomicU8::new(1);
@@ -445,17 +444,17 @@ fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorSch
 
     scene.push(
         GlassNode::new(GlassId(10), Rect::new(content_x, 0.0, content_width, 56.0))
-            .shape(GlassShape::RoundedRect { radius: 0.0 })
+            .shape(theme.glass_shape(GlassRole::Toolbar))
             .material(theme.glass_material(GlassRole::Toolbar)),
     );
     scene.push(
         GlassNode::new(GlassId(11), Rect::new(10.0, 10.0, 212.0, 36.0))
-            .shape(GlassShape::Superellipse { exponent: 4.5 })
-            .material(theme.glass_material(GlassRole::SearchField)),
+            .shape(theme.glass_shape(GlassRole::InputField))
+            .material(theme.glass_material(GlassRole::InputField)),
     );
     scene.push(
         GlassNode::new(GlassId(12), Rect::new(content_x + 8.0, 10.0, 72.0, 36.0))
-            .shape(GlassShape::Capsule)
+            .shape(theme.glass_shape(GlassRole::FloatingControl))
             .material(theme.glass_material(GlassRole::FloatingControl)),
     );
     scale_scene(&mut scene, scale_factor);

@@ -670,6 +670,7 @@ fn uniform_for_node(
     let center_x = node.bounds.x + node.bounds.width * 0.5;
     let center_y = size.height as f32 - node.bounds.y - node.bounds.height * 0.5;
     let material = node.material;
+    let tint = tint_with_whiteness(material);
     let shape_radius = shape_radius(node);
     let shape_roundness = shape_roundness(node);
     GlassUniform {
@@ -685,7 +686,7 @@ fn uniform_for_node(
             material.blur.radius.round() as i32,
             i32::from(material.blur.edge_blur),
         ],
-        tint: [material.tint.r, material.tint.g, material.tint.b, material.tint.a],
+        tint,
         refraction_and_fresnel: [
             (material.refraction.thickness * 100.0).max(1.0),
             material.refraction.index,
@@ -697,6 +698,23 @@ fn uniform_for_node(
         glare: [30.0, 0.2, 0.5, 0.8, 0.9],
         _pad: material.opacity,
     }
+}
+
+fn tint_with_whiteness(material: liquid_glass_scene::GlassMaterial) -> [f32; 4] {
+    let tint_alpha = material.tint.a.clamp(0.0, 1.0);
+    let white_alpha = material.whiteness.clamp(0.0, 1.0);
+    let combined_alpha = 1.0 - (1.0 - tint_alpha) * (1.0 - white_alpha);
+    if combined_alpha <= f32::EPSILON {
+        return [material.tint.r, material.tint.g, material.tint.b, 0.0];
+    }
+
+    let tint_weight = tint_alpha * (1.0 - white_alpha);
+    [
+        (material.tint.r * tint_weight + white_alpha) / combined_alpha,
+        (material.tint.g * tint_weight + white_alpha) / combined_alpha,
+        (material.tint.b * tint_weight + white_alpha) / combined_alpha,
+        combined_alpha,
+    ]
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -1178,5 +1196,19 @@ mod tests {
         assert!((shape_roundness(&circular) - 2.0).abs() < f32::EPSILON);
         assert!((shape_roundness(&capsule) - 2.0).abs() < f32::EPSILON);
         assert!((shape_roundness(&circle) - 2.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn whiteness_adds_a_neutral_layer_above_tint() {
+        let mut material = GlassMaterial::clear();
+        material.tint = liquid_glass_scene::Color::rgba(0.2, 0.4, 0.8, 0.10);
+        material.whiteness = 0.20;
+
+        let effective = tint_with_whiteness(material);
+
+        assert!((effective[3] - 0.28).abs() < f32::EPSILON);
+        assert!(effective[0] > material.tint.r);
+        assert!(effective[1] > material.tint.g);
+        assert!(effective[2] > material.tint.b);
     }
 }
