@@ -477,7 +477,7 @@ fn glass_surface_with_padding<'a>(
     let background = GlassContainer::new(id, bounds)
         .shape(shape)
         .material(overlay_material)
-        .chrome(UiTheme::new(scheme).glass_chrome(role))
+        .chrome(UiTheme::new(scheme).compositor_chrome(role))
         .into_element::<Message, Theme, Renderer>();
     let foreground: AppElement<'a> = container(content)
         .width(Length::Fixed(bounds.width))
@@ -499,7 +499,7 @@ fn compositor_button(
     overlay_material.tint = liquid_glass::Color::transparent();
     GlassButton::new(id, label, Rect::new(0.0, 0.0, width, height))
         .material(overlay_material)
-        .chrome(UiTheme::new(scheme).glass_chrome(GlassRole::FloatingControl))
+        .chrome(UiTheme::new(scheme).compositor_chrome(GlassRole::FloatingControl))
         .into_element::<Message, Theme, Renderer>(message)
 }
 
@@ -612,16 +612,11 @@ fn segmented_button_style(theme: &Theme, status: button::Status, selected: bool)
     }
 }
 
-fn search_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+fn search_style(theme: &Theme, _status: text_input::Status) -> text_input::Style {
     let palette = palette(theme);
-    let border = if matches!(status, text_input::Status::Focused { .. }) {
-        palette.accent.scale_alpha(0.55)
-    } else {
-        palette.group_border
-    };
     text_input::Style {
         background: Background::Color(Color::TRANSPARENT),
-        border: Border::default().rounded(8.0).width(1.0).color(border),
+        border: Border::default().rounded(8.0).width(0.0).color(Color::TRANSPARENT),
         icon: palette.text_secondary,
         placeholder: palette.text_secondary,
         value: palette.text_primary,

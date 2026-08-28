@@ -212,6 +212,22 @@ impl UiTheme {
             shadow_blur,
         }
     }
+
+    /// Returns chrome for an Iced widget layered over a real shader surface.
+    /// The shader owns the edge highlight and shadow, so the overlay only
+    /// keeps text and interaction-state fills.
+    #[must_use]
+    pub fn compositor_chrome(self, role: GlassRole) -> GlassChrome {
+        let mut chrome = self.glass_chrome(role);
+        chrome.border = GlassColor::transparent();
+        chrome.hover_border = GlassColor::transparent();
+        chrome.shadow = GlassColor::transparent();
+        if role == GlassRole::Toolbar {
+            chrome.hover_overlay = GlassColor::transparent();
+            chrome.pressed_overlay = GlassColor::transparent();
+        }
+        chrome
+    }
 }
 
 impl Default for GlassChrome {
@@ -245,5 +261,14 @@ mod tests {
             theme.glass_material(GlassRole::Toolbar).blur.radius
                 > theme.glass_material(GlassRole::FloatingControl).blur.radius
         );
+    }
+
+    #[test]
+    fn compositor_chrome_leaves_edges_to_the_shader() {
+        let chrome = UiTheme::light().compositor_chrome(GlassRole::SearchField);
+
+        assert!(chrome.border.a.abs() < f32::EPSILON);
+        assert!(chrome.hover_border.a.abs() < f32::EPSILON);
+        assert!(chrome.shadow.a.abs() < f32::EPSILON);
     }
 }

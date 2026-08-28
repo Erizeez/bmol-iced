@@ -205,7 +205,7 @@ where
 fn shape_radius(node: &GlassNode) -> f32 {
     match node.shape {
         GlassShape::RoundedRect { radius } => radius,
-        GlassShape::Superellipse { .. } => node.bounds.width.min(node.bounds.height) * 0.2,
+        GlassShape::Superellipse { .. } => node.bounds.width.min(node.bounds.height) * 0.4,
         GlassShape::Capsule => node.bounds.height * 0.5,
         GlassShape::Circle => node.bounds.width.min(node.bounds.height) * 0.5,
         GlassShape::Ellipse => node.bounds.width.min(node.bounds.height) * 0.25,

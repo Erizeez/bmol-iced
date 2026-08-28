@@ -453,7 +453,7 @@ fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorSch
             .shape(GlassShape::Superellipse { exponent: 4.5 })
             .material(theme.glass_material(GlassRole::SearchField)),
     );
-    for (id, x) in [(12, content_x + 12.0), (13, content_x + 56.0)] {
+    for (id, x) in [(12, content_x + 8.0), (13, content_x + 52.0)] {
         scene.push(
             GlassNode::new(GlassId(id), Rect::new(x, 8.0, 36.0, 40.0))
                 .shape(GlassShape::Capsule)
