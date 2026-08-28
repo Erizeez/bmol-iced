@@ -223,7 +223,7 @@ impl GlassNode {
     }
 }
 
-/// A small scene collection used by the first compositor pass.
+/// A scene collection consumed by the Liquid Glass compositor.
 #[derive(Clone, Debug, Default)]
 pub struct GlassScene {
     nodes: Vec<GlassNode>,
@@ -237,6 +237,14 @@ impl GlassScene {
     #[must_use]
     pub fn nodes(&self) -> &[GlassNode] {
         &self.nodes
+    }
+
+    /// Returns nodes in stable back-to-front order for compositor drawing.
+    #[must_use]
+    pub fn nodes_in_render_order(&self) -> Vec<&GlassNode> {
+        let mut nodes: Vec<_> = self.nodes.iter().collect();
+        nodes.sort_by_key(|node| node.z_index);
+        nodes
     }
 
     #[must_use]
@@ -283,5 +291,21 @@ mod tests {
         assert!(
             (node.backdrop.blur_radius - GlassMaterial::thick().blur.radius).abs() < f32::EPSILON
         );
+    }
+
+    #[test]
+    fn render_order_is_sorted_by_z_index() {
+        let mut front = GlassNode::new(GlassId(2), Rect::new(20.0, 20.0, 10.0, 10.0));
+        front.z_index = 10;
+        let mut back = GlassNode::new(GlassId(1), Rect::new(0.0, 0.0, 10.0, 10.0));
+        back.z_index = -1;
+
+        let mut scene = GlassScene::default();
+        scene.push(front);
+        scene.push(back);
+
+        let order = scene.nodes_in_render_order();
+
+        assert_eq!(order.iter().map(|node| node.id).collect::<Vec<_>>(), [GlassId(1), GlassId(2)]);
     }
 }

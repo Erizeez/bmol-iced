@@ -2,7 +2,8 @@ use std::{sync::Arc, time::Instant};
 
 use iced::Size as IcedSize;
 use liquid_glass::{
-    GlassContainer, GlassId, GlassMaterial, GlassNode, GlassShape, GpuRenderer, GpuSize, Rect,
+    GlassContainer, GlassId, GlassMaterial, GlassNode, GlassScene, GlassShape, GpuRenderer,
+    GpuSize, Rect,
 };
 use winit::{
     application::ApplicationHandler,
@@ -28,7 +29,8 @@ struct WindowState {
     config: wgpu::SurfaceConfiguration,
     renderer: GpuRenderer,
     panel_widget: GlassContainer,
-    panel: GlassNode,
+    secondary_panel: GlassNode,
+    scene: GlassScene,
     started_at: Instant,
 }
 
@@ -80,6 +82,13 @@ impl Playground {
                 .material(GlassMaterial::regular());
         let panel = panel_widget.layout_scene_node(iced_viewport_size(config.width, config.height));
         let panel_bounds = panel.bounds;
+        let mut secondary_panel = GlassNode::new(GlassId(2), Rect::new(390.0, 260.0, 280.0, 190.0))
+            .shape(GlassShape::RoundedRect { radius: 42.0 })
+            .material(GlassMaterial::interactive());
+        secondary_panel.z_index = 1;
+        let mut scene = GlassScene::default();
+        scene.push(panel);
+        scene.push(secondary_panel.clone());
 
         self.window = Some(window);
         self.state = Some(WindowState {
@@ -87,13 +96,15 @@ impl Playground {
             config,
             renderer,
             panel_widget,
-            panel,
+            secondary_panel,
+            scene,
             started_at: Instant::now(),
         });
         println!(
-            "Liquid Glass window initialized: {}x{}; Iced layout -> scene node {:.0}x{:.0} at ({:.0}, {:.0})",
+            "Liquid Glass window initialized: {}x{}; Iced layout -> {} scene nodes; primary {:.0}x{:.0} at ({:.0}, {:.0})",
             size.width,
             size.height,
+            2,
             panel_bounds.width,
             panel_bounds.height,
             panel_bounds.x,
@@ -150,8 +161,11 @@ impl WindowState {
         self.config.height = size.height;
         self.renderer.resize(GpuSize::new(size.width, size.height)).expect("resize GPU targets");
         self.surface.configure(self.renderer.device(), &self.config);
-        self.panel =
+        let panel =
             self.panel_widget.layout_scene_node(iced_viewport_size(size.width, size.height));
+        self.scene = GlassScene::default();
+        self.scene.push(panel);
+        self.scene.push(self.secondary_panel.clone());
     }
 
     fn reconfigure(&mut self) {
@@ -161,19 +175,23 @@ impl WindowState {
     fn render(&mut self) -> RenderOutcome {
         match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => {
-                self.renderer.render_panel_to_surface_texture(
-                    frame,
-                    &self.panel,
-                    self.started_at.elapsed().as_secs_f32(),
-                );
+                self.renderer
+                    .render_scene_to_surface_texture(
+                        frame,
+                        &self.scene,
+                        self.started_at.elapsed().as_secs_f32(),
+                    )
+                    .expect("render glass scene");
                 RenderOutcome::Presented
             }
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                self.renderer.render_panel_to_surface_texture(
-                    frame,
-                    &self.panel,
-                    self.started_at.elapsed().as_secs_f32(),
-                );
+                self.renderer
+                    .render_scene_to_surface_texture(
+                        frame,
+                        &self.scene,
+                        self.started_at.elapsed().as_secs_f32(),
+                    )
+                    .expect("render glass scene");
                 RenderOutcome::Reconfigure
             }
             wgpu::CurrentSurfaceTexture::Outdated

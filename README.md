@@ -11,14 +11,14 @@ Iced UI → Liquid Scene → Liquid Compositor → wgpu → Metal / Vulkan / DX1
 
 当前是 foundation 版本，已建立以下边界：
 
-- `liquid-glass-scene`：Shape、Material、Backdrop、GlassNode
+- `liquid-glass-scene`：Shape、Material、Backdrop、GlassNode、z-order scene
 - `liquid-glass-render`：RenderGraph、TexturePool、Renderer contract
 - `liquid-glass-animation`：Spring 基础类型
 - `liquid-glass-ui`：Container/Button 到 Scene 的初始映射
 - `liquid-glass-platform`：DPI 与窗口配置边界
 - `liquid-glass`：对外统一 facade
 
-`liquid-glass-render` 已包含第一个真实 `wgpu` offscreen backend：背景场景 Pass、半分辨率 downsample、horizontal/vertical separable blur、SDF Glass Pass 和最终离屏纹理。`liquid-glass-ui` 已包含第一版 Iced custom widget，并提供 `layout_scene_node` 将实际 Iced layout 结果桥接为 `GlassNode`；原生 playground 会在初始化和 Resize 时使用这份结果。
+`liquid-glass-render` 已包含第一个真实 `wgpu` offscreen backend：背景场景 Pass、半分辨率 downsample、horizontal/vertical separable blur、按 `z_index` 绘制多个 SDF Glass node 的 Glass Pass 和最终离屏纹理。`liquid-glass-ui` 已包含第一版 Iced custom widget，并提供 `layout_scene_node` 将实际 Iced layout 结果桥接为 `GlassNode`；原生 playground 会在初始化和 Resize 时使用这份结果。
 
 ## 运行 playground
 

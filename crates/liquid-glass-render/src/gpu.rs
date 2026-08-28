@@ -1,9 +1,14 @@
 use std::{borrow::Cow, fmt};
 
 use bytemuck::{Pod, Zeroable};
-use liquid_glass_scene::{GlassNode, GlassShape};
+use liquid_glass_scene::{GlassNode, GlassScene, GlassShape};
 
 const DEFAULT_OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+#[allow(clippy::cast_possible_truncation)]
+const GLASS_UNIFORM_SIZE: u32 = std::mem::size_of::<GlassUniform>() as u32;
+
+/// Maximum number of glass nodes that can be drawn in one frame.
+pub const MAX_GLASS_NODES: usize = 64;
 
 /// Pixel dimensions for an offscreen render target.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,6 +35,7 @@ pub enum GpuError {
     InvalidSize,
     AdapterUnavailable(String),
     DeviceUnavailable(String),
+    SceneNodeLimitExceeded { limit: usize },
 }
 
 impl fmt::Display for GpuError {
@@ -41,6 +47,9 @@ impl fmt::Display for GpuError {
             }
             Self::DeviceUnavailable(error) => {
                 write!(formatter, "failed to create GPU device: {error}")
+            }
+            Self::SceneNodeLimitExceeded { limit } => {
+                write!(formatter, "scene contains more than {limit} glass nodes")
             }
         }
     }
@@ -118,7 +127,7 @@ impl FrameTargets {
     }
 }
 
-/// A real `wgpu` offscreen compositor for one SDF Glass panel.
+/// A real `wgpu` offscreen compositor for a scene of SDF Glass nodes.
 ///
 /// This backend intentionally has no window or Iced dependency. It renders a
 /// gradient scene into an offscreen texture, downsamples it, applies
@@ -137,6 +146,7 @@ pub struct GpuRenderer {
     glass_bind_group_layout: wgpu::BindGroupLayout,
     glass_bind_group: wgpu::BindGroup,
     glass_uniform: wgpu::Buffer,
+    glass_uniform_stride: u32,
     background_pipeline: wgpu::RenderPipeline,
     downsample_pipeline: wgpu::RenderPipeline,
     blur_horizontal_pipeline: wgpu::RenderPipeline,
@@ -230,9 +240,10 @@ impl GpuRenderer {
                     uniform_binding(3, std::mem::size_of::<GlassUniform>()),
                 ],
             });
+        let glass_uniform_stride = uniform_stride(&device);
         let glass_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("liquid-glass material uniform"),
-            size: std::mem::size_of::<GlassUniform>() as u64,
+            size: u64::from(glass_uniform_stride) * MAX_GLASS_NODES as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -287,6 +298,7 @@ impl GpuRenderer {
             glass_bind_group_layout,
             glass_bind_group,
             glass_uniform,
+            glass_uniform_stride,
             background_pipeline,
             downsample_pipeline,
             blur_horizontal_pipeline,
@@ -339,46 +351,100 @@ impl GpuRenderer {
     }
 
     /// Encodes and submits one background, blur, and glass frame.
-    #[allow(clippy::cast_precision_loss)]
+    ///
+    /// # Panics
+    ///
+    /// This panics only if the renderer's compile-time scene node capacity is
+    /// smaller than one node.
     pub fn render_panel(&self, node: &GlassNode, time_seconds: f32) {
-        self.render_panel_to_view(&self.targets.output_view, node, time_seconds);
+        self.render_nodes_to_view(&self.targets.output_view, &[node], time_seconds)
+            .expect("a single glass node must fit in the scene uniform buffer");
+    }
+
+    /// Encodes a scene containing multiple glass nodes into the offscreen target.
+    ///
+    /// Nodes are drawn in ascending `z_index` order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuError::SceneNodeLimitExceeded`] when the scene is larger
+    /// than the renderer's dynamic uniform capacity.
+    pub fn render_scene(&self, scene: &GlassScene, time_seconds: f32) -> Result<(), GpuError> {
+        let nodes = scene.nodes_in_render_order();
+        self.render_nodes_to_view(&self.targets.output_view, &nodes, time_seconds)
+    }
+
+    /// Encodes a scene into an externally owned texture view.
+    ///
+    /// The external view must use the format passed to
+    /// [`Self::from_device_with_format`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuError::SceneNodeLimitExceeded`] when the scene is larger
+    /// than the renderer's dynamic uniform capacity.
+    pub fn render_scene_to_view(
+        &self,
+        output_view: &wgpu::TextureView,
+        scene: &GlassScene,
+        time_seconds: f32,
+    ) -> Result<(), GpuError> {
+        let nodes = scene.nodes_in_render_order();
+        self.render_nodes_to_view(output_view, &nodes, time_seconds)
     }
 
     /// Encodes and submits one frame into an externally owned texture view.
     ///
-    /// The external view must use the format passed to
-    /// [`Self::from_device_with_format`]. This is the integration point for a
-    /// window Surface or another compositor-owned target.
-    #[allow(clippy::cast_precision_loss)]
+    /// # Panics
+    ///
+    /// This panics only if the renderer's compile-time scene node capacity is
+    /// smaller than one node.
     pub fn render_panel_to_view(
         &self,
         output_view: &wgpu::TextureView,
         node: &GlassNode,
         time_seconds: f32,
     ) {
-        let uniform = GlassUniform {
-            viewport_and_origin: [
-                self.size.width as f32,
-                self.size.height as f32,
-                node.bounds.x,
-                node.bounds.y,
-            ],
-            size_radius_blur: [
-                node.bounds.width,
-                node.bounds.height,
-                shape_radius(node),
-                node.material.blur.radius,
-            ],
-            tint_opacity_refraction_time: [
-                node.material.tint.r,
-                node.material.tint.g,
-                node.material.tint.b,
-                node.material.opacity
-                    + node.material.refraction.strength * 0.05
-                    + time_seconds * 0.0,
-            ],
-        };
-        self.queue.write_buffer(&self.glass_uniform, 0, bytemuck::bytes_of(&uniform));
+        self.render_nodes_to_view(output_view, &[node], time_seconds)
+            .expect("a single glass node must fit in the scene uniform buffer");
+    }
+
+    /// Renders a scene directly to a configured `wgpu` `SurfaceTexture`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuError::SceneNodeLimitExceeded`] when the scene is larger
+    /// than the renderer's dynamic uniform capacity.
+    pub fn render_scene_to_surface_texture(
+        &self,
+        surface_texture: wgpu::SurfaceTexture,
+        scene: &GlassScene,
+        time_seconds: f32,
+    ) -> Result<(), GpuError> {
+        let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let result = self.render_scene_to_view(&view, scene, time_seconds);
+        if result.is_ok() {
+            self.queue.present(surface_texture);
+        }
+        result
+    }
+
+    fn render_nodes_to_view(
+        &self,
+        output_view: &wgpu::TextureView,
+        nodes: &[&GlassNode],
+        time_seconds: f32,
+    ) -> Result<(), GpuError> {
+        if nodes.len() > MAX_GLASS_NODES {
+            return Err(GpuError::SceneNodeLimitExceeded { limit: MAX_GLASS_NODES });
+        }
+
+        for (index, node) in nodes.iter().enumerate() {
+            let offset = u64::from(self.glass_uniform_stride)
+                * u64::try_from(index).expect("scene node index fits in u64");
+            let uniform = uniform_for_node(self.size, node, time_seconds);
+            self.queue.write_buffer(&self.glass_uniform, offset, bytemuck::bytes_of(&uniform));
+        }
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("liquid-glass frame encoder"),
@@ -415,19 +481,19 @@ impl GpuRenderer {
             Some(&self.blur_vertical_bind_group),
             wgpu::Color::BLACK,
         );
-        encode_fullscreen_pass(
+        encode_glass_pass(
             &mut encoder,
-            "liquid-glass pass",
             output_view,
             &self.glass_pipeline,
-            Some(&self.glass_bind_group),
-            wgpu::Color::BLACK,
+            &self.glass_bind_group,
+            nodes.len(),
+            self.glass_uniform_stride,
         );
         self.queue.submit([encoder.finish()]);
+        Ok(())
     }
 
     /// Renders one frame directly to a configured `wgpu` `SurfaceTexture` and presents it.
-    #[allow(clippy::cast_precision_loss)]
     pub fn render_panel_to_surface_texture(
         &self,
         surface_texture: wgpu::SurfaceTexture,
@@ -484,9 +550,58 @@ fn encode_fullscreen_pass(
     });
     pass.set_pipeline(pipeline);
     if let Some(bind_group) = bind_group {
-        pass.set_bind_group(0, bind_group, &[]);
+        pass.set_bind_group(0, bind_group, &[0]);
     }
     pass.draw(0..3, 0..1);
+}
+
+fn encode_glass_pass(
+    encoder: &mut wgpu::CommandEncoder,
+    target: &wgpu::TextureView,
+    pipeline: &wgpu::RenderPipeline,
+    bind_group: &wgpu::BindGroup,
+    node_count: usize,
+    uniform_stride: u32,
+) {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("liquid-glass pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: target,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        ..Default::default()
+    });
+    pass.set_pipeline(pipeline);
+    for index in 0..node_count {
+        let offset =
+            uniform_stride * u32::try_from(index).expect("scene node index fits in dynamic offset");
+        pass.set_bind_group(0, bind_group, &[offset]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn uniform_for_node(size: GpuSize, node: &GlassNode, time_seconds: f32) -> GlassUniform {
+    GlassUniform {
+        viewport_and_origin: [size.width as f32, size.height as f32, node.bounds.x, node.bounds.y],
+        size_radius_blur: [
+            node.bounds.width,
+            node.bounds.height,
+            shape_radius(node),
+            node.material.blur.radius,
+        ],
+        tint_opacity_refraction_time: [
+            node.material.tint.r,
+            node.material.tint.g,
+            node.material.tint.b,
+            node.material.opacity + node.material.refraction.strength * 0.05 + time_seconds * 0.0,
+        ],
+    }
 }
 
 fn create_glass_bind_group(
@@ -510,7 +625,17 @@ fn create_glass_bind_group(
                 resource: wgpu::BindingResource::TextureView(blur_view),
             },
             wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
-            wgpu::BindGroupEntry { binding: 3, resource: uniform.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: uniform,
+                    offset: 0,
+                    size: Some(
+                        wgpu::BufferSize::new(u64::from(GLASS_UNIFORM_SIZE))
+                            .expect("glass uniform size is non-zero"),
+                    ),
+                }),
+            },
         ],
     })
 }
@@ -535,7 +660,17 @@ fn create_blur_bind_group(
                 resource: wgpu::BindingResource::TextureView(source_view),
             },
             wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
-            wgpu::BindGroupEntry { binding: 3, resource: uniform.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: uniform,
+                    offset: 0,
+                    size: Some(
+                        wgpu::BufferSize::new(u64::from(GLASS_UNIFORM_SIZE))
+                            .expect("glass uniform size is non-zero"),
+                    ),
+                }),
+            },
         ],
     })
 }
@@ -568,11 +703,16 @@ fn uniform_binding(binding: u32, size: usize) -> wgpu::BindGroupLayoutEntry {
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
+            has_dynamic_offset: true,
             min_binding_size: wgpu::BufferSize::new(size as u64),
         },
         count: None,
     }
+}
+
+fn uniform_stride(device: &wgpu::Device) -> u32 {
+    let alignment = device.limits().min_uniform_buffer_offset_alignment.max(1);
+    GLASS_UNIFORM_SIZE.div_ceil(alignment) * alignment
 }
 
 fn create_pipeline(
@@ -701,8 +841,16 @@ mod tests {
         renderer.render_panel(&node, 0.0);
         assert_eq!(renderer.size(), GpuSize::new(128, 128));
 
+        let mut scene = GlassScene::default();
+        scene.push(node.clone());
+        let mut front = GlassNode::new(GlassId(2), Rect::new(48.0, 40.0, 64.0, 56.0))
+            .material(GlassMaterial::interactive());
+        front.z_index = 1;
+        scene.push(front);
+        renderer.render_scene(&scene, 0.0).expect("render multiple glass nodes");
+
         renderer.resize(GpuSize::new(65, 33)).expect("resize blur targets");
-        renderer.render_panel(&node, 0.0);
+        renderer.render_scene(&scene, 0.0).expect("render multiple glass nodes after resize");
         assert_eq!(renderer.size(), GpuSize::new(65, 33));
     }
 }
