@@ -455,8 +455,8 @@ fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorSch
     );
     for (id, x) in [(12, content_x + 8.0), (13, content_x + 52.0)] {
         scene.push(
-            GlassNode::new(GlassId(id), Rect::new(x, 8.0, 36.0, 40.0))
-                .shape(GlassShape::Capsule)
+            GlassNode::new(GlassId(id), Rect::new(x, 10.0, 36.0, 36.0))
+                .shape(GlassShape::Circle)
                 .material(theme.glass_material(GlassRole::FloatingControl)),
         );
     }

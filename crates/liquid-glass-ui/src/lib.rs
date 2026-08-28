@@ -11,8 +11,7 @@ pub use theme::{GlassChrome, GlassRole, UiColorScheme, UiPalette, UiTheme};
 
 use iced::advanced::text::Renderer as TextRenderer;
 use iced::{
-    Background, Border, Color as IcedColor, Event, Length, Pixels, Point, Rectangle, Shadow, Size,
-    Vector,
+    Background, Border, Color as IcedColor, Event, Length, Pixels, Rectangle, Shadow, Size, Vector,
     advanced::{self, Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget::Tree},
 };
 use liquid_glass_scene::{GlassId, GlassMaterial, GlassNode, GlassShape, Rect};
@@ -212,10 +211,18 @@ fn shape_radius(node: &GlassNode) -> f32 {
     }
 }
 
+/// Optional icon content for compact glass buttons.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GlassButtonIcon {
+    Back,
+    Forward,
+}
+
 /// The first interactive component contract.
 #[derive(Clone, Debug)]
 pub struct GlassButton {
     label: String,
+    icon: Option<GlassButtonIcon>,
     node: GlassNode,
     chrome: GlassChrome,
 }
@@ -225,6 +232,7 @@ impl GlassButton {
     pub fn new(id: GlassId, label: impl Into<String>, bounds: Rect) -> Self {
         Self {
             label: label.into(),
+            icon: None,
             node: GlassNode::new(id, bounds)
                 .shape(GlassShape::Capsule)
                 .material(GlassMaterial::interactive()),
@@ -242,6 +250,18 @@ impl GlassButton {
     #[must_use]
     pub fn material(mut self, material: GlassMaterial) -> Self {
         self.node = self.node.material(material);
+        self
+    }
+
+    #[must_use]
+    pub fn shape(mut self, shape: GlassShape) -> Self {
+        self.node = self.node.shape(shape);
+        self
+    }
+
+    #[must_use]
+    pub const fn icon(mut self, icon: GlassButtonIcon) -> Self {
+        self.icon = Some(icon);
         self
     }
 
@@ -352,19 +372,28 @@ where
             },
             Background::Color(fill),
         );
+        let (content, font, size) = match self.button.icon {
+            Some(GlassButtonIcon::Back) => {
+                (Renderer::SCROLL_LEFT_ICON.to_string(), Renderer::ICON_FONT, Pixels(14.0))
+            }
+            Some(GlassButtonIcon::Forward) => {
+                (Renderer::SCROLL_RIGHT_ICON.to_string(), Renderer::ICON_FONT, Pixels(14.0))
+            }
+            None => (self.button.label.clone(), renderer.default_font(), Pixels(16.0)),
+        };
         renderer.fill_text(
             advanced::Text {
-                content: self.button.label.clone(),
+                content,
                 bounds: bounds.size(),
-                size: Pixels(16.0),
+                size,
                 line_height: advanced::text::LineHeight::default(),
-                font: renderer.default_font(),
+                font,
                 align_x: advanced::text::Alignment::Center,
                 align_y: iced::alignment::Vertical::Center,
                 shaping: advanced::text::Shaping::Auto,
                 wrapping: advanced::text::Wrapping::None,
             },
-            Point::new(bounds.x, bounds.y),
+            bounds.center(),
             iced_color(self.button.chrome.text),
             *viewport,
         );
@@ -458,7 +487,7 @@ mod tests {
         );
         let layout = Layout::new(&layout_node);
         let viewport = Rectangle { x: 0.0, y: 0.0, width: 200.0, height: 100.0 };
-        let cursor = mouse::Cursor::Available(Point::new(12.0, 12.0));
+        let cursor = mouse::Cursor::Available(iced::Point::new(12.0, 12.0));
         let mut messages = Vec::new();
         {
             let mut shell = Shell::new(&mut messages);
@@ -491,5 +520,15 @@ mod tests {
 
         assert_eq!(messages, vec![42]);
         assert!(!button.pressed);
+    }
+
+    #[test]
+    fn compact_button_can_use_a_circle_and_builtin_icon() {
+        let button = GlassButton::new(GlassId(9), "Back", Rect::new(0.0, 0.0, 36.0, 36.0))
+            .shape(GlassShape::Circle)
+            .icon(GlassButtonIcon::Back);
+
+        assert_eq!(button.node().shape, GlassShape::Circle);
+        assert_eq!(button.icon, Some(GlassButtonIcon::Back));
     }
 }

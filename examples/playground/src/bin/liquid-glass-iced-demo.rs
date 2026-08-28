@@ -10,8 +10,8 @@ use iced::{
 };
 use iced_backend::Renderer;
 use liquid_glass::{
-    GlassButton, GlassContainer, GlassId, GlassMaterial, GlassRole, GlassShape, Rect,
-    UiColorScheme, UiPalette, UiTheme,
+    GlassButton, GlassButtonIcon, GlassContainer, GlassId, GlassMaterial, GlassRole, GlassShape,
+    Rect, UiColorScheme, UiPalette, UiTheme,
 };
 
 struct State {
@@ -140,18 +140,20 @@ fn view(state: &State) -> AppElement<'_> {
         row![
             compositor_button(
                 GlassId(12),
-                "‹",
+                "Back",
+                GlassButtonIcon::Back,
                 Message::SectionSelected(state.active_section),
                 36.0,
-                40.0,
+                36.0,
                 state.color_scheme(),
             ),
             compositor_button(
                 GlassId(13),
-                "›",
+                "Forward",
+                GlassButtonIcon::Forward,
                 Message::SectionSelected(state.active_section),
                 36.0,
-                40.0,
+                36.0,
                 state.color_scheme(),
             ),
             space().width(Length::Fill),
@@ -490,6 +492,7 @@ fn glass_surface_with_padding<'a>(
 fn compositor_button(
     id: GlassId,
     label: &'static str,
+    icon: GlassButtonIcon,
     message: Message,
     width: f32,
     height: f32,
@@ -498,6 +501,8 @@ fn compositor_button(
     let mut overlay_material = GlassMaterial::clear();
     overlay_material.tint = liquid_glass::Color::transparent();
     GlassButton::new(id, label, Rect::new(0.0, 0.0, width, height))
+        .shape(GlassShape::Circle)
+        .icon(icon)
         .material(overlay_material)
         .chrome(UiTheme::new(scheme).compositor_chrome(GlassRole::FloatingControl))
         .into_element::<Message, Theme, Renderer>(message)
