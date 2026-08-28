@@ -5,6 +5,10 @@
 
 #![deny(unsafe_code)]
 
+mod theme;
+
+pub use theme::{GlassChrome, GlassRole, UiColorScheme, UiPalette, UiTheme};
+
 use iced::advanced::text::Renderer as TextRenderer;
 use iced::{
     Background, Border, Color as IcedColor, Event, Length, Pixels, Point, Rectangle, Shadow, Size,
@@ -17,6 +21,7 @@ use liquid_glass_scene::{GlassId, GlassMaterial, GlassNode, GlassShape, Rect};
 #[derive(Clone, Debug)]
 pub struct GlassContainer {
     node: GlassNode,
+    chrome: GlassChrome,
     padding: f32,
     hovered: bool,
 }
@@ -24,7 +29,12 @@ pub struct GlassContainer {
 impl GlassContainer {
     #[must_use]
     pub fn new(id: GlassId, bounds: Rect) -> Self {
-        Self { node: GlassNode::new(id, bounds), padding: 0.0, hovered: false }
+        Self {
+            node: GlassNode::new(id, bounds),
+            chrome: GlassChrome::default(),
+            padding: 0.0,
+            hovered: false,
+        }
     }
 
     #[must_use]
@@ -36,6 +46,12 @@ impl GlassContainer {
     #[must_use]
     pub fn material(mut self, material: GlassMaterial) -> Self {
         self.node = self.node.material(material);
+        self
+    }
+
+    #[must_use]
+    pub const fn chrome(mut self, chrome: GlassChrome) -> Self {
+        self.chrome = chrome;
         self
     }
 
@@ -130,11 +146,11 @@ where
             return;
         }
 
-        let material = self.node.material;
-        let tint = material.tint;
-        let opacity = (tint.a + if self.hovered { 0.06 } else { 0.0 }).min(1.0);
+        let tint = self.node.material.tint;
+        let fill =
+            if self.hovered { iced_color(self.chrome.hover_overlay) } else { iced_color(tint) };
         let border_color =
-            IcedColor::from_rgba(1.0, 1.0, 1.0, if self.hovered { 0.34 } else { 0.20 });
+            iced_color(if self.hovered { self.chrome.hover_border } else { self.chrome.border });
         let radius = shape_radius(&self.node);
 
         renderer.fill_quad(
@@ -142,13 +158,13 @@ where
                 bounds,
                 border: Border::default().rounded(radius).width(1.0).color(border_color),
                 shadow: Shadow {
-                    color: IcedColor::from_rgba(0.0, 0.0, 0.0, 0.24),
-                    offset: Vector::new(0.0, 8.0),
-                    blur_radius: 18.0,
+                    color: iced_color(self.chrome.shadow),
+                    offset: Vector::new(0.0, self.chrome.shadow_offset_y),
+                    blur_radius: self.chrome.shadow_blur,
                 },
                 snap: true,
             },
-            Background::Color(IcedColor::from_rgba(tint.r, tint.g, tint.b, opacity)),
+            Background::Color(fill),
         );
     }
 
@@ -201,6 +217,7 @@ fn shape_radius(node: &GlassNode) -> f32 {
 pub struct GlassButton {
     label: String,
     node: GlassNode,
+    chrome: GlassChrome,
 }
 
 impl GlassButton {
@@ -211,6 +228,7 @@ impl GlassButton {
             node: GlassNode::new(id, bounds)
                 .shape(GlassShape::Capsule)
                 .material(GlassMaterial::interactive()),
+            chrome: GlassChrome::default(),
         }
     }
 
@@ -224,6 +242,12 @@ impl GlassButton {
     #[must_use]
     pub fn material(mut self, material: GlassMaterial) -> Self {
         self.node = self.node.material(material);
+        self
+    }
+
+    #[must_use]
+    pub const fn chrome(mut self, chrome: GlassChrome) -> Self {
+        self.chrome = chrome;
         self
     }
 
@@ -300,37 +324,33 @@ where
             return;
         }
 
-        let material = self.button.node.material;
-        let tint = material.tint;
-        let opacity = (tint.a
-            + if self.pressed {
-                0.12
-            } else if self.hovered {
-                0.06
-            } else {
-                0.0
-            })
-        .min(1.0);
+        let tint = self.button.node.material.tint;
+        let fill = if self.pressed {
+            iced_color(self.button.chrome.pressed_overlay)
+        } else if self.hovered {
+            iced_color(self.button.chrome.hover_overlay)
+        } else {
+            iced_color(tint)
+        };
         renderer.fill_quad(
             renderer::Quad {
                 bounds,
                 border: Border::default()
                     .rounded(shape_radius(&self.button.node))
                     .width(1.0)
-                    .color(IcedColor::from_rgba(
-                        1.0,
-                        1.0,
-                        1.0,
-                        if self.hovered { 0.44 } else { 0.28 },
-                    )),
+                    .color(iced_color(if self.hovered {
+                        self.button.chrome.hover_border
+                    } else {
+                        self.button.chrome.border
+                    })),
                 shadow: Shadow {
-                    color: IcedColor::from_rgba(0.0, 0.0, 0.0, 0.28),
-                    offset: Vector::new(0.0, 6.0),
-                    blur_radius: 14.0,
+                    color: iced_color(self.button.chrome.shadow),
+                    offset: Vector::new(0.0, self.button.chrome.shadow_offset_y),
+                    blur_radius: self.button.chrome.shadow_blur,
                 },
                 snap: true,
             },
-            Background::Color(IcedColor::from_rgba(tint.r, tint.g, tint.b, opacity)),
+            Background::Color(fill),
         );
         renderer.fill_text(
             advanced::Text {
@@ -345,7 +365,7 @@ where
                 wrapping: advanced::text::Wrapping::None,
             },
             Point::new(bounds.x, bounds.y),
-            IcedColor::WHITE,
+            iced_color(self.button.chrome.text),
             *viewport,
         );
     }
@@ -400,6 +420,10 @@ where
             mouse::Interaction::default()
         }
     }
+}
+
+fn iced_color(color: liquid_glass_scene::Color) -> IcedColor {
+    IcedColor::from_rgba(color.r, color.g, color.b, color.a)
 }
 
 #[cfg(test)]

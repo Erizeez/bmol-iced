@@ -18,4 +18,6 @@ pub use render::{
 pub use scene::{
     BackdropRegion, Color, GlassId, GlassMaterial, GlassNode, GlassScene, GlassShape, Rect,
 };
-pub use ui::{GlassButton, GlassContainer};
+pub use ui::{
+    GlassButton, GlassChrome, GlassContainer, GlassRole, UiColorScheme, UiPalette, UiTheme,
+};

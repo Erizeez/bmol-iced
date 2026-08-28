@@ -1,13 +1,36 @@
-use std::{fmt, time::Instant};
+use std::{
+    fmt,
+    sync::atomic::{AtomicU8, Ordering},
+    time::Instant,
+};
 
 #[path = "background.rs"]
 mod background;
 
 use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
 use liquid_glass::{
-    Color as GlassColor, GlassId, GlassMaterial, GlassNode, GlassScene, GlassShape, GpuRenderer,
-    GpuSize, Rect,
+    GlassId, GlassNode, GlassRole, GlassScene, GlassShape, GpuRenderer, GpuSize, Rect,
+    UiColorScheme, UiTheme,
 };
+
+static ACTIVE_COLOR_SCHEME: AtomicU8 = AtomicU8::new(1);
+
+pub fn set_color_scheme(scheme: UiColorScheme) {
+    ACTIVE_COLOR_SCHEME.store(
+        match scheme {
+            UiColorScheme::Light => 0,
+            UiColorScheme::Dark => 1,
+        },
+        Ordering::Relaxed,
+    );
+}
+
+fn active_color_scheme() -> UiColorScheme {
+    match ACTIVE_COLOR_SCHEME.load(Ordering::Relaxed) {
+        0 => UiColorScheme::Light,
+        _ => UiColorScheme::Dark,
+    }
+}
 
 pub struct Renderer {
     inner: IcedRenderer,
@@ -198,7 +221,9 @@ pub struct Compositor {
     engine: Engine,
     settings: iced_wgpu::Settings,
     device: wgpu::Device,
+    queue: wgpu::Queue,
     liquid: GpuRenderer,
+    color_scheme: UiColorScheme,
     started_at: Instant,
 }
 
@@ -277,7 +302,8 @@ impl graphics::Compositor for Compositor {
                 backend: "wgpu",
                 reason: graphics::error::Reason::RequestFailed(error.to_string()),
             })?;
-        let background = background::reference_grid_texture(&device, &queue);
+        let color_scheme = active_color_scheme();
+        let background = background::settings_background_texture(&device, &queue, color_scheme);
         let mut liquid = GpuRenderer::from_device_with_format(
             device.clone(),
             queue.clone(),
@@ -285,8 +311,14 @@ impl graphics::Compositor for Compositor {
             format,
         );
         liquid.set_background_texture(background.0, background.1);
-        let engine =
-            Engine::new(&adapter, device.clone(), queue, format, settings.antialiasing, shell);
+        let engine = Engine::new(
+            &adapter,
+            device.clone(),
+            queue.clone(),
+            format,
+            settings.antialiasing,
+            shell,
+        );
 
         Ok(Self {
             instance,
@@ -296,7 +328,9 @@ impl graphics::Compositor for Compositor {
             engine,
             settings,
             device,
+            queue,
             liquid,
+            color_scheme,
             started_at: Instant::now(),
         })
     }
@@ -361,7 +395,14 @@ impl graphics::Compositor for Compositor {
         if self.liquid.size() != size {
             self.liquid.resize(size).map_err(|_| graphics::compositor::SurfaceError::Other)?;
         }
-        let scene = scene_for_viewport(size, viewport.scale_factor());
+        let color_scheme = active_color_scheme();
+        if self.color_scheme != color_scheme {
+            let background =
+                background::settings_background_texture(&self.device, &self.queue, color_scheme);
+            self.liquid.set_background_texture(background.0, background.1);
+            self.color_scheme = color_scheme;
+        }
+        let scene = scene_for_viewport(size, viewport.scale_factor(), color_scheme);
         self.liquid
             .render_scene_to_view(&view, &scene, self.started_at.elapsed().as_secs_f32())
             .map_err(|_| graphics::compositor::SurfaceError::Other)?;
@@ -393,49 +434,34 @@ fn map_surface_error(error: &wgpu::SurfaceError) -> graphics::compositor::Surfac
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn scene_for_viewport(_size: GpuSize, scale_factor: f32) -> GlassScene {
-    // The layout below mirrors the fixed-size Iced dashboard. Build it in
-    // logical pixels first, then apply the exact viewport scale once at the
-    // compositor boundary.
-    let margin = 24.0;
-    let sidebar_width = 220.0;
-    let content_x = margin + sidebar_width + 18.0;
-    let content_width = 1034.0;
+fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorScheme) -> GlassScene {
+    let scale_factor = scale_factor.max(1.0);
+    let logical_width = size.width as f32 / scale_factor;
+    let sidebar_width = 232.0;
+    let content_x = sidebar_width + 1.0;
+    let content_width = (logical_width - content_x).max(1.0);
+    let theme = UiTheme::new(color_scheme);
     let mut scene = GlassScene::default();
 
     scene.push(
-        GlassNode::new(GlassId(10), Rect::new(content_x, margin, content_width, 72.0))
-            .shape(GlassShape::Superellipse { exponent: 4.5 })
-            .material(reference_material(14.0, GlassColor::rgba(0.16, 0.30, 0.62, 0.05))),
+        GlassNode::new(GlassId(10), Rect::new(content_x, 0.0, content_width, 56.0))
+            .shape(GlassShape::RoundedRect { radius: 0.0 })
+            .material(theme.glass_material(GlassRole::Toolbar)),
     );
     scene.push(
-        GlassNode::new(GlassId(11), Rect::new(content_x + 718.0, margin + 16.0, 250.0, 40.0))
+        GlassNode::new(GlassId(11), Rect::new(10.0, 10.0, 212.0, 36.0))
             .shape(GlassShape::Superellipse { exponent: 4.5 })
-            .material(reference_material(10.0, GlassColor::rgba(0.25, 0.42, 0.82, 0.06))),
+            .material(theme.glass_material(GlassRole::SearchField)),
     );
     for (id, x) in [(12, content_x + 12.0), (13, content_x + 56.0)] {
         scene.push(
-            GlassNode::new(GlassId(id), Rect::new(x, margin + 16.0, 36.0, 40.0))
+            GlassNode::new(GlassId(id), Rect::new(x, 8.0, 36.0, 40.0))
                 .shape(GlassShape::Capsule)
-                .material(reference_material(8.0, GlassColor::rgba(0.30, 0.48, 0.90, 0.07))),
+                .material(theme.glass_material(GlassRole::FloatingControl)),
         );
     }
-    scale_scene(&mut scene, scale_factor.max(1.0));
+    scale_scene(&mut scene, scale_factor);
     scene
-}
-
-fn reference_material(blur_radius: f32, tint: GlassColor) -> GlassMaterial {
-    let mut material = GlassMaterial::clear();
-    material.blur.radius = blur_radius;
-    material.tint = tint;
-    material.refraction.thickness = 0.20;
-    material.refraction.index = 1.40;
-    material.dispersion.strength = 0.07;
-    material.fresnel.range = 0.75;
-    material.fresnel.hardness = 0.20;
-    material.fresnel.strength = 0.20;
-    material.opacity = 1.0;
-    material
 }
 
 fn scale_scene(scene: &mut GlassScene, scale_factor: f32) {

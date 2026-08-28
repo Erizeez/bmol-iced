@@ -14,7 +14,7 @@ Iced UI → Liquid Scene → Liquid Compositor → wgpu → Metal / Vulkan / DX1
 - `liquid-glass-scene`：Shape、Material、Backdrop、GlassNode、z-order scene
 - `liquid-glass-render`：RenderGraph、TexturePool、Renderer contract
 - `liquid-glass-animation`：Spring 基础类型
-- `liquid-glass-ui`：Iced `GlassContainer` layout bridge 与可交互 `GlassButton`
+- `liquid-glass-ui`：Iced `GlassContainer` / `GlassButton`、`UiTheme` 语义颜色与 Light/Dark `GlassChrome`
 - `liquid-glass-platform`：DPI 与窗口配置边界
 - `liquid-glass`：对外统一 facade
 
@@ -34,7 +34,7 @@ cargo run -p liquid-glass-playground --bin liquid-glass-playground
 cargo run -p liquid-glass-playground --bin liquid-glass-iced-demo
 ```
 
-该示例是一个 Apple Settings 风格的可交互窗口：侧栏、分组列表、分割线和设置条目保持常规 UI 材质；顶部工具栏、搜索框以及前进/后退按钮才使用 `GlassNode` 的液态玻璃效果。页面覆盖导航、搜索、开关、分段控件、颜色选择、滑杆、进度条和可滚动列表等常用组件，用来验证玻璃组件与普通 UI 共存时的层级关系。它使用自定义 Iced renderer/compositor，在同一份 `wgpu` `Device/Queue/Surface` 上先执行选择性的玻璃场景，再绘制 Iced 控件。
+该示例按 macOS System Settings 的 split-view 结构组织：232px 侧栏、侧栏搜索、右侧工具栏和收窄的分组设置列表。侧栏、列表、分割线和设置条目保持常规 UI 材质；顶部工具栏、搜索框以及前进/后退按钮才使用 `GlassNode`。`Automatic / Light / Dark` 会同步切换 Iced 标准控件、普通 UI 语义颜色、窗口背景纹理以及玻璃 material/chrome，用来验证玻璃组件与普通 UI 在两种外观下的共存关系。
 
 如果本机没有可用 GPU，playground 会保留打印纯 Rust foundation 信息，并报告 GPU backend 不可用；这不影响 workspace 的单元测试。
 
@@ -44,7 +44,7 @@ cargo run -p liquid-glass-playground --bin liquid-glass-iced-demo
 
 ## 开发顺序
 
-1. 将 Dashboard 控件状态实时同步到 `GlassScene` 的 blur、refraction、tint 与 Fresnel uniform。
+1. 将组件状态实时同步到 `GlassScene` 的 blur、refraction、tint 与 Fresnel uniform。
 2. 将任意 Iced 子树的实际布局边界接入 backdrop capture 区域，而不是使用 demo 场景映射。
 3. 继续扩展 pointer spring、merge、动态背景纹理与多窗口 Surface 生命周期。
 
