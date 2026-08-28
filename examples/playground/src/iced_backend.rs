@@ -361,7 +361,7 @@ impl graphics::Compositor for Compositor {
         if self.liquid.size() != size {
             self.liquid.resize(size).map_err(|_| graphics::compositor::SurfaceError::Other)?;
         }
-        let scene = scene_for_size(size);
+        let scene = scene_for_viewport(size, viewport.scale_factor());
         self.liquid
             .render_scene_to_view(&view, &scene, self.started_at.elapsed().as_secs_f32())
             .map_err(|_| graphics::compositor::SurfaceError::Other)?;
@@ -393,33 +393,26 @@ fn map_surface_error(error: &wgpu::SurfaceError) -> graphics::compositor::Surfac
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn scene_for_size(size: GpuSize) -> GlassScene {
-    let width = size.width as f32;
-    let height = size.height as f32;
-    let margin = (width * 0.028).clamp(24.0, 48.0);
-    let sidebar_width = (width * 0.17).clamp(168.0, 240.0);
-    let content_x = margin + sidebar_width + margin;
-    let content_width = (width - content_x - margin).max(360.0);
+fn scene_for_viewport(_size: GpuSize, scale_factor: f32) -> GlassScene {
+    // The layout below mirrors the fixed-size Iced dashboard. Build it in
+    // logical pixels first, then apply the exact viewport scale once at the
+    // compositor boundary.
+    let margin = 24.0;
+    let sidebar_width = 220.0;
+    let content_x = margin + sidebar_width + 18.0;
+    let card_width = 300.0;
+    let cards_y = 82.0;
+    let lower_y = cards_y + 112.0 + 16.0;
+    let footer_y = lower_y + 250.0 + 16.0;
     let mut scene = GlassScene::default();
 
-    let sidebar_material = reference_material(GlassColor::rgba(0.12, 0.34, 0.72, 0.06));
+    let sidebar_material = reference_material(18.0, GlassColor::rgba(0.12, 0.34, 0.72, 0.05));
     scene.push(
-        GlassNode::new(
-            GlassId(10),
-            Rect::new(margin, margin, sidebar_width, height - margin * 2.0),
-        )
-        .shape(GlassShape::Superellipse { exponent: 5.0 })
-        .material(sidebar_material),
+        GlassNode::new(GlassId(10), Rect::new(margin, margin, sidebar_width, 620.0))
+            .shape(GlassShape::Superellipse { exponent: 5.0 })
+            .material(sidebar_material),
     );
 
-    let toolbar_material = reference_material(GlassColor::rgba(0.30, 0.58, 1.0, 0.05));
-    scene.push(
-        GlassNode::new(GlassId(11), Rect::new(content_x, margin, content_width, 82.0))
-            .shape(GlassShape::Superellipse { exponent: 4.5 })
-            .material(toolbar_material),
-    );
-
-    let card_width = (content_width - 28.0) / 3.0;
     for (index, tint) in [
         GlassColor::rgba(0.15, 0.62, 1.0, 0.05),
         GlassColor::rgba(0.48, 0.28, 1.0, 0.05),
@@ -428,13 +421,13 @@ fn scene_for_size(size: GpuSize) -> GlassScene {
     .into_iter()
     .enumerate()
     {
-        let material = reference_material(tint);
+        let material = reference_material(9.0, tint);
         scene.push(
             GlassNode::new(
                 GlassId(20 + index as u64),
                 Rect::new(
                     content_x + (card_width + 14.0) * index as f32,
-                    margin + 98.0,
+                    cards_y,
                     card_width,
                     112.0,
                 ),
@@ -444,39 +437,40 @@ fn scene_for_size(size: GpuSize) -> GlassScene {
         );
     }
 
-    let lower_y = margin + 224.0;
-    let lower_height = (height - lower_y - margin - 98.0).max(180.0);
-    for (index, x) in [content_x, content_x + content_width * 0.51].into_iter().enumerate() {
+    for (index, x) in [content_x, content_x + 484.0].into_iter().enumerate() {
         let material = if index == 0 {
-            reference_material(GlassColor::rgba(0.10, 0.36, 0.80, 0.05))
+            reference_material(16.0, GlassColor::rgba(0.10, 0.36, 0.80, 0.05))
         } else {
-            reference_material(GlassColor::rgba(0.08, 0.78, 0.68, 0.04))
+            reference_material(16.0, GlassColor::rgba(0.08, 0.78, 0.68, 0.04))
         };
         scene.push(
-            GlassNode::new(
-                GlassId(30 + index as u64),
-                Rect::new(x, lower_y, content_width * 0.49 - 7.0, lower_height),
-            )
-            .shape(GlassShape::Superellipse { exponent: 4.5 })
-            .material(material),
+            GlassNode::new(GlassId(30 + index as u64), Rect::new(x, lower_y, 470.0, 250.0))
+                .shape(GlassShape::Superellipse { exponent: 4.5 })
+                .material(material),
         );
     }
 
-    let footer_material = reference_material(GlassColor::rgba(0.30, 0.48, 0.90, 0.05));
+    let footer_material = reference_material(10.0, GlassColor::rgba(0.30, 0.48, 0.90, 0.05));
     scene.push(
-        GlassNode::new(
-            GlassId(32),
-            Rect::new(content_x, height - margin - 82.0, content_width, 82.0),
-        )
-        .shape(GlassShape::Superellipse { exponent: 4.5 })
-        .material(footer_material),
+        GlassNode::new(GlassId(32), Rect::new(content_x, footer_y, 954.0, 82.0))
+            .shape(GlassShape::Superellipse { exponent: 4.5 })
+            .material(footer_material),
     );
+    for (index, x) in [content_x + 580.0, content_x + 774.0].into_iter().enumerate() {
+        let material = reference_material(12.0, GlassColor::rgba(0.34, 0.52, 1.0, 0.04));
+        scene.push(
+            GlassNode::new(GlassId(40 + index as u64), Rect::new(x, footer_y + 17.0, 180.0, 48.0))
+                .shape(GlassShape::Capsule)
+                .material(material),
+        );
+    }
+    scale_scene(&mut scene, scale_factor.max(1.0));
     scene
 }
 
-fn reference_material(tint: GlassColor) -> GlassMaterial {
+fn reference_material(blur_radius: f32, tint: GlassColor) -> GlassMaterial {
     let mut material = GlassMaterial::clear();
-    material.blur.radius = 1.0;
+    material.blur.radius = blur_radius;
     material.tint = tint;
     material.refraction.thickness = 0.20;
     material.refraction.index = 1.40;
@@ -486,4 +480,17 @@ fn reference_material(tint: GlassColor) -> GlassMaterial {
     material.fresnel.strength = 0.20;
     material.opacity = 1.0;
     material
+}
+
+fn scale_scene(scene: &mut GlassScene, scale_factor: f32) {
+    for node in scene.nodes_mut() {
+        node.bounds.x *= scale_factor;
+        node.bounds.y *= scale_factor;
+        node.bounds.width *= scale_factor;
+        node.bounds.height *= scale_factor;
+        node.backdrop.bounds = node.bounds;
+        node.backdrop.padding *= scale_factor;
+        node.backdrop.blur_radius *= scale_factor;
+        node.material.blur.radius *= scale_factor;
+    }
 }

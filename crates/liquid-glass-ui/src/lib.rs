@@ -219,6 +219,14 @@ impl GlassButton {
         &self.label
     }
 
+    /// Replaces the material used by the Iced fallback paint and compositor
+    /// scene node.
+    #[must_use]
+    pub fn material(mut self, material: GlassMaterial) -> Self {
+        self.node = self.node.material(material);
+        self
+    }
+
     #[must_use]
     pub const fn node(&self) -> &GlassNode {
         &self.node

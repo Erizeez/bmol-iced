@@ -239,6 +239,12 @@ impl GlassScene {
         &self.nodes
     }
 
+    /// Returns mutable nodes for compositor adapters that apply a final
+    /// viewport transform before rendering.
+    pub fn nodes_mut(&mut self) -> &mut [GlassNode] {
+        &mut self.nodes
+    }
+
     /// Returns nodes in stable back-to-front order for compositor drawing.
     #[must_use]
     pub fn nodes_in_render_order(&self) -> Vec<&GlassNode> {

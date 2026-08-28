@@ -163,10 +163,8 @@ fn view(state: &State) -> AppElement<'_> {
                 text(format!("Applied changes: {}", state.applied)).size(12)
             ]
             .width(Length::Fill),
-            GlassButton::new(GlassId(40), "Apply material", Rect::new(0.0, 0.0, 180.0, 48.0),)
-                .into_element::<Message, Theme, Renderer>(Message::ApplyPressed),
-            GlassButton::new(GlassId(41), "Preview merge", Rect::new(0.0, 0.0, 180.0, 48.0),)
-                .into_element::<Message, Theme, Renderer>(Message::RefreshPressed),
+            compositor_button(GlassId(40), "Apply material", Message::ApplyPressed),
+            compositor_button(GlassId(41), "Preview merge", Message::RefreshPressed),
         ]
         .spacing(14)
         .align_y(iced::Alignment::Center),
@@ -220,9 +218,14 @@ fn glass_surface<'a>(
     bounds: Rect,
     content: impl Into<AppElement<'a>>,
 ) -> AppElement<'a> {
+    // The actual surface is rendered by the compositor. The Iced widget only
+    // contributes layout, hit testing, and the border; painting another
+    // translucent fill here would double-tint the shader result.
+    let mut overlay_material = GlassMaterial::clear();
+    overlay_material.tint = liquid_glass::Color::transparent();
     let background = GlassContainer::new(id, bounds)
         .shape(GlassShape::Superellipse { exponent: 4.5 })
-        .material(GlassMaterial::regular())
+        .material(overlay_material)
         .into_element::<Message, Theme, Renderer>();
     let foreground: AppElement<'a> = container(content)
         .width(Length::Fixed(bounds.width))
@@ -230,6 +233,14 @@ fn glass_surface<'a>(
         .padding(18)
         .into();
     stack![background, foreground].into()
+}
+
+fn compositor_button(id: GlassId, label: &'static str, message: Message) -> AppElement<'static> {
+    let mut overlay_material = GlassMaterial::clear();
+    overlay_material.tint = liquid_glass::Color::transparent();
+    GlassButton::new(id, label, Rect::new(0.0, 0.0, 180.0, 48.0))
+        .material(overlay_material)
+        .into_element::<Message, Theme, Renderer>(message)
 }
 
 fn main() -> iced::Result {
