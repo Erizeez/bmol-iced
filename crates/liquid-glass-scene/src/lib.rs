@@ -130,9 +130,10 @@ pub enum GlassShape {
 }
 
 impl GlassShape {
-    /// A near-circular exponent that removes the curvature jump where a
-    /// capsule cap meets its straight middle edge.
-    pub const CONTINUOUS_CAPSULE_EXPONENT: f32 = 2.5;
+    /// Smooth-union width used where an exact circular cap meets the middle
+    /// rectangle. The resulting shoulder expands by at most one quarter of
+    /// this value while the outer cap stays circular.
+    pub const SMOOTH_CAPSULE_BLEND_PX: f32 = 3.0;
 }
 
 impl Default for GlassShape {

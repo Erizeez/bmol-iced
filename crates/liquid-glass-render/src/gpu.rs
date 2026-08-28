@@ -1152,7 +1152,7 @@ fn shape_roundness(node: &GlassNode) -> f32 {
     match node.shape {
         GlassShape::Superellipse { exponent } => exponent,
         GlassShape::RoundedRect { .. } => node.corner_curve.exponent(),
-        GlassShape::Capsule => GlassShape::CONTINUOUS_CAPSULE_EXPONENT,
+        GlassShape::Capsule => -GlassShape::SMOOTH_CAPSULE_BLEND_PX,
         GlassShape::Circle | GlassShape::Ellipse => 2.0,
     }
 }
@@ -1196,8 +1196,7 @@ mod tests {
         assert!((shape_roundness(&continuous) - 5.0).abs() < f32::EPSILON);
         assert!((shape_roundness(&circular) - 2.0).abs() < f32::EPSILON);
         assert!(
-            (shape_roundness(&capsule) - GlassShape::CONTINUOUS_CAPSULE_EXPONENT).abs()
-                < f32::EPSILON
+            (shape_roundness(&capsule) + GlassShape::SMOOTH_CAPSULE_BLEND_PX).abs() < f32::EPSILON
         );
         assert!((shape_roundness(&circle) - 2.0).abs() < f32::EPSILON);
     }
