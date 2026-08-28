@@ -14,7 +14,7 @@ Iced UI → Liquid Scene → Liquid Compositor → wgpu → Metal / Vulkan / DX1
 - `liquid-glass-scene`：Shape、Material、Backdrop、GlassNode、z-order scene
 - `liquid-glass-render`：RenderGraph、TexturePool、Renderer contract
 - `liquid-glass-animation`：Spring 基础类型
-- `liquid-glass-ui`：Container/Button 到 Scene 的初始映射
+- `liquid-glass-ui`：Iced `GlassContainer` layout bridge 与可交互 `GlassButton`
 - `liquid-glass-platform`：DPI 与窗口配置边界
 - `liquid-glass`：对外统一 facade
 
@@ -34,7 +34,7 @@ cargo run -p liquid-glass-playground --bin liquid-glass-playground
 cargo run -p liquid-glass-playground --bin liquid-glass-iced-demo
 ```
 
-该示例使用标准 Iced application runtime，展示 `GlassContainer` 的 layout、quad 绘制、hover 状态和鼠标命中逻辑。
+该示例使用标准 Iced application runtime，展示 `GlassContainer` 的 layout、quad 绘制、hover 状态，以及 `GlassButton` 的文字绘制、pressed 状态和 `on_press` 消息。
 
 如果本机没有可用 GPU，playground 会保留打印纯 Rust foundation 信息，并报告 GPU backend 不可用；这不影响 workspace 的单元测试。
 
@@ -46,7 +46,7 @@ cargo run -p liquid-glass-playground --bin liquid-glass-iced-demo
 
 1. 将 `GpuRenderer` 接入 Surface 之外的完整 DPI 与色彩空间生命周期。
 2. 在 playground 中加入 blur、refraction、tint 的实时调节。
-3. 再扩展 Button、Panel、Toolbar 和 Spring interaction。
+3. 将任意 Iced 子树放入 `GlassContainer`，并继续扩展 Panel、Toolbar 和 Spring interaction。
 
 ## License
 
