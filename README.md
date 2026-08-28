@@ -18,13 +18,15 @@ Iced UI → Liquid Scene → Liquid Compositor → wgpu → Metal / Vulkan / DX1
 - `liquid-glass-platform`：DPI 与窗口配置边界
 - `liquid-glass`：对外统一 facade
 
-真实 `wgpu` Pass 和 Iced Widget adapter 是下一阶段工作。
+`liquid-glass-render` 已包含第一个真实 `wgpu` offscreen backend：背景场景 Pass、SDF Glass Pass 和最终离屏纹理。Iced Widget adapter、独立 separable blur 和 Surface/present 生命周期仍在后续阶段。
 
 ## 运行 playground
 
 ```bash
 cargo run -p liquid-glass-playground
 ```
+
+如果本机没有可用 GPU，playground 会保留打印纯 Rust foundation 信息，并报告 GPU backend 不可用；这不影响 workspace 的单元测试。
 
 ## 参考项目
 
@@ -41,4 +43,3 @@ cargo run -p liquid-glass-playground
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
-

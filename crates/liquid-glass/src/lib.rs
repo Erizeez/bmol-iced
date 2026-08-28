@@ -12,7 +12,9 @@ pub use liquid_glass_scene as scene;
 pub use liquid_glass_ui as ui;
 
 pub use animation::{Spring, SpringValue};
-pub use render::{LiquidRenderer, RenderGraph, RenderPass, TexturePool};
+pub use render::{
+    GpuError, GpuRenderer, GpuSize, LiquidRenderer, RenderGraph, RenderPass, TexturePool,
+};
 pub use scene::{
     BackdropRegion, Color, GlassId, GlassMaterial, GlassNode, GlassScene, GlassShape, Rect,
 };

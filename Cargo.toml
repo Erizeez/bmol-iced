@@ -15,8 +15,6 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
-repository = "https://github.com/your-name/liquid-glass-rs"
-homepage = "https://github.com/your-name/liquid-glass-rs"
 keywords = ["rust", "ui", "wgpu", "iced", "liquid-glass"]
 categories = ["gui", "graphics", "rendering"]
 
