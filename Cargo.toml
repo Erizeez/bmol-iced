@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/liquid-glass",
+    "crates/liquid-glass-animation",
+    "crates/liquid-glass-platform",
+    "crates/liquid-glass-render",
+    "crates/liquid-glass-scene",
+    "crates/liquid-glass-ui",
+    "examples/playground",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+repository = "https://github.com/your-name/liquid-glass-rs"
+homepage = "https://github.com/your-name/liquid-glass-rs"
+keywords = ["rust", "ui", "wgpu", "iced", "liquid-glass"]
+categories = ["gui", "graphics", "rendering"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+missing_docs = "allow"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"

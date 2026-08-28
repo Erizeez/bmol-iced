@@ -1,0 +1,8 @@
+/target/
+**/*.rs.bk
+.DS_Store
+.idea/
+.vscode/
+
+# Existing WebGPU reference project; it is an independent repository.
+/liquid-glass-studio/

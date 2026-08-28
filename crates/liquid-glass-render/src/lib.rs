@@ -1,0 +1,131 @@
+//! Renderer contracts and render-graph foundation.
+//!
+//! The first milestone keeps this layer backend-neutral. The next milestone
+//! will provide the `wgpu` implementation without changing scene or UI APIs.
+
+#![deny(unsafe_code)]
+
+use liquid_glass_scene::{GlassScene, Rect};
+
+/// Passes in the Liquid Glass composition pipeline.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RenderPass {
+    Scene,
+    Capture,
+    Downsample,
+    BlurHorizontal,
+    BlurVertical,
+    Glass,
+    Foreground,
+    Overlay,
+    Present,
+}
+
+/// A declarative render graph for one frame.
+#[derive(Clone, Debug, Default)]
+pub struct RenderGraph {
+    passes: Vec<RenderPass>,
+}
+
+impl RenderGraph {
+    #[must_use]
+    pub fn foundation() -> Self {
+        Self {
+            passes: vec![
+                RenderPass::Scene,
+                RenderPass::Capture,
+                RenderPass::Downsample,
+                RenderPass::BlurHorizontal,
+                RenderPass::BlurVertical,
+                RenderPass::Glass,
+                RenderPass::Foreground,
+                RenderPass::Overlay,
+                RenderPass::Present,
+            ],
+        }
+    }
+
+    #[must_use]
+    pub fn passes(&self) -> &[RenderPass] {
+        &self.passes
+    }
+}
+
+/// The properties used to reuse a GPU texture allocation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TextureKey {
+    pub width: u32,
+    pub height: u32,
+    pub format: TextureFormat,
+}
+
+/// Initial texture formats supported by the pool contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextureFormat {
+    Rgba8Unorm,
+    Rgba16Float,
+}
+
+/// Allocation accounting for the future `wgpu::Texture` pool.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TexturePool {
+    retained: Vec<TextureKey>,
+}
+
+impl TexturePool {
+    pub fn retain(&mut self, key: TextureKey) {
+        if !self.retained.contains(&key) {
+            self.retained.push(key);
+        }
+    }
+
+    #[must_use]
+    pub fn retained(&self) -> &[TextureKey] {
+        &self.retained
+    }
+}
+
+/// Backend-independent renderer state for the foundation milestone.
+#[derive(Clone, Debug)]
+pub struct LiquidRenderer {
+    graph: RenderGraph,
+    pub texture_pool: TexturePool,
+}
+
+impl Default for LiquidRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LiquidRenderer {
+    #[must_use]
+    pub fn new() -> Self {
+        Self { graph: RenderGraph::foundation(), texture_pool: TexturePool::default() }
+    }
+
+    #[must_use]
+    pub fn graph(&self) -> &RenderGraph {
+        &self.graph
+    }
+
+    #[must_use]
+    pub fn capture_region(&self, scene: &GlassScene) -> Option<Rect> {
+        scene.capture_bounds()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn foundation_graph_contains_composition_passes() {
+        let graph = RenderGraph::foundation();
+
+        assert_eq!(graph.passes().first(), Some(&RenderPass::Scene));
+        assert_eq!(graph.passes().last(), Some(&RenderPass::Present));
+        assert!(graph.passes().contains(&RenderPass::BlurHorizontal));
+        assert!(graph.passes().contains(&RenderPass::Glass));
+    }
+}

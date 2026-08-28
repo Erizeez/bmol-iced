@@ -1,0 +1,14 @@
+[package]
+name = "liquid-glass-playground"
+description = "Foundation playground for Liquid Glass renderer development."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+liquid-glass = { path = "../../crates/liquid-glass", version = "0.1.0" }
+
+[lints]
+workspace = true
+

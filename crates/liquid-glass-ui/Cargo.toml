@@ -1,0 +1,14 @@
+[package]
+name = "liquid-glass-ui"
+description = "UI-facing Liquid Glass components and builders."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+liquid-glass-scene = { path = "../liquid-glass-scene", version = "0.1.0" }
+
+[lints]
+workspace = true
+
