@@ -915,9 +915,11 @@ fn divider_touches_hovered(divider_index: usize, hovered: Option<usize>) -> bool
     hovered.is_some_and(|index| divider_index == index || divider_index == index.saturating_add(1))
 }
 
+const SEGMENT_HOVER_INSET: f32 = 3.0;
+
 fn segment_hover_bounds(bounds: Rectangle, segment_count: usize, index: usize) -> Rectangle {
     let segment_width = bounds.width / count_as_f32(segment_count);
-    let diameter = segment_width.min(bounds.height);
+    let diameter = (segment_width.min(bounds.height) - SEGMENT_HOVER_INSET * 2.0).max(0.0);
     let segment_center_x = bounds.x + segment_width * (count_as_f32(index) + 0.5);
     Rectangle {
         x: segment_center_x - diameter * 0.5,
@@ -1023,6 +1025,8 @@ mod tests {
         let hover = segment_hover_bounds(bounds, 2, 1);
 
         assert!((hover.width - hover.height).abs() < f32::EPSILON);
+        assert!((hover.width - 30.0).abs() < f32::EPSILON);
+        assert!((hover.y - bounds.y - SEGMENT_HOVER_INSET).abs() < f32::EPSILON);
         assert!((hover.center_x() - (bounds.x + bounds.width * 0.75)).abs() < f32::EPSILON);
         assert!((hover.center_y() - bounds.center_y()).abs() < f32::EPSILON);
     }
