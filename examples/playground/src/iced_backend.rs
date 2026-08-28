@@ -1,5 +1,8 @@
 use std::{fmt, time::Instant};
 
+#[path = "background.rs"]
+mod background;
+
 use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
 use liquid_glass::{
     Color as GlassColor, GlassId, GlassMaterial, GlassNode, GlassScene, GlassShape, GpuRenderer,
@@ -274,12 +277,14 @@ impl graphics::Compositor for Compositor {
                 backend: "wgpu",
                 reason: graphics::error::Reason::RequestFailed(error.to_string()),
             })?;
-        let liquid = GpuRenderer::from_device_with_format(
+        let background = background::reference_grid_texture(&device, &queue);
+        let mut liquid = GpuRenderer::from_device_with_format(
             device.clone(),
             queue.clone(),
             GpuSize::new(1, 1),
             format,
         );
+        liquid.set_background_texture(background.0, background.1);
         let engine =
             Engine::new(&adapter, device.clone(), queue, format, settings.antialiasing, shell);
 
@@ -397,8 +402,7 @@ fn scene_for_size(size: GpuSize) -> GlassScene {
     let content_width = (width - content_x - margin).max(360.0);
     let mut scene = GlassScene::default();
 
-    let mut sidebar_material = GlassMaterial::thick();
-    sidebar_material.tint = GlassColor::rgba(0.12, 0.34, 0.72, 0.20);
+    let sidebar_material = reference_material(GlassColor::rgba(0.12, 0.34, 0.72, 0.06));
     scene.push(
         GlassNode::new(
             GlassId(10),
@@ -408,8 +412,7 @@ fn scene_for_size(size: GpuSize) -> GlassScene {
         .material(sidebar_material),
     );
 
-    let mut toolbar_material = GlassMaterial::clear();
-    toolbar_material.tint = GlassColor::rgba(0.30, 0.58, 1.0, 0.16);
+    let toolbar_material = reference_material(GlassColor::rgba(0.30, 0.58, 1.0, 0.05));
     scene.push(
         GlassNode::new(GlassId(11), Rect::new(content_x, margin, content_width, 82.0))
             .shape(GlassShape::Superellipse { exponent: 4.5 })
@@ -418,15 +421,14 @@ fn scene_for_size(size: GpuSize) -> GlassScene {
 
     let card_width = (content_width - 28.0) / 3.0;
     for (index, tint) in [
-        GlassColor::rgba(0.15, 0.62, 1.0, 0.18),
-        GlassColor::rgba(0.48, 0.28, 1.0, 0.18),
-        GlassColor::rgba(0.04, 0.82, 0.64, 0.16),
+        GlassColor::rgba(0.15, 0.62, 1.0, 0.05),
+        GlassColor::rgba(0.48, 0.28, 1.0, 0.05),
+        GlassColor::rgba(0.04, 0.82, 0.64, 0.05),
     ]
     .into_iter()
     .enumerate()
     {
-        let mut material = GlassMaterial::regular();
-        material.tint = tint;
+        let material = reference_material(tint);
         scene.push(
             GlassNode::new(
                 GlassId(20 + index as u64),
@@ -445,12 +447,10 @@ fn scene_for_size(size: GpuSize) -> GlassScene {
     let lower_y = margin + 224.0;
     let lower_height = (height - lower_y - margin - 98.0).max(180.0);
     for (index, x) in [content_x, content_x + content_width * 0.51].into_iter().enumerate() {
-        let mut material =
-            if index == 0 { GlassMaterial::regular() } else { GlassMaterial::clear() };
-        material.tint = if index == 0 {
-            GlassColor::rgba(0.10, 0.36, 0.80, 0.14)
+        let material = if index == 0 {
+            reference_material(GlassColor::rgba(0.10, 0.36, 0.80, 0.05))
         } else {
-            GlassColor::rgba(0.08, 0.78, 0.68, 0.12)
+            reference_material(GlassColor::rgba(0.08, 0.78, 0.68, 0.04))
         };
         scene.push(
             GlassNode::new(
@@ -462,8 +462,7 @@ fn scene_for_size(size: GpuSize) -> GlassScene {
         );
     }
 
-    let mut footer_material = GlassMaterial::clear();
-    footer_material.tint = GlassColor::rgba(0.30, 0.48, 0.90, 0.13);
+    let footer_material = reference_material(GlassColor::rgba(0.30, 0.48, 0.90, 0.05));
     scene.push(
         GlassNode::new(
             GlassId(32),
@@ -473,4 +472,18 @@ fn scene_for_size(size: GpuSize) -> GlassScene {
         .material(footer_material),
     );
     scene
+}
+
+fn reference_material(tint: GlassColor) -> GlassMaterial {
+    let mut material = GlassMaterial::clear();
+    material.blur.radius = 1.0;
+    material.tint = tint;
+    material.refraction.thickness = 0.20;
+    material.refraction.index = 1.40;
+    material.dispersion.strength = 0.07;
+    material.fresnel.range = 0.75;
+    material.fresnel.hardness = 0.20;
+    material.fresnel.strength = 0.20;
+    material.opacity = 1.0;
+    material
 }

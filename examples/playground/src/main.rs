@@ -1,5 +1,8 @@
 use std::{sync::Arc, time::Instant};
 
+#[path = "background.rs"]
+mod background;
+
 use iced::Size as IcedSize;
 use liquid_glass::{
     GlassContainer, GlassId, GlassMaterial, GlassNode, GlassScene, GlassShape, GpuRenderer,
@@ -68,16 +71,18 @@ impl Playground {
         config.format = preferred_surface_format(&surface.get_capabilities(&adapter));
         surface.configure(&device, &config);
 
-        let renderer = GpuRenderer::from_device_with_format(
+        let background = background::reference_grid_texture(&device, &queue);
+        let mut renderer = GpuRenderer::from_device_with_format(
             device,
             queue,
             GpuSize::new(config.width, config.height),
             config.format,
         );
+        renderer.set_background_texture(background.0, background.1);
         let mut panel_widget =
             GlassContainer::new(GlassId(1), Rect::new(220.0, 150.0, 520.0, 340.0))
                 .shape(GlassShape::Superellipse { exponent: 4.5 })
-                .material(GlassMaterial::regular());
+                .material(reference_material(liquid_glass::Color::transparent()));
         let panel = panel_widget.layout_scene_node(iced_viewport_size(config.width, config.height));
         let panel_bounds = panel.bounds;
         let scene = demo_scene(panel);
@@ -196,24 +201,21 @@ fn preferred_surface_format(capabilities: &wgpu::SurfaceCapabilities) -> wgpu::T
 fn demo_scene(primary_panel: GlassNode) -> GlassScene {
     let mut scene = GlassScene::default();
 
-    let mut sidebar_material = GlassMaterial::thick();
-    sidebar_material.tint = liquid_glass::Color::rgba(0.12, 0.34, 0.72, 0.20);
+    let sidebar_material = reference_material(liquid_glass::Color::rgba(0.12, 0.34, 0.72, 0.06));
     let mut sidebar = GlassNode::new(GlassId(10), Rect::new(36.0, 36.0, 168.0, 568.0))
         .shape(GlassShape::Superellipse { exponent: 5.0 })
         .material(sidebar_material);
     sidebar.z_index = 0;
     scene.push(sidebar);
 
-    let mut toolbar_material = GlassMaterial::clear();
-    toolbar_material.tint = liquid_glass::Color::rgba(0.30, 0.58, 1.0, 0.16);
+    let toolbar_material = reference_material(liquid_glass::Color::rgba(0.30, 0.58, 1.0, 0.05));
     let mut toolbar = GlassNode::new(GlassId(11), Rect::new(220.0, 36.0, 700.0, 82.0))
         .shape(GlassShape::RoundedRect { radius: 28.0 })
         .material(toolbar_material);
     toolbar.z_index = 0;
     scene.push(toolbar);
 
-    let mut card_material = GlassMaterial::regular();
-    card_material.tint = liquid_glass::Color::rgba(0.12, 0.72, 0.92, 0.15);
+    let card_material = reference_material(liquid_glass::Color::rgba(0.12, 0.72, 0.92, 0.05));
     for (index, x) in [220.0, 430.0, 640.0].into_iter().enumerate() {
         let mut card = GlassNode::new(GlassId(20 + index as u64), Rect::new(x, 138.0, 190.0, 86.0))
             .shape(GlassShape::Superellipse { exponent: 4.5 })
@@ -226,16 +228,15 @@ fn demo_scene(primary_panel: GlassNode) -> GlassScene {
     front_panel.z_index = 1;
     scene.push(front_panel);
 
-    let mut interactive_material = GlassMaterial::interactive();
-    interactive_material.tint = liquid_glass::Color::rgba(0.52, 0.22, 0.95, 0.20);
+    let interactive_material =
+        reference_material(liquid_glass::Color::rgba(0.52, 0.22, 0.95, 0.07));
     let mut secondary = GlassNode::new(GlassId(30), Rect::new(560.0, 270.0, 300.0, 190.0))
         .shape(GlassShape::RoundedRect { radius: 42.0 })
         .material(interactive_material);
     secondary.z_index = 2;
     scene.push(secondary);
 
-    let mut footer_material = GlassMaterial::clear();
-    footer_material.tint = liquid_glass::Color::rgba(0.08, 0.82, 0.64, 0.16);
+    let footer_material = reference_material(liquid_glass::Color::rgba(0.08, 0.82, 0.64, 0.05));
     let mut footer = GlassNode::new(GlassId(31), Rect::new(220.0, 540.0, 700.0, 64.0))
         .shape(GlassShape::Capsule)
         .material(footer_material);
@@ -243,6 +244,20 @@ fn demo_scene(primary_panel: GlassNode) -> GlassScene {
     scene.push(footer);
 
     scene
+}
+
+fn reference_material(tint: liquid_glass::Color) -> GlassMaterial {
+    let mut material = GlassMaterial::clear();
+    material.blur.radius = 1.0;
+    material.tint = tint;
+    material.refraction.thickness = 0.20;
+    material.refraction.index = 1.40;
+    material.dispersion.strength = 0.07;
+    material.fresnel.range = 0.75;
+    material.fresnel.hardness = 0.20;
+    material.fresnel.strength = 0.20;
+    material.opacity = 1.0;
+    material
 }
 
 #[allow(clippy::cast_precision_loss)]

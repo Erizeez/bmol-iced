@@ -167,6 +167,8 @@ pub struct GpuRenderer {
     blur_weights: wgpu::Buffer,
     glass_uniform_stride: u32,
     placeholder_texture: wgpu::Texture,
+    background_texture: Option<wgpu::Texture>,
+    background_texture_ratio: f32,
     background_pipeline: wgpu::RenderPipeline,
     blur_horizontal_pipeline: wgpu::RenderPipeline,
     blur_vertical_pipeline: wgpu::RenderPipeline,
@@ -330,6 +332,8 @@ impl GpuRenderer {
             blur_weights,
             glass_uniform_stride,
             placeholder_texture,
+            background_texture: None,
+            background_texture_ratio: 1.0,
             background_pipeline,
             blur_horizontal_pipeline,
             blur_vertical_pipeline,
@@ -360,7 +364,7 @@ impl GpuRenderer {
         self.background_bind_group = create_background_bind_group(
             &self.device,
             &self.glass_bind_group_layout,
-            &self.placeholder_texture,
+            self.background_texture.as_ref().unwrap_or(&self.placeholder_texture),
             &self.sampler,
             &self.glass_uniform,
             &self.blur_weights,
@@ -382,6 +386,24 @@ impl GpuRenderer {
             &self.blur_weights,
         );
         Ok(())
+    }
+
+    /// Uses an externally decoded image as the reference project's backdrop.
+    ///
+    /// The texture must be created with [`wgpu::TextureUsages::TEXTURE_BINDING`]
+    /// and use a filterable RGBA format.
+    pub fn set_background_texture(&mut self, texture: wgpu::Texture, aspect_ratio: f32) {
+        self.background_texture_ratio = aspect_ratio.max(f32::EPSILON);
+        let bind_group = create_background_bind_group(
+            &self.device,
+            &self.glass_bind_group_layout,
+            &texture,
+            &self.sampler,
+            &self.glass_uniform,
+            &self.blur_weights,
+        );
+        self.background_texture = Some(texture);
+        self.background_bind_group = bind_group;
     }
 
     /// Encodes and submits one background, blur, and glass frame.
@@ -476,7 +498,13 @@ impl GpuRenderer {
         for (index, node) in nodes.iter().enumerate() {
             let offset = u64::from(self.glass_uniform_stride)
                 * u64::try_from(index).expect("scene node index fits in u64");
-            let uniform = uniform_for_node(self.size, node, time_seconds);
+            let uniform = uniform_for_node(
+                self.size,
+                node,
+                time_seconds,
+                self.background_texture.is_some(),
+                self.background_texture_ratio,
+            );
             self.queue.write_buffer(&self.glass_uniform, offset, bytemuck::bytes_of(&uniform));
         }
         let blur_radius = blur_radius_for_nodes(nodes);
@@ -632,7 +660,13 @@ fn encode_glass_pass(
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
-fn uniform_for_node(size: GpuSize, node: &GlassNode, time_seconds: f32) -> GlassUniform {
+fn uniform_for_node(
+    size: GpuSize,
+    node: &GlassNode,
+    time_seconds: f32,
+    background_texture_ready: bool,
+    background_texture_ratio: f32,
+) -> GlassUniform {
     let center_x = node.bounds.x + node.bounds.width * 0.5;
     let center_y = size.height as f32 - node.bounds.y - node.bounds.height * 0.5;
     let material = node.material;
@@ -643,9 +677,14 @@ fn uniform_for_node(size: GpuSize, node: &GlassNode, time_seconds: f32) -> Glass
         mouse_and_spring: [center_x, center_y, center_x, center_y],
         shape: [node.bounds.width, node.bounds.height, shape_radius, shape_roundness],
         merge_glare_shadow: [0.05, time_seconds * 0.20, 25.0, 0.15],
-        shadow_position_bg_ratio: [0.0, 0.0, 1.0],
-        bg_type: 0,
-        flags: [0, 0, material.blur.radius.round() as i32, i32::from(material.blur.edge_blur)],
+        shadow_position_bg_ratio: [0.0, 0.0, background_texture_ratio],
+        bg_type: if background_texture_ready { 11 } else { 0 },
+        flags: [
+            i32::from(background_texture_ready),
+            0,
+            material.blur.radius.round() as i32,
+            i32::from(material.blur.edge_blur),
+        ],
         tint: [material.tint.r, material.tint.g, material.tint.b, material.tint.a],
         refraction_and_fresnel: [
             (material.refraction.thickness * 100.0).max(1.0),
@@ -1084,7 +1123,7 @@ fn reference_shader(fragment: &str, pass: ReferencePass) -> String {
 fn shape_radius(node: &GlassNode) -> f32 {
     match node.shape {
         GlassShape::RoundedRect { radius } => radius,
-        GlassShape::Superellipse { .. } => node.bounds.width.min(node.bounds.height) * 0.2,
+        GlassShape::Superellipse { .. } => node.bounds.width.min(node.bounds.height) * 0.4,
         GlassShape::Capsule => node.bounds.height * 0.5,
         GlassShape::Circle => node.bounds.width.min(node.bounds.height) * 0.5,
         GlassShape::Ellipse => node.bounds.width.min(node.bounds.height) * 0.25,
