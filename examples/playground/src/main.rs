@@ -53,7 +53,6 @@ impl Playground {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
-            apply_limit_buckets: false,
         }))
         .expect("find a compatible GPU adapter");
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -165,7 +164,7 @@ impl WindowState {
 
     fn render(&mut self) -> RenderOutcome {
         match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => {
+            Ok(frame) => {
                 self.renderer
                     .render_scene_to_surface_texture(
                         frame,
@@ -175,22 +174,12 @@ impl WindowState {
                     .expect("render glass scene");
                 RenderOutcome::Presented
             }
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                self.renderer
-                    .render_scene_to_surface_texture(
-                        frame,
-                        &self.scene,
-                        self.started_at.elapsed().as_secs_f32(),
-                    )
-                    .expect("render glass scene");
+            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
                 RenderOutcome::Reconfigure
             }
-            wgpu::CurrentSurfaceTexture::Outdated
-            | wgpu::CurrentSurfaceTexture::Lost
-            | wgpu::CurrentSurfaceTexture::Validation => RenderOutcome::Reconfigure,
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                RenderOutcome::Skipped
-            }
+            Err(wgpu::SurfaceError::Timeout) => RenderOutcome::Skipped,
+            Err(wgpu::SurfaceError::OutOfMemory) => panic!("surface ran out of memory"),
+            Err(wgpu::SurfaceError::Other) => RenderOutcome::Reconfigure,
         }
     }
 }

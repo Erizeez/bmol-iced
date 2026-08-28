@@ -34,7 +34,7 @@ cargo run -p liquid-glass-playground --bin liquid-glass-playground
 cargo run -p liquid-glass-playground --bin liquid-glass-iced-demo
 ```
 
-该示例是一个可交互的 Liquid Glass Dashboard layout preview：背景包含网格、光斑、环形高光和斜向纹理，前景组合了侧栏、工具栏、统计卡片、搜索框、滑杆、进度条、开关、复选框、活动列表和两个 `GlassButton`。当前标准 Iced runtime 负责控件和交互；要查看真实 compositor shader，请运行上面的原生 playground。
+该示例是一个可交互的 Liquid Glass Dashboard：前景组合了侧栏、工具栏、统计卡片、搜索框、滑杆、进度条、开关、复选框、活动列表和两个 `GlassButton`。它使用自定义 Iced renderer/compositor，在同一份 `wgpu` `Device/Queue/Surface` 上先执行完整玻璃场景，再绘制 Iced 控件；因此这里就是标准 Iced 窗口中的真实 shader 入口。
 
 如果本机没有可用 GPU，playground 会保留打印纯 Rust foundation 信息，并报告 GPU backend 不可用；这不影响 workspace 的单元测试。
 
@@ -44,9 +44,9 @@ cargo run -p liquid-glass-playground --bin liquid-glass-iced-demo
 
 ## 开发顺序
 
-1. 将完整 compositor 接入 Iced renderer 的 Surface 生命周期。
-2. 在 playground 中加入 blur、refraction、tint 的实时调节。
-3. 将任意 Iced 子树放入真实玻璃 backdrop，并继续扩展 Spring interaction。
+1. 将 Dashboard 控件状态实时同步到 `GlassScene` 的 blur、refraction、tint 与 Fresnel uniform。
+2. 将任意 Iced 子树的实际布局边界接入 backdrop capture 区域，而不是使用 demo 场景映射。
+3. 继续扩展 pointer spring、merge、动态背景纹理与多窗口 Surface 生命周期。
 
 ## License
 

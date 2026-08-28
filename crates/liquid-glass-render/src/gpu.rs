@@ -191,13 +191,12 @@ impl GpuRenderer {
             return Err(GpuError::InvalidSize);
         }
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
-                apply_limit_buckets: false,
             })
             .await
             .map_err(|error| GpuError::AdapterUnavailable(error.to_string()))?;
@@ -244,7 +243,7 @@ impl GpuRenderer {
             label: Some("liquid-glass linear sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
@@ -459,7 +458,7 @@ impl GpuRenderer {
         let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let result = self.render_scene_to_view(&view, scene, time_seconds);
         if result.is_ok() {
-            self.queue.present(surface_texture);
+            surface_texture.present();
         }
         result
     }
@@ -548,7 +547,7 @@ impl GpuRenderer {
     ) {
         let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.render_panel_to_view(&view, node, time_seconds);
-        self.queue.present(surface_texture);
+        surface_texture.present();
     }
 
     /// Returns the final texture for a future surface/present pass.
@@ -928,8 +927,8 @@ fn create_pipeline(
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
-        bind_group_layouts: &[bind_group_layout],
-        immediate_size: 0,
+        bind_group_layouts: &[bind_group_layout.expect("pipeline requires a bind group layout")],
+        push_constant_ranges: &[],
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -937,11 +936,11 @@ fn create_pipeline(
         vertex: wgpu::VertexState {
             module: shader,
             entry_point: Some("vs_main"),
-            buffers: &[Some(wgpu::VertexBufferLayout {
+            buffers: &[wgpu::VertexBufferLayout {
                 array_stride: 8,
                 step_mode: wgpu::VertexStepMode::Vertex,
                 attributes: FULLSCREEN_VERTEX_ATTRIBUTES,
-            })],
+            }],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         },
         primitive: wgpu::PrimitiveState {
@@ -960,7 +959,7 @@ fn create_pipeline(
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         }),
-        multiview_mask: None,
+        multiview: None,
         cache: None,
     })
 }

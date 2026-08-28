@@ -1,10 +1,14 @@
+#[path = "../iced_backend.rs"]
+mod iced_backend;
+
 use iced::{
-    Color, Element, Length, Point, Rectangle, Task, Theme,
+    Element, Length, Task, Theme,
     widget::{
-        button, canvas, checkbox, column, container, progress_bar, row, scrollable, slider, space,
-        stack, text, text_input, toggler,
+        button, checkbox, column, container, progress_bar, row, scrollable, slider, space, stack,
+        text, text_input, toggler,
     },
 };
+use iced_backend::Renderer;
 use liquid_glass::{GlassButton, GlassContainer, GlassId, GlassMaterial, GlassShape, Rect};
 
 struct State {
@@ -48,6 +52,8 @@ enum Message {
     RefreshPressed,
 }
 
+type AppElement<'a> = Element<'a, Message, Theme, Renderer>;
+
 fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::SectionSelected(section) => state.active_section = section,
@@ -62,7 +68,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
 }
 
 #[allow(clippy::too_many_lines)]
-fn view(state: &State) -> Element<'_, Message> {
+fn view(state: &State) -> AppElement<'_> {
     let sidebar = glass_surface(
         GlassId(10),
         Rect::new(0.0, 0.0, 220.0, 620.0),
@@ -158,9 +164,9 @@ fn view(state: &State) -> Element<'_, Message> {
             ]
             .width(Length::Fill),
             GlassButton::new(GlassId(40), "Apply material", Rect::new(0.0, 0.0, 180.0, 48.0),)
-                .into_element::<Message, Theme, iced::Renderer>(Message::ApplyPressed),
+                .into_element::<Message, Theme, Renderer>(Message::ApplyPressed),
             GlassButton::new(GlassId(41), "Preview merge", Rect::new(0.0, 0.0, 180.0, 48.0),)
-                .into_element::<Message, Theme, iced::Renderer>(Message::RefreshPressed),
+                .into_element::<Message, Theme, Renderer>(Message::RefreshPressed),
         ]
         .spacing(14)
         .align_y(iced::Alignment::Center),
@@ -172,102 +178,10 @@ fn view(state: &State) -> Element<'_, Message> {
     ]
     .spacing(18);
 
-    container(stack![background_texture(), container(dashboard).padding(24)])
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    container(container(dashboard).padding(24)).width(Length::Fill).height(Length::Fill).into()
 }
 
-fn background_texture<'a>() -> Element<'a, Message> {
-    canvas(BackgroundTexture).width(Length::Fill).height(Length::Fill).into()
-}
-
-struct BackgroundTexture;
-
-impl<Message> canvas::Program<Message> for BackgroundTexture {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &(),
-        renderer: &iced::Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: iced::mouse::Cursor,
-    ) -> Vec<canvas::Geometry> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let size = bounds.size();
-
-        frame.fill_rectangle(Point::ORIGIN, size, Color::from_rgb(0.025, 0.04, 0.08));
-
-        let mut x = 0.0;
-        while x <= size.width.max(1_600.0) {
-            frame.stroke(
-                &canvas::Path::line(Point::new(x, 0.0), Point::new(x, size.height)),
-                canvas::Stroke::default()
-                    .with_width(1.0)
-                    .with_color(Color::from_rgba(0.35, 0.55, 0.8, 0.07)),
-            );
-            x += 48.0;
-        }
-        let mut y = 0.0;
-        while y <= size.height.max(1_000.0) {
-            frame.stroke(
-                &canvas::Path::line(Point::new(0.0, y), Point::new(size.width, y)),
-                canvas::Stroke::default()
-                    .with_width(1.0)
-                    .with_color(Color::from_rgba(0.35, 0.55, 0.8, 0.07)),
-            );
-            y += 48.0;
-        }
-
-        let orbs = [
-            (
-                Point::new(size.width * 0.18, size.height * 0.14),
-                170.0,
-                Color::from_rgba(0.08, 0.58, 0.95, 0.20),
-            ),
-            (
-                Point::new(size.width * 0.78, size.height * 0.20),
-                230.0,
-                Color::from_rgba(0.45, 0.18, 0.95, 0.18),
-            ),
-            (
-                Point::new(size.width * 0.67, size.height * 0.88),
-                260.0,
-                Color::from_rgba(0.05, 0.78, 0.62, 0.14),
-            ),
-        ];
-        for (center, radius, color) in orbs {
-            frame.fill(&canvas::Path::circle(center, radius), color);
-            frame.stroke(
-                &canvas::Path::circle(center, radius * 0.68),
-                canvas::Stroke::default()
-                    .with_width(1.0)
-                    .with_color(Color::from_rgba(0.55, 0.85, 1.0, 0.18)),
-            );
-        }
-
-        let diagonal = canvas::Path::line(
-            Point::new(-120.0, size.height * 0.84),
-            Point::new(size.width * 0.46, -80.0),
-        );
-        frame.stroke(
-            &diagonal,
-            canvas::Stroke::default()
-                .with_width(2.0)
-                .with_color(Color::from_rgba(0.3, 0.75, 1.0, 0.16)),
-        );
-
-        vec![frame.into_geometry()]
-    }
-}
-
-fn sidebar_button(
-    label: &'static str,
-    section: Section,
-    active: Section,
-) -> Element<'static, Message> {
+fn sidebar_button(label: &'static str, section: Section, active: Section) -> AppElement<'static> {
     let prefix = if section as u8 == active as u8 { "●" } else { "○" };
     button(text(format!("{prefix}  {label}")))
         .on_press(Message::SectionSelected(section))
@@ -280,7 +194,7 @@ fn stat_card(
     title: &'static str,
     value: &'static str,
     detail: &'static str,
-) -> Element<'static, Message> {
+) -> AppElement<'static> {
     glass_surface(
         id,
         Rect::new(0.0, 0.0, 300.0, 112.0),
@@ -292,7 +206,7 @@ fn activity_row(
     name: &'static str,
     detail: &'static str,
     age: &'static str,
-) -> Element<'static, Message> {
+) -> AppElement<'static> {
     row![
         column![text(name).size(13), text(detail).size(11)].spacing(2).width(Length::Fill),
         text(age).size(11)
@@ -304,13 +218,13 @@ fn activity_row(
 fn glass_surface<'a>(
     id: GlassId,
     bounds: Rect,
-    content: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
+    content: impl Into<AppElement<'a>>,
+) -> AppElement<'a> {
     let background = GlassContainer::new(id, bounds)
         .shape(GlassShape::Superellipse { exponent: 4.5 })
         .material(GlassMaterial::regular())
-        .into_element::<Message, Theme, iced::Renderer>();
-    let foreground: Element<'a, Message> = container(content)
+        .into_element::<Message, Theme, Renderer>();
+    let foreground: AppElement<'a> = container(content)
         .width(Length::Fixed(bounds.width))
         .height(Length::Fixed(bounds.height))
         .padding(18)
@@ -319,7 +233,7 @@ fn glass_surface<'a>(
 }
 
 fn main() -> iced::Result {
-    iced::application(State::default, update, view)
+    iced::application::<State, Message, Theme, Renderer>(State::default, update, view)
         .theme(Theme::Dark)
         .window_size(iced::Size::new(1320.0, 760.0))
         .run()

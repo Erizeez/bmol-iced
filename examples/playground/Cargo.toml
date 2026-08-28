@@ -7,10 +7,11 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-iced = { version = "0.14.0", features = ["advanced", "canvas"] }
+iced = { version = "0.14.0", default-features = false, features = ["wgpu", "advanced", "canvas"] }
+iced_wgpu = "0.14.0"
 liquid-glass = { path = "../../crates/liquid-glass", version = "0.1.0" }
 pollster = "1.0.1"
-wgpu = { version = "30.0.1", features = ["noop"] }
+wgpu = { version = "27.0.1", features = ["noop"] }
 winit = "0.30.12"
 
 [lints]
