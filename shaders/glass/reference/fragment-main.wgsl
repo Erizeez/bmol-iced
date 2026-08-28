@@ -260,5 +260,5 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
 
   let shapeAlpha = 1.0 - smoothstep(-0.001, 0.001, merged);
   outColor = mix(outColor, textureSampleLevel(u_bg, u_sampler, v_uv, 0.0), 1.0 - shapeAlpha);
-  return vec4f(outColor.rgb, shapeAlpha);
+  return vec4f(outColor.rgb, shapeAlpha * clamp(u._pad1, 0.0, 1.0));
 }

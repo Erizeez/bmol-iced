@@ -121,6 +121,25 @@ fn getCoverUV(uv_in: vec2f, canvasAspect: f32, textureAspect: f32) -> vec2f {
   return uv;
 }
 
+fn demoBackdrop(uv: vec2f) -> vec3f {
+  let base = vec3f(0.018, 0.030, 0.070);
+  let gridX = smoothstep(0.015, 0.0, abs(fract(uv.x * 22.0) - 0.5));
+  let gridY = smoothstep(0.015, 0.0, abs(fract(uv.y * 14.0) - 0.5));
+  let grid = max(gridX, gridY);
+
+  let cyanGlow = exp(-length((uv - vec2f(0.18, 0.20)) * vec2f(2.2, 1.6)) * 3.2);
+  let violetGlow = exp(-length((uv - vec2f(0.78, 0.18)) * vec2f(1.7, 1.4)) * 3.0);
+  let mintGlow = exp(-length((uv - vec2f(0.68, 0.86)) * vec2f(1.5, 1.8)) * 3.4);
+  let diagonal = smoothstep(0.018, 0.0, abs(uv.y - (1.0 - uv.x) * 0.72 - 0.16));
+
+  return base
+    + vec3f(0.02, 0.20, 0.34) * cyanGlow
+    + vec3f(0.24, 0.07, 0.34) * violetGlow
+    + vec3f(0.02, 0.28, 0.22) * mintGlow
+    + vec3f(0.05, 0.13, 0.22) * grid
+    + vec3f(0.08, 0.24, 0.32) * diagonal;
+}
+
 @fragment
 fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @location(0) vec4f {
   let u_resolution1x = u.u_resolution / u.u_dpr;
@@ -128,7 +147,9 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
   let pixel = vec2f(frag_coord.x, u.u_resolution.y - frag_coord.y);
   let gl_uv = vec2f(v_uv.x, 1.0 - v_uv.y);
 
-  if (u.u_bgType <= 0) {
+  if (u.u_bgType == 0) {
+    bgColor = demoBackdrop(gl_uv);
+  } else if (u.u_bgType <= 0) {
     bgColor = vec3f(1.0 - chessboard(pixel / u.u_dpr, 20.0, 2) / 4.0);
   } else if (u.u_bgType <= 1) {
     if (gl_uv.x < 0.5 && gl_uv.y > 0.5) {
