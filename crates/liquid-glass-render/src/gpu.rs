@@ -3,7 +3,7 @@ use std::{borrow::Cow, fmt};
 use bytemuck::{Pod, Zeroable};
 use liquid_glass_scene::{GlassNode, GlassShape};
 
-const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+const DEFAULT_OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 /// Pixel dimensions for an offscreen render target.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,7 +64,7 @@ struct FrameTargets {
 }
 
 impl FrameTargets {
-    fn new(device: &wgpu::Device, size: GpuSize) -> Self {
+    fn new(device: &wgpu::Device, size: GpuSize, format: wgpu::TextureFormat) -> Self {
         let descriptor = |label| wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
@@ -75,7 +75,7 @@ impl FrameTargets {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: OUTPUT_FORMAT,
+            format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
@@ -99,6 +99,7 @@ pub struct GpuRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     size: GpuSize,
+    output_format: wgpu::TextureFormat,
     targets: FrameTargets,
     sampler: wgpu::Sampler,
     glass_bind_group_layout: wgpu::BindGroupLayout,
@@ -155,8 +156,26 @@ impl GpuRenderer {
     /// Panics when either target dimension is zero.
     #[must_use]
     pub fn from_device(device: wgpu::Device, queue: wgpu::Queue, size: GpuSize) -> Self {
+        Self::from_device_with_format(device, queue, size, DEFAULT_OUTPUT_FORMAT)
+    }
+
+    /// Builds a renderer whose output pipelines target the supplied texture format.
+    ///
+    /// This is used by window integrations because a platform Surface may
+    /// prefer BGRA sRGB instead of RGBA sRGB.
+    ///
+    /// # Panics
+    ///
+    /// Panics when either target dimension is zero.
+    #[must_use]
+    pub fn from_device_with_format(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        size: GpuSize,
+        output_format: wgpu::TextureFormat,
+    ) -> Self {
         assert!(size.is_valid(), "GPU renderer size must be non-zero");
-        let targets = FrameTargets::new(&device, size);
+        let targets = FrameTargets::new(&device, size, output_format);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("liquid-glass linear sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -226,6 +245,7 @@ impl GpuRenderer {
             &shader,
             None,
             "background_fragment",
+            output_format,
         );
         let glass_pipeline = create_pipeline(
             &device,
@@ -233,12 +253,14 @@ impl GpuRenderer {
             &shader,
             Some(&glass_bind_group_layout),
             "glass_fragment",
+            output_format,
         );
 
         Self {
             device,
             queue,
             size,
+            output_format,
             targets,
             sampler,
             glass_bind_group_layout,
@@ -259,7 +281,7 @@ impl GpuRenderer {
             return Err(GpuError::InvalidSize);
         }
         self.size = size;
-        self.targets = FrameTargets::new(&self.device, size);
+        self.targets = FrameTargets::new(&self.device, size, self.output_format);
         self.glass_bind_group = create_glass_bind_group(
             &self.device,
             &self.glass_bind_group_layout,
@@ -273,6 +295,21 @@ impl GpuRenderer {
     /// Encodes and submits one background + glass frame.
     #[allow(clippy::cast_precision_loss)]
     pub fn render_panel(&self, node: &GlassNode, time_seconds: f32) {
+        self.render_panel_to_view(&self.targets.output_view, node, time_seconds);
+    }
+
+    /// Encodes and submits one frame into an externally owned texture view.
+    ///
+    /// The external view must use the format passed to
+    /// [`Self::from_device_with_format`]. This is the integration point for a
+    /// window Surface or another compositor-owned target.
+    #[allow(clippy::cast_precision_loss)]
+    pub fn render_panel_to_view(
+        &self,
+        output_view: &wgpu::TextureView,
+        node: &GlassNode,
+        time_seconds: f32,
+    ) {
         let uniform = GlassUniform {
             viewport_and_origin: [
                 self.size.width as f32,
@@ -326,7 +363,7 @@ impl GpuRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("liquid-glass pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.targets.output_view,
+                    view: output_view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -343,6 +380,19 @@ impl GpuRenderer {
         self.queue.submit([encoder.finish()]);
     }
 
+    /// Renders one frame directly to a configured `wgpu` `SurfaceTexture` and presents it.
+    #[allow(clippy::cast_precision_loss)]
+    pub fn render_panel_to_surface_texture(
+        &self,
+        surface_texture: wgpu::SurfaceTexture,
+        node: &GlassNode,
+        time_seconds: f32,
+    ) {
+        let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.render_panel_to_view(&view, node, time_seconds);
+        self.queue.present(surface_texture);
+    }
+
     /// Returns the final texture for a future surface/present pass.
     #[must_use]
     pub const fn output_texture(&self) -> &wgpu::Texture {
@@ -353,6 +403,18 @@ impl GpuRenderer {
     #[must_use]
     pub const fn size(&self) -> GpuSize {
         self.size
+    }
+
+    /// Returns the device used to create the renderer's resources.
+    #[must_use]
+    pub const fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    /// Returns the texture format targeted by the render pipelines.
+    #[must_use]
+    pub const fn output_format(&self) -> wgpu::TextureFormat {
+        self.output_format
     }
 }
 
@@ -383,6 +445,7 @@ fn create_pipeline(
     shader: &wgpu::ShaderModule,
     bind_group_layout: Option<&wgpu::BindGroupLayout>,
     fragment_entry: &str,
+    output_format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
@@ -405,7 +468,7 @@ fn create_pipeline(
             module: shader,
             entry_point: Some(fragment_entry),
             targets: &[Some(wgpu::ColorTargetState {
-                format: OUTPUT_FORMAT,
+                format: output_format,
                 blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
             })],

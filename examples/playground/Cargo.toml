@@ -9,6 +9,8 @@ rust-version.workspace = true
 [dependencies]
 liquid-glass = { path = "../../crates/liquid-glass", version = "0.1.0" }
 pollster = "1.0.1"
+wgpu = { version = "30.0.1", features = ["noop"] }
+winit = "0.30.12"
 
 [lints]
 workspace = true
