@@ -448,7 +448,7 @@ fn apply_native_backdrop<W: graphics::compositor::Window>(window: &W) {
     {
         if let Err(error) = window_vibrancy::apply_vibrancy(
             window,
-            window_vibrancy::NSVisualEffectMaterial::HudWindow,
+            window_vibrancy::NSVisualEffectMaterial::UnderWindowBackground,
             None,
             None,
         ) {
@@ -457,7 +457,7 @@ fn apply_native_backdrop<W: graphics::compositor::Window>(window: &W) {
     }
     #[cfg(target_os = "windows")]
     {
-        if let Err(error) = window_vibrancy::apply_acrylic(window, Some((18, 18, 22, 185))) {
+        if let Err(error) = window_vibrancy::apply_acrylic(window, Some((18, 18, 22, 110))) {
             eprintln!("liquid-glass: Windows Acrylic unavailable: {error}");
         }
     }

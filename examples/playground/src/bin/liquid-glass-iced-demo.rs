@@ -641,7 +641,10 @@ fn main() -> iced::Result {
         .subscription(subscription)
         .transparent(window_config.transparent)
         .window(iced::window::Settings {
-            blur: window_config.blur,
+            // macOS and Windows use their native backdrop providers below.
+            // winit's generic blur is reserved for Wayland compositors so we
+            // do not stack two full-window blur layers on those platforms.
+            blur: window_config.blur && cfg!(target_os = "linux"),
             ..iced::window::Settings::default()
         })
         .window_size(iced::Size::new(1320.0, 760.0))
