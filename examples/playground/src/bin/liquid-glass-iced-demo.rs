@@ -2,7 +2,7 @@
 mod iced_backend;
 
 use iced::{
-    Background, Border, Color, Element, Length, Shadow, Subscription, Task, Theme,
+    Background, Border, Color, Element, Length, Padding, Shadow, Subscription, Task, Theme,
     widget::{
         button, column, container, progress_bar, row, rule, scrollable, slider, space, stack, text,
         text_input, toggler,
@@ -22,6 +22,7 @@ struct State {
     notifications: bool,
     reduce_motion: bool,
     volume: f32,
+    content_scroll: f32,
     system_scheme: UiColorScheme,
 }
 
@@ -35,6 +36,7 @@ impl Default for State {
             notifications: true,
             reduce_motion: false,
             volume: 64.0,
+            content_scroll: 0.0,
             system_scheme: UiColorScheme::Dark,
         }
     }
@@ -76,6 +78,7 @@ enum Message {
     NotificationsChanged(bool),
     ReduceMotionChanged(bool),
     VolumeChanged(f32),
+    ContentScrolled(f32),
     SystemThemeChanged(iced::theme::Mode),
 }
 
@@ -96,6 +99,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::NotificationsChanged(enabled) => state.notifications = enabled,
         Message::ReduceMotionChanged(enabled) => state.reduce_motion = enabled,
         Message::VolumeChanged(volume) => state.volume = volume,
+        Message::ContentScrolled(offset) => state.content_scroll = offset,
         Message::SystemThemeChanged(mode) => {
             state.system_scheme = UiColorScheme::from_mode(mode);
         }
@@ -130,13 +134,15 @@ fn view(state: &State) -> AppElement<'_> {
     .style(sidebar_style)
     .into();
 
+    let toolbar_foreground_alpha = if state.content_scroll > 1.0 { 0.72 } else { 0.96 };
     let toolbar = glass_surface_with_padding(
         GlassId(10),
-        Rect::new(0.0, 0.0, 1087.0, 56.0),
+        Rect::new(0.0, 0.0, 1088.0, 56.0),
         UiTheme::new(state.color_scheme()).glass_shape(GlassRole::Toolbar),
         GlassRole::Toolbar,
         state.color_scheme(),
-        8.0,
+        Padding::new(8.0),
+        Some(toolbar_foreground_alpha),
         row![
             compositor_navigation(
                 GlassId(12),
@@ -156,19 +162,24 @@ fn view(state: &State) -> AppElement<'_> {
         .align_y(iced::Alignment::Center),
     );
 
-    let content_body = container(settings_page(state)).width(Length::Fill).max_width(720.0);
-    let content = container(scrollable(content_body).width(Length::Fill).height(Length::Fill))
+    let content_body = container(settings_page(state))
+        .width(Length::Fill)
+        .max_width(720.0)
+        .padding(Padding::new(22.0).top(78.0));
+    let content_scroll = scrollable(content_body)
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding([22, 34])
+        .on_scroll(|viewport| Message::ContentScrolled(viewport.absolute_offset().y));
+    let content = container(content_scroll)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding([0, 34])
         .center_x(Length::Fill)
         .style(content_style);
 
-    let main = column![toolbar, content].width(Length::Fill).height(Length::Fill);
+    let main = stack![content, toolbar].width(Length::Fill).height(Length::Fill);
 
-    let window_content = container(row![sidebar, rule::vertical(1).style(split_rule_style), main])
-        .width(Length::Fill)
-        .height(Length::Fill);
+    let window_content = container(row![sidebar, main]).width(Length::Fill).height(Length::Fill);
 
     let titlebar = container(space())
         .width(Length::Fill)
@@ -230,6 +241,12 @@ fn settings_page(state: &State) -> AppElement<'_> {
                 ),
                 setting_link("Keyboard", "Key repeat and modifier keys", "›"),
                 setting_link("Trackpad", "Point & click, scroll & zoom", "›"),
+            ),
+            section_heading("Connectivity", "Keep nearby devices and services within reach"),
+            settings_group(
+                setting_link("AirDrop", "Contacts Only", "›"),
+                setting_link("Bluetooth", "On · 3 devices connected", "›"),
+                setting_link("Handoff", "Allow handoff between this Mac and your devices", "›"),
             ),
         ]
         .spacing(14)
@@ -446,30 +463,46 @@ fn glass_search(value: &str, scheme: UiColorScheme) -> AppElement<'_> {
     let field = text_input("Search", value)
         .on_input(Message::SearchChanged)
         .width(Length::Fill)
-        .padding([5, 8])
+        .padding([4, 0])
         .style(search_style);
+    let field = row![
+        text("⌕")
+            .size(18)
+            .style(|theme| text::Style { color: Some(palette(theme).text_secondary) }),
+        field,
+    ]
+    .width(Length::Fill)
+    .spacing(7)
+    .align_y(iced::Alignment::Center);
     glass_surface_with_padding(
         GlassId(11),
         Rect::new(0.0, 0.0, 212.0, 36.0),
         UiTheme::new(scheme).glass_shape(GlassRole::InputField),
         GlassRole::InputField,
         scheme,
-        2.0,
+        Padding::new(2.0).left(10.0).right(10.0),
+        None,
         field,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn glass_surface_with_padding<'a>(
     id: GlassId,
     bounds: Rect,
     shape: GlassShape,
     role: GlassRole,
     scheme: UiColorScheme,
-    padding: f32,
+    padding: Padding,
+    foreground_alpha: Option<f32>,
     content: impl Into<AppElement<'a>>,
 ) -> AppElement<'a> {
     let mut overlay_material = GlassMaterial::clear();
-    overlay_material.tint = liquid_glass::Color::transparent();
+    overlay_material.tint = if role == GlassRole::FloatingControl {
+        liquid_glass::Color::rgba(1.0, 1.0, 1.0, 0.10)
+    } else {
+        liquid_glass::Color::transparent()
+    };
     let background = GlassContainer::new(id, bounds)
         .shape(shape)
         .material(overlay_material)
@@ -480,6 +513,12 @@ fn glass_surface_with_padding<'a>(
         .height(Length::Fixed(bounds.height))
         .padding(padding)
         .align_y(iced::Alignment::Center)
+        .style(move |theme| {
+            let background = foreground_alpha.map(|alpha| {
+                Background::Color(palette(theme).content_background.scale_alpha(alpha))
+            });
+            container::Style { background, ..container::Style::default() }
+        })
         .into();
     stack![background, foreground].into()
 }
@@ -501,7 +540,7 @@ fn compositor_navigation(
         ],
     )
     .material(overlay_material)
-    .chrome(UiTheme::new(scheme).compositor_chrome(GlassRole::FloatingControl))
+    .chrome(UiTheme::new(scheme).glass_chrome(GlassRole::FloatingControl))
     .into_element::<Theme, Renderer>()
 }
 
@@ -642,10 +681,6 @@ fn rule_style(theme: &Theme) -> rule::Style {
         fill_mode: rule::FillMode::Full,
         snap: true,
     }
-}
-
-fn split_rule_style(theme: &Theme) -> rule::Style {
-    rule_style(theme)
 }
 
 fn main() -> iced::Result {

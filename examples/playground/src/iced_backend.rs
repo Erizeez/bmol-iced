@@ -466,7 +466,7 @@ fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorSch
     let scale_factor = scale_factor.max(1.0);
     let logical_width = size.width as f32 / scale_factor;
     let sidebar_width = 232.0;
-    let content_x = sidebar_width + 1.0;
+    let content_x = sidebar_width;
     let content_width = (logical_width - content_x).max(1.0);
     let logical_height = (size.height as f32 / scale_factor - CONTENT_TOP_INSET).max(1.0);
     let content_y = CONTENT_TOP_INSET;

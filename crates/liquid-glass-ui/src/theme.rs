@@ -116,7 +116,7 @@ impl UiTheme {
             UiColorScheme::Light => UiPalette {
                 window_background: rgba(0.950, 0.950, 0.965, 1.0),
                 sidebar_background: rgba(0.900, 0.900, 0.920, 0.72),
-                content_background: rgba(0.955, 0.955, 0.970, 0.98),
+                content_background: rgba(0.955, 0.955, 0.970, 1.0),
                 group_background: rgba(1.0, 1.0, 1.0, 0.94),
                 group_border: rgba(0.0, 0.0, 0.0, 0.10),
                 separator: rgba(0.0, 0.0, 0.0, 0.10),
@@ -130,7 +130,7 @@ impl UiTheme {
             UiColorScheme::Dark => UiPalette {
                 window_background: rgba(0.105, 0.105, 0.115, 1.0),
                 sidebar_background: rgba(0.145, 0.145, 0.155, 0.72),
-                content_background: rgba(0.105, 0.105, 0.115, 0.98),
+                content_background: rgba(0.105, 0.105, 0.115, 1.0),
                 group_background: rgba(0.175, 0.175, 0.190, 0.96),
                 group_border: rgba(1.0, 1.0, 1.0, 0.085),
                 separator: rgba(1.0, 1.0, 1.0, 0.085),
