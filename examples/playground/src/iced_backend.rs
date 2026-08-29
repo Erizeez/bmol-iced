@@ -444,24 +444,13 @@ fn preferred_transparent_alpha_mode(
 }
 
 fn apply_native_backdrop<W: graphics::compositor::Window>(window: &W) {
-    #[cfg(target_os = "macos")]
-    {
-        if let Err(error) = window_vibrancy::apply_vibrancy(
-            window,
-            window_vibrancy::NSVisualEffectMaterial::UnderWindowBackground,
-            None,
-            None,
-        ) {
-            eprintln!("liquid-glass: macOS vibrancy unavailable: {error}");
-        }
-    }
     #[cfg(target_os = "windows")]
     {
         if let Err(error) = window_vibrancy::apply_acrylic(window, Some((18, 18, 22, 110))) {
             eprintln!("liquid-glass: Windows Acrylic unavailable: {error}");
         }
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(not(target_os = "windows"))]
     {
         let _ = window;
     }

@@ -2,6 +2,8 @@
 
 #![deny(unsafe_code)]
 
+use std::fmt;
+
 /// Display scale information passed into the renderer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DisplayScale {
@@ -12,6 +14,184 @@ impl Default for DisplayScale {
     fn default() -> Self {
         Self { scale_factor: 1.0 }
     }
+}
+
+/// Physical pixel dimensions of a desktop backdrop frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BackdropSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl BackdropSize {
+    #[must_use]
+    pub const fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+
+    #[must_use]
+    pub const fn is_valid(self) -> bool {
+        self.width > 0 && self.height > 0
+    }
+}
+
+/// A request for the desktop pixels behind one transparent application
+/// surface.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BackdropRequest {
+    /// The top-left physical screen coordinate of the requested region.
+    pub origin: [i32; 2],
+    pub size: BackdropSize,
+    pub scale_factor: f32,
+}
+
+impl BackdropRequest {
+    #[must_use]
+    pub const fn new(origin: [i32; 2], size: BackdropSize, scale_factor: f32) -> Self {
+        Self { origin, size, scale_factor }
+    }
+}
+
+/// An RGBA8 desktop frame supplied to the compositor.
+///
+/// `stride` is measured in bytes and may be larger than `width * 4`, which
+/// accommodates native capture APIs that pad each row. The renderer strips
+/// row padding before uploading the frame to a filterable GPU texture.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackdropFrame {
+    size: BackdropSize,
+    stride: u32,
+    rgba8: Vec<u8>,
+}
+
+impl BackdropFrame {
+    /// Creates a frame from an RGBA8 buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackdropFrameError`] when dimensions, stride, or buffer
+    /// length do not describe a complete frame.
+    pub fn new(
+        size: BackdropSize,
+        stride: u32,
+        rgba8: Vec<u8>,
+    ) -> Result<Self, BackdropFrameError> {
+        if !size.is_valid() {
+            return Err(BackdropFrameError::InvalidSize);
+        }
+        let minimum_stride = size.width.checked_mul(4).ok_or(BackdropFrameError::InvalidSize)?;
+        if stride < minimum_stride {
+            return Err(BackdropFrameError::StrideTooSmall {
+                minimum: minimum_stride,
+                actual: stride,
+            });
+        }
+        let expected = usize::try_from(stride)
+            .ok()
+            .and_then(|stride| {
+                usize::try_from(size.height).ok().and_then(|height| stride.checked_mul(height))
+            })
+            .ok_or(BackdropFrameError::InvalidSize)?;
+        if rgba8.len() != expected {
+            return Err(BackdropFrameError::BufferLength { expected, actual: rgba8.len() });
+        }
+        Ok(Self { size, stride, rgba8 })
+    }
+
+    /// Creates a tightly packed RGBA8 frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackdropFrameError`] when the dimensions are invalid or the
+    /// buffer is not exactly `width * height * 4` bytes long.
+    pub fn packed(size: BackdropSize, rgba8: Vec<u8>) -> Result<Self, BackdropFrameError> {
+        let stride = size.width.checked_mul(4).ok_or(BackdropFrameError::InvalidSize)?;
+        Self::new(size, stride, rgba8)
+    }
+
+    #[must_use]
+    pub const fn size(&self) -> BackdropSize {
+        self.size
+    }
+
+    #[must_use]
+    pub const fn stride(&self) -> u32 {
+        self.stride
+    }
+
+    #[must_use]
+    pub fn rgba8(&self) -> &[u8] {
+        &self.rgba8
+    }
+}
+
+/// Validation failures for a [`BackdropFrame`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BackdropFrameError {
+    InvalidSize,
+    StrideTooSmall { minimum: u32, actual: u32 },
+    BufferLength { expected: usize, actual: usize },
+}
+
+impl fmt::Display for BackdropFrameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidSize => {
+                write!(formatter, "backdrop frame dimensions overflow or are zero")
+            }
+            Self::StrideTooSmall { minimum, actual } => {
+                write!(
+                    formatter,
+                    "backdrop frame stride {actual} is smaller than the minimum {minimum}"
+                )
+            }
+            Self::BufferLength { expected, actual } => {
+                write!(formatter, "backdrop frame has {actual} bytes; expected {expected}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BackdropFrameError {}
+
+/// Errors returned by a platform desktop backdrop provider.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BackdropError {
+    Unsupported,
+    CaptureFailed(String),
+    InvalidFrame(BackdropFrameError),
+}
+
+impl fmt::Display for BackdropError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported => write!(formatter, "desktop backdrop capture is unsupported"),
+            Self::CaptureFailed(error) => {
+                write!(formatter, "desktop backdrop capture failed: {error}")
+            }
+            Self::InvalidFrame(error) => {
+                write!(formatter, "invalid desktop backdrop frame: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BackdropError {}
+
+/// Platform hook for supplying the pixels behind a transparent surface.
+///
+/// The trait intentionally contains no OS or windowing types. Platform
+/// adapters can implement it with native compositor APIs or an optional
+/// screen-capture backend, while the renderer consumes the same frame model.
+pub trait DesktopBackdropProvider: fmt::Debug {
+    /// Captures the requested physical screen region.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackdropError::Unsupported`] when the platform cannot
+    /// provide desktop pixels, or another [`BackdropError`] when capture
+    /// fails or returns an invalid frame.
+    fn capture(&mut self, request: BackdropRequest) -> Result<BackdropFrame, BackdropError>;
 }
 
 /// Where a transparent surface obtains the pixels behind the application.
@@ -74,5 +254,23 @@ mod tests {
         assert!(config.transparent);
         assert!(config.blur);
         assert_eq!(config.backdrop, BackdropSource::Desktop);
+    }
+
+    #[test]
+    fn backdrop_frame_accepts_padded_rows() {
+        let frame = BackdropFrame::new(BackdropSize::new(2, 2), 12, vec![0; 24])
+            .expect("padded rows are valid");
+
+        assert_eq!(frame.size(), BackdropSize::new(2, 2));
+        assert_eq!(frame.stride(), 12);
+        assert_eq!(frame.rgba8().len(), 24);
+    }
+
+    #[test]
+    fn backdrop_frame_rejects_incomplete_pixels() {
+        let error = BackdropFrame::packed(BackdropSize::new(2, 2), vec![0; 15])
+            .expect_err("incomplete frames must be rejected");
+
+        assert_eq!(error, BackdropFrameError::BufferLength { expected: 16, actual: 15 });
     }
 }

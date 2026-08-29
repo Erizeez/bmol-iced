@@ -17,7 +17,10 @@ pub use geometry::{
     CapsuleAxis, CornerRadii, CubicBezier, G2Continuity, G2Profile, Path, PathSegment, Point,
     ResolvedCapsule,
 };
-pub use platform::{BackdropSource, DisplayScale, WindowConfig};
+pub use platform::{
+    BackdropError, BackdropFrame, BackdropFrameError, BackdropRequest, BackdropSize,
+    BackdropSource, DesktopBackdropProvider, DisplayScale, WindowConfig,
+};
 pub use render::{
     GpuError, GpuRenderer, GpuSize, LiquidRenderer, RenderGraph, RenderPass, TexturePool,
 };

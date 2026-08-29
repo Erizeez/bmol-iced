@@ -40,6 +40,7 @@ impl GpuSize {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GpuError {
     InvalidSize,
+    InvalidBackgroundFrame { width: u32, height: u32, stride: u32, byte_len: usize },
     AdapterUnavailable(String),
     DeviceUnavailable(String),
     SceneNodeLimitExceeded { limit: usize },
@@ -49,6 +50,10 @@ impl fmt::Display for GpuError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidSize => write!(formatter, "offscreen target dimensions must be non-zero"),
+            Self::InvalidBackgroundFrame { width, height, stride, byte_len } => write!(
+                formatter,
+                "invalid RGBA8 backdrop frame ({width}x{height}, stride {stride}, {byte_len} bytes)",
+            ),
             Self::AdapterUnavailable(error) => {
                 write!(formatter, "no suitable GPU adapter: {error}")
             }
@@ -471,14 +476,123 @@ impl GpuRenderer {
         self.background_bind_group = bind_group;
     }
 
+    /// Uploads a platform-captured RGBA8 backdrop frame.
+    ///
+    /// The frame can contain padded rows (`stride > width * 4`). Padding is
+    /// removed while preparing the GPU upload. The frame is sampled by the
+    /// full reference refraction, dispersion, Fresnel, and blur pipeline.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuError::InvalidBackgroundFrame`] when the dimensions,
+    /// stride, or byte length do not describe a complete RGBA8 frame.
+    ///
+    /// This method does not panic for malformed frame metadata.
+    #[allow(clippy::cast_precision_loss)]
+    pub fn set_background_rgba8(
+        &mut self,
+        width: u32,
+        height: u32,
+        stride: u32,
+        rgba8: &[u8],
+    ) -> Result<(), GpuError> {
+        let Some(tight_stride) = width.checked_mul(4) else {
+            return Err(GpuError::InvalidBackgroundFrame {
+                width,
+                height,
+                stride,
+                byte_len: rgba8.len(),
+            });
+        };
+        let Some(expected) = usize::try_from(stride).ok().and_then(|stride| {
+            usize::try_from(height).ok().and_then(|height| stride.checked_mul(height))
+        }) else {
+            return Err(GpuError::InvalidBackgroundFrame {
+                width,
+                height,
+                stride,
+                byte_len: rgba8.len(),
+            });
+        };
+        if width == 0 || height == 0 || stride < tight_stride || rgba8.len() != expected {
+            return Err(GpuError::InvalidBackgroundFrame {
+                width,
+                height,
+                stride,
+                byte_len: rgba8.len(),
+            });
+        }
+
+        let frame_height = height;
+        let packed = if stride == tight_stride {
+            None
+        } else {
+            let tight_stride = usize::try_from(tight_stride).map_err(|_| {
+                GpuError::InvalidBackgroundFrame { width, height, stride, byte_len: rgba8.len() }
+            })?;
+            let height = usize::try_from(height).map_err(|_| GpuError::InvalidBackgroundFrame {
+                width,
+                height,
+                stride,
+                byte_len: rgba8.len(),
+            })?;
+            let tight_len =
+                tight_stride.checked_mul(height).ok_or(GpuError::InvalidBackgroundFrame {
+                    width,
+                    height: u32::MAX,
+                    stride,
+                    byte_len: rgba8.len(),
+                })?;
+            let mut packed = Vec::with_capacity(tight_len);
+            let stride = usize::try_from(stride).map_err(|_| GpuError::InvalidBackgroundFrame {
+                width,
+                height: frame_height,
+                stride,
+                byte_len: rgba8.len(),
+            })?;
+            for row in rgba8.chunks_exact(stride).take(height) {
+                packed.extend_from_slice(&row[..tight_stride]);
+            }
+            Some(packed)
+        };
+        let pixels = packed.as_deref().unwrap_or(rgba8);
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("liquid-glass platform backdrop texture"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(tight_stride),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+        self.set_background_texture(texture, width as f32 / height as f32);
+        Ok(())
+    }
+
     /// Controls whether the base pass writes an opaque background or leaves
     /// it transparent for the operating-system window compositor.
     ///
     /// A transparent frame still needs a backdrop source for local glass
     /// optics. Applications that want refraction of the real desktop should
-    /// provide a platform-captured texture with [`Self::set_background_texture`];
-    /// window alpha alone can reveal the desktop, but it cannot make desktop
-    /// pixels available to a custom shader.
+    /// provide a platform-captured texture with [`Self::set_background_texture`]
+    /// or [`Self::set_background_rgba8`]; window alpha alone can reveal the
+    /// desktop, but it cannot make desktop pixels available to a custom shader.
     pub fn set_transparent_background(&mut self, transparent: bool) {
         self.transparent_background = transparent;
     }
@@ -1431,6 +1545,10 @@ mod tests {
     fn noop_device_can_build_and_submit_glass_frame() {
         let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
         let mut renderer = GpuRenderer::from_device(device, queue, GpuSize::new(128, 128));
+        let padded_backdrop = vec![0_u8; 12 * 2];
+        renderer
+            .set_background_rgba8(2, 2, 12, &padded_backdrop)
+            .expect("padded RGBA8 backdrop upload");
         let node = GlassNode::new(GlassId(1), Rect::new(16.0, 16.0, 96.0, 64.0))
             .material(GlassMaterial::regular());
 

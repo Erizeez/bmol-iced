@@ -7,7 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-iced = { version = "0.14.0", default-features = false, features = ["advanced", "thread-pool"] }
+iced = { version = "0.14.0", default-features = false, features = ["advanced", "canvas", "thread-pool"] }
 liquid-glass-scene = { path = "../liquid-glass-scene", version = "0.1.0" }
 
 [lints]

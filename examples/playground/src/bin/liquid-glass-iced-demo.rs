@@ -641,10 +641,10 @@ fn main() -> iced::Result {
         .subscription(subscription)
         .transparent(window_config.transparent)
         .window(iced::window::Settings {
-            // macOS and Windows use their native backdrop providers below.
-            // winit's generic blur is reserved for Wayland compositors so we
-            // do not stack two full-window blur layers on those platforms.
-            blur: window_config.blur && cfg!(target_os = "linux"),
+            // winit's compositor blur is safe here because it does not add a
+            // view above the wgpu CAMetalLayer. The custom renderer still
+            // owns the selective sidebar/toolbar/input glass surfaces.
+            blur: window_config.blur && (cfg!(target_os = "linux") || cfg!(target_os = "macos")),
             ..iced::window::Settings::default()
         })
         .window_size(iced::Size::new(1320.0, 760.0))
