@@ -5,7 +5,7 @@ const MAX_BLUR_RADIUS: i32 = 200;
 struct BlurUniforms {
   u_resolution: vec2f,
   u_blurRadius: i32,
-  _pad: i32,
+  u_weightOffset: i32,
 };
 
 @group(0) @binding(0) var<uniform> u: BlurUniforms;
@@ -16,10 +16,10 @@ struct BlurUniforms {
 @fragment
 fn fs_main(@location(0) v_uv: vec2f) -> @location(0) vec4f {
   let texelSize = 1.0 / u.u_resolution;
-  var color = textureSampleLevel(u_prevPassTexture, u_sampler, v_uv, 0.0) * u_blurWeights[0];
+  var color = textureSampleLevel(u_prevPassTexture, u_sampler, v_uv, 0.0) * u_blurWeights[u.u_weightOffset];
   for (var i: i32 = 1; i <= u.u_blurRadius; i = i + 1) {
     if (i > MAX_BLUR_RADIUS) { break; }
-    let w = u_blurWeights[i];
+    let w = u_blurWeights[u.u_weightOffset + i];
     let offset_y = f32(i) * texelSize.y;
     color += textureSampleLevel(u_prevPassTexture, u_sampler, v_uv + vec2f(0.0, offset_y), 0.0) * w;
     color += textureSampleLevel(u_prevPassTexture, u_sampler, v_uv - vec2f(0.0, offset_y), 0.0) * w;

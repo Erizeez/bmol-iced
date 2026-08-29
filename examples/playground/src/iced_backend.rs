@@ -4,9 +4,6 @@ use std::{
     time::Instant,
 };
 
-#[path = "background.rs"]
-mod background;
-
 use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
 use liquid_glass::{
     GlassId, GlassNode, GlassRole, GlassScene, GpuRenderer, GpuSize, Rect, UiColorScheme, UiTheme,
@@ -220,7 +217,6 @@ pub struct Compositor {
     engine: Engine,
     settings: iced_wgpu::Settings,
     device: wgpu::Device,
-    queue: wgpu::Queue,
     liquid: GpuRenderer,
     color_scheme: UiColorScheme,
     started_at: Instant,
@@ -256,6 +252,7 @@ impl graphics::Compositor for Compositor {
             });
         }
 
+        apply_native_backdrop(&compatible_window);
         let settings = iced_wgpu::Settings::from(settings);
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: settings.backends,
@@ -289,8 +286,7 @@ impl graphics::Compositor for Compositor {
                 backend: "wgpu",
                 reason: graphics::error::Reason::RequestFailed("surface has no formats".to_owned()),
             })?;
-        let alpha_mode =
-            capabilities.alpha_modes.first().copied().unwrap_or(wgpu::CompositeAlphaMode::Auto);
+        let alpha_mode = preferred_transparent_alpha_mode(&capabilities);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("liquid-glass iced compositor device"),
@@ -301,15 +297,16 @@ impl graphics::Compositor for Compositor {
                 backend: "wgpu",
                 reason: graphics::error::Reason::RequestFailed(error.to_string()),
             })?;
-        let color_scheme = active_color_scheme();
-        let background = background::settings_background_texture(&device, &queue, color_scheme);
         let mut liquid = GpuRenderer::from_device_with_format(
             device.clone(),
             queue.clone(),
             GpuSize::new(1, 1),
             format,
         );
-        liquid.set_background_texture(background.0, background.1);
+        // The window owns the real desktop backdrop. The renderer writes
+        // transparent pixels outside glass surfaces instead of painting a
+        // bundled image over the desktop.
+        liquid.set_transparent_background(true);
         let engine = Engine::new(
             &adapter,
             device.clone(),
@@ -327,9 +324,8 @@ impl graphics::Compositor for Compositor {
             engine,
             settings,
             device,
-            queue,
             liquid,
-            color_scheme,
+            color_scheme: active_color_scheme(),
             started_at: Instant::now(),
         })
     }
@@ -396,9 +392,6 @@ impl graphics::Compositor for Compositor {
         }
         let color_scheme = active_color_scheme();
         if self.color_scheme != color_scheme {
-            let background =
-                background::settings_background_texture(&self.device, &self.queue, color_scheme);
-            self.liquid.set_background_texture(background.0, background.1);
             self.color_scheme = color_scheme;
         }
         let scene = scene_for_viewport(size, viewport.scale_factor(), color_scheme);
@@ -432,6 +425,48 @@ fn map_surface_error(error: &wgpu::SurfaceError) -> graphics::compositor::Surfac
     }
 }
 
+fn preferred_transparent_alpha_mode(
+    capabilities: &wgpu::SurfaceCapabilities,
+) -> wgpu::CompositeAlphaMode {
+    capabilities
+        .alpha_modes
+        .iter()
+        .copied()
+        .find(|mode| matches!(mode, wgpu::CompositeAlphaMode::PostMultiplied))
+        .or_else(|| {
+            capabilities
+                .alpha_modes
+                .iter()
+                .copied()
+                .find(|mode| matches!(mode, wgpu::CompositeAlphaMode::PreMultiplied))
+        })
+        .unwrap_or(wgpu::CompositeAlphaMode::Auto)
+}
+
+fn apply_native_backdrop<W: graphics::compositor::Window>(window: &W) {
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(error) = window_vibrancy::apply_vibrancy(
+            window,
+            window_vibrancy::NSVisualEffectMaterial::HudWindow,
+            None,
+            None,
+        ) {
+            eprintln!("liquid-glass: macOS vibrancy unavailable: {error}");
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(error) = window_vibrancy::apply_acrylic(window, Some((18, 18, 22, 185))) {
+            eprintln!("liquid-glass: Windows Acrylic unavailable: {error}");
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = window;
+    }
+}
+
 #[allow(clippy::cast_precision_loss)]
 fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorScheme) -> GlassScene {
     let scale_factor = scale_factor.max(1.0);
@@ -439,9 +474,18 @@ fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorSch
     let sidebar_width = 232.0;
     let content_x = sidebar_width + 1.0;
     let content_width = (logical_width - content_x).max(1.0);
+    let logical_height = size.height as f32 / scale_factor;
     let theme = UiTheme::new(color_scheme);
     let mut scene = GlassScene::default();
 
+    // The Iced sidebar itself is intentionally background-free. This node is
+    // the actual translucent surface that reveals the OS-owned desktop
+    // backdrop through the transparent window.
+    scene.push(
+        GlassNode::new(GlassId(9), Rect::new(0.0, 0.0, sidebar_width, logical_height))
+            .shape(theme.glass_shape(GlassRole::Sidebar))
+            .material(theme.glass_material(GlassRole::Sidebar)),
+    );
     scene.push(
         GlassNode::new(GlassId(10), Rect::new(content_x, 0.0, content_width, 56.0))
             .shape(theme.glass_shape(GlassRole::Toolbar))

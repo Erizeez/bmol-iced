@@ -634,10 +634,16 @@ fn split_rule_style(theme: &Theme) -> rule::Style {
 }
 
 fn main() -> iced::Result {
+    let window_config = liquid_glass::WindowConfig::desktop_backdrop();
     iced::application::<State, Message, Theme, Renderer>(boot, update, view)
         .title("System Settings")
         .theme(app_theme)
         .subscription(subscription)
+        .transparent(window_config.transparent)
+        .window(iced::window::Settings {
+            blur: window_config.blur,
+            ..iced::window::Settings::default()
+        })
         .window_size(iced::Size::new(1320.0, 760.0))
         .run()
 }

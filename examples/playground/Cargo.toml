@@ -9,10 +9,11 @@ rust-version.workspace = true
 [dependencies]
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "advanced", "canvas"] }
 iced_wgpu = "0.14.0"
-image = { version = "0.25.10", default-features = false, features = ["png"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
 liquid-glass = { path = "../../crates/liquid-glass", version = "0.1.0" }
 pollster = "1.0.1"
 wgpu = { version = "27.0.1", features = ["noop"] }
+window-vibrancy = "0.8.0"
 winit = "0.30.12"
 
 [lints]

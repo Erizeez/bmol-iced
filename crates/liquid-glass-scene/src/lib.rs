@@ -167,6 +167,40 @@ pub struct FresnelStyle {
     pub strength: f32,
 }
 
+/// Soft cast shadow produced by a glass surface.
+///
+/// The shadow is intentionally separate from tint and opacity: a transparent
+/// material can still sit above the backdrop and establish its elevation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShadowStyle {
+    /// Width of the exponential falloff in logical pixels.
+    pub expand: f32,
+    /// Shadow strength, normally in the `0..=0.6` range.
+    pub factor: f32,
+    /// Logical-pixel offset of the shadow, usually a small downward shift.
+    pub offset: [f32; 2],
+}
+
+impl ShadowStyle {
+    /// No cast shadow.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self { expand: 25.0, factor: 0.0, offset: [0.0, 0.0] }
+    }
+
+    /// The restrained elevation cue used by regular glass surfaces.
+    #[must_use]
+    pub const fn subtle() -> Self {
+        Self { expand: 25.0, factor: 0.15, offset: [0.0, 2.0] }
+    }
+
+    /// A slightly stronger cue for floating interactive glass.
+    #[must_use]
+    pub const fn elevated() -> Self {
+        Self { expand: 28.0, factor: 0.20, offset: [0.0, 3.0] }
+    }
+}
+
 /// A complete, shape-independent glass material.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlassMaterial {
@@ -178,6 +212,9 @@ pub struct GlassMaterial {
     pub dispersion: DispersionStyle,
     pub fresnel: FresnelStyle,
     pub opacity: f32,
+    /// Per-surface cast shadow. `clear()` deliberately disables it for
+    /// compositor overlays; regular and interactive presets enable it.
+    pub shadow: ShadowStyle,
 }
 
 impl GlassMaterial {
@@ -191,23 +228,33 @@ impl GlassMaterial {
             dispersion: DispersionStyle { strength: 0.08, spread: 0.02 },
             fresnel: FresnelStyle { range: 0.75, hardness: 0.6, strength: 0.35 },
             opacity: 0.92,
+            shadow: ShadowStyle::none(),
         }
     }
 
     #[must_use]
     pub const fn regular() -> Self {
-        Self { blur: BlurStyle { radius: 20.0, edge_blur: true }, ..Self::clear() }
+        Self {
+            blur: BlurStyle { radius: 20.0, edge_blur: true },
+            shadow: ShadowStyle::subtle(),
+            ..Self::clear()
+        }
     }
 
     #[must_use]
     pub const fn thick() -> Self {
-        Self { blur: BlurStyle { radius: 34.0, edge_blur: true }, ..Self::regular() }
+        Self {
+            blur: BlurStyle { radius: 34.0, edge_blur: true },
+            shadow: ShadowStyle::subtle(),
+            ..Self::regular()
+        }
     }
 
     #[must_use]
     pub const fn interactive() -> Self {
         Self {
             refraction: RefractionStyle { strength: 0.5, ..Self::regular().refraction },
+            shadow: ShadowStyle::elevated(),
             ..Self::regular()
         }
     }

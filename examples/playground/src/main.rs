@@ -257,6 +257,7 @@ fn reference_material(tint: liquid_glass::Color) -> GlassMaterial {
     material.fresnel.hardness = 0.20;
     material.fresnel.strength = 0.20;
     material.opacity = 1.0;
+    material.shadow = liquid_glass::ShadowStyle::subtle();
     material
 }
 

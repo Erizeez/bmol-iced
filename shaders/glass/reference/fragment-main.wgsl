@@ -41,6 +41,7 @@ struct Uniforms {
   u_glareOppositeFactor: f32,
   u_glareFactor: f32,
   _pad1: f32,
+  _pad2: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -267,8 +268,22 @@ fn vec2ToAngle(v: vec2f) -> f32 {
   return angle;
 }
 
+fn sampleBlurred(v_uv: vec2f, offset: vec2f) -> vec4f {
+  if (u.u_bgType == 12 && u.u_bgTextureReady != 1) {
+    // In a real transparent window the OS owns the pixels behind us. Keep
+    // the custom surface neutral so the actual desktop remains visible.
+    return vec4f(1.0);
+  }
+  let sharp = textureSampleLevel(u_bg, u_sampler, v_uv + offset, 0.0);
+  let blurred = textureSampleLevel(u_blurredBg, u_sampler, v_uv + offset, 0.0);
+  return blurred;
+}
+
 fn getTextureDispersion(v_uv: vec2f, mixRate: f32, offset: vec2f, factor: f32) -> vec4f {
   var pixel = vec4f(1.0);
+  if (u.u_bgType == 12 && u.u_bgTextureReady != 1) {
+    return pixel;
+  }
   let bgR = textureSampleLevel(u_bg, u_sampler, v_uv + offset * (1.0 - (N_R - 1.0) * factor), 0.0).r;
   let bgG = textureSampleLevel(u_bg, u_sampler, v_uv + offset * (1.0 - (N_G - 1.0) * factor), 0.0).g;
   let bgB = textureSampleLevel(u_bg, u_sampler, v_uv + offset * (1.0 - (N_B - 1.0) * factor), 0.0).b;
@@ -288,6 +303,9 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
   let p1 = (vec2f(0.0) - u.u_resolution * 0.5) / u.u_resolution.y;
   let p2 = (vec2f(0.0) - u.u_mouseSpring) / u.u_resolution.y;
   let merged = mainSDF(p1, p2, pixel);
+  let shadowP1 = (vec2f(0.0) - u.u_resolution * 0.5 + vec2f(u.u_shadowPosition.x * u.u_dpr, u.u_shadowPosition.y * u.u_dpr)) / u.u_resolution.y;
+  let shadowP2 = (vec2f(0.0) - u.u_mouseSpring + vec2f(u.u_shadowPosition.x * u.u_dpr, u.u_shadowPosition.y * u.u_dpr)) / u.u_resolution.y;
+  let shadowMerged = mainSDF(shadowP1, shadowP2, pixel);
   var outColor: vec4f;
 
   if (merged < 0.005) {
@@ -299,7 +317,7 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
     if (nmerged >= u.u_refThickness) { edgeFactor = 0.0; }
 
     if (edgeFactor <= 0.0) {
-      outColor = textureSampleLevel(u_blurredBg, u_sampler, v_uv, 0.0);
+      outColor = sampleBlurred(v_uv, vec2f(0.0));
       outColor = mix(outColor, vec4f(u.u_tint.r, u.u_tint.g, u.u_tint.b, 1.0), u.u_tint.a * 0.8);
     } else {
       let edgeH = nmerged / u.u_refThickness;
@@ -336,5 +354,9 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
 
   let shapeAlpha = 1.0 - smoothstep(-0.001, 0.001, merged);
   outColor = mix(outColor, textureSampleLevel(u_bg, u_sampler, v_uv, 0.0), 1.0 - shapeAlpha);
-  return vec4f(outColor.rgb, shapeAlpha * clamp(u._pad1, 0.0, 1.0));
+  let shadowVisible = (1.0 - shapeAlpha) * step(0.0, shadowMerged);
+  let shadowAlpha = exp(-1.0 / u.u_shadowExpand * max(shadowMerged, 0.0) * u_resolution1x.y)
+    * 0.6 * u.u_shadowFactor * shadowVisible;
+  outColor = mix(outColor, vec4f(0.0, 0.0, 0.0, 1.0), shadowAlpha);
+  return vec4f(outColor.rgb, max(shapeAlpha * clamp(u._pad1, 0.0, 1.0), shadowAlpha));
 }

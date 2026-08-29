@@ -36,6 +36,7 @@ struct Uniforms {
   u_glareOppositeFactor: f32,
   u_glareFactor: f32,
   _pad1: f32,
+  _pad2: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -216,7 +217,7 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
     }
   } else if (u.u_bgType <= 2) {
     bgColor = vec3f(halfColor(pixel / u.u_resolution) * 0.6 + 0.3);
-  } else if (u.u_bgType <= 11) {
+  } else if (u.u_bgType <= 12) {
     if (u.u_bgTextureReady != 1) {
       bgColor = vec3f(1.0 - chessboard(pixel / u.u_dpr, 20.0, 2) / 4.0);
     } else {
@@ -225,10 +226,9 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
     }
   }
 
-  let p1 = (vec2f(0.0) - u.u_resolution * 0.5 + vec2f(u.u_shadowPosition.x * u.u_dpr, u.u_shadowPosition.y * u.u_dpr)) / u.u_resolution.y;
-  let p2 = (vec2f(0.0) - u.u_mouseSpring + vec2f(u.u_shadowPosition.x * u.u_dpr, u.u_shadowPosition.y * u.u_dpr)) / u.u_resolution.y;
-  let merged = mainSDF(p1, p2, pixel);
-  let shadow = exp(-1.0 / u.u_shadowExpand * abs(merged) * u_resolution1x.y) * 0.6 * u.u_shadowFactor;
-
-  return vec4f(bgColor - vec3f(shadow), 1.0);
+  // Cast shadows are composited per node in fragment-main. Keeping this
+  // pass unshadowed prevents the first node's uniform from affecting every
+  // other node in a multi-surface scene.
+  let backgroundAlpha = select(1.0, 0.0, u.u_bgType == 12);
+  return vec4f(bgColor, backgroundAlpha);
 }

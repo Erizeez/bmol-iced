@@ -1,7 +1,7 @@
 //! Semantic colors and glass materials shared by Iced integrations.
 
 use iced::{Color as IcedColor, Theme};
-use liquid_glass_scene::{Color as GlassColor, GlassMaterial, GlassShape};
+use liquid_glass_scene::{Color as GlassColor, GlassMaterial, GlassShape, ShadowStyle};
 
 /// The resolved light or dark tone used to render an application window.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -25,6 +25,9 @@ impl UiColorScheme {
 /// A semantic role whose material can vary with the active color scheme.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GlassRole {
+    /// A full-height split-view surface that reveals and heavily blurs the
+    /// desktop backdrop.
+    Sidebar,
     Toolbar,
     InputField,
     /// Compatibility role for search-specific input fields.
@@ -145,6 +148,9 @@ impl UiTheme {
     #[must_use]
     pub fn glass_material(self, role: GlassRole) -> GlassMaterial {
         let (blur_radius, tint, whiteness) = match (self.scheme, role) {
+            (UiColorScheme::Light, GlassRole::Sidebar) => {
+                (34.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.055), 0.12)
+            }
             (UiColorScheme::Light, GlassRole::Toolbar) => {
                 (16.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.04), 0.04)
             }
@@ -153,6 +159,9 @@ impl UiTheme {
             }
             (UiColorScheme::Light, GlassRole::FloatingControl) => {
                 (9.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.06), 0.06)
+            }
+            (UiColorScheme::Dark, GlassRole::Sidebar) => {
+                (34.0, GlassColor::rgba(0.12, 0.16, 0.25, 0.10), 0.10)
             }
             (UiColorScheme::Dark, GlassRole::Toolbar) => {
                 (16.0, GlassColor::rgba(0.10, 0.13, 0.20, 0.08), 0.025)
@@ -175,7 +184,21 @@ impl UiTheme {
         material.fresnel.range = 0.75;
         material.fresnel.hardness = 0.20;
         material.fresnel.strength = 0.20;
-        material.opacity = 1.0;
+        material.opacity = if role == GlassRole::Sidebar {
+            match self.scheme {
+                UiColorScheme::Light => 0.78,
+                UiColorScheme::Dark => 0.74,
+            }
+        } else {
+            1.0
+        };
+        material.shadow = match role {
+            GlassRole::FloatingControl => ShadowStyle::elevated(),
+            GlassRole::Sidebar
+            | GlassRole::Toolbar
+            | GlassRole::InputField
+            | GlassRole::SearchField => ShadowStyle::subtle(),
+        };
         material
     }
 
@@ -183,7 +206,7 @@ impl UiTheme {
     #[must_use]
     pub const fn glass_shape(self, role: GlassRole) -> GlassShape {
         match role {
-            GlassRole::Toolbar => GlassShape::RoundedRect { radius: 0.0 },
+            GlassRole::Sidebar | GlassRole::Toolbar => GlassShape::RoundedRect { radius: 0.0 },
             GlassRole::InputField | GlassRole::SearchField | GlassRole::FloatingControl => {
                 GlassShape::Capsule
             }
@@ -225,6 +248,7 @@ impl UiTheme {
             ),
         };
         let (shadow_offset_y, shadow_blur) = match role {
+            GlassRole::Sidebar => (1.0, 14.0),
             GlassRole::Toolbar => (2.0, 10.0),
             GlassRole::InputField | GlassRole::SearchField => (3.0, 9.0),
             GlassRole::FloatingControl => (4.0, 10.0),
@@ -292,6 +316,18 @@ mod tests {
         assert!(theme.glass_material(GlassRole::Toolbar).blur.radius > button.blur.radius);
         assert!(input.blur.radius > button.blur.radius);
         assert!(input.whiteness > button.whiteness);
+    }
+
+    #[test]
+    fn sidebar_is_whiter_but_more_transparent_and_blurred() {
+        let theme = UiTheme::light();
+        let sidebar = theme.glass_material(GlassRole::Sidebar);
+        let toolbar = theme.glass_material(GlassRole::Toolbar);
+
+        assert!(sidebar.blur.radius > toolbar.blur.radius);
+        assert!(sidebar.whiteness > toolbar.whiteness);
+        assert!(sidebar.opacity < toolbar.opacity);
+        assert!(sidebar.shadow.factor > 0.0);
     }
 
     #[test]

@@ -17,12 +17,13 @@ pub use geometry::{
     CapsuleAxis, CornerRadii, CubicBezier, G2Continuity, G2Profile, Path, PathSegment, Point,
     ResolvedCapsule,
 };
+pub use platform::{BackdropSource, DisplayScale, WindowConfig};
 pub use render::{
     GpuError, GpuRenderer, GpuSize, LiquidRenderer, RenderGraph, RenderPass, TexturePool,
 };
 pub use scene::{
     BackdropRegion, Color, CornerCurve, GlassId, GlassMaterial, GlassNode, GlassScene, GlassShape,
-    Rect,
+    Rect, ShadowStyle,
 };
 pub use ui::{
     GlassButton, GlassButtonIcon, GlassChrome, GlassContainer, GlassNavigationControl, GlassRole,

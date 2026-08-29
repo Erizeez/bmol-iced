@@ -79,7 +79,7 @@ struct GlassUniform {
     tint: [f32; 4],
     refraction_and_fresnel: [f32; 6],
     glare: [f32; 5],
-    _pad: f32,
+    _pad: [f32; 5],
 }
 
 #[repr(C)]
@@ -87,11 +87,11 @@ struct GlassUniform {
 struct BlurUniform {
     resolution: [f32; 2],
     radius: i32,
-    _pad: i32,
+    weight_offset: i32,
 }
 
 struct FrameTargets {
-    _scene: wgpu::Texture,
+    scene: wgpu::Texture,
     scene_view: wgpu::TextureView,
     _blur_horizontal: wgpu::Texture,
     blur_horizontal_view: wgpu::TextureView,
@@ -116,7 +116,8 @@ impl FrameTargets {
             format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         };
         let scene = device.create_texture(&descriptor("liquid-glass scene texture", size));
@@ -132,7 +133,7 @@ impl FrameTargets {
         let output_view = output.create_view(&wgpu::TextureViewDescriptor::default());
 
         Self {
-            _scene: scene,
+            scene,
             scene_view,
             _blur_horizontal: blur_horizontal,
             blur_horizontal_view,
@@ -150,7 +151,8 @@ impl FrameTargets {
 /// reference background into an offscreen texture, applies full-resolution
 /// horizontal and vertical Gaussian blur passes, and samples the result while
 /// evaluating the reference SDF, refraction, dispersion, Fresnel, glare, and
-/// tint composition.
+/// tint composition. Multiple nodes are composed in z-order through ping-pong
+/// targets, so each later node samples the already-composited lower layers.
 pub struct GpuRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -160,10 +162,12 @@ pub struct GpuRenderer {
     sampler: wgpu::Sampler,
     fullscreen_vertex_buffer: wgpu::Buffer,
     background_bind_group: wgpu::BindGroup,
-    blur_horizontal_bind_group: wgpu::BindGroup,
+    blur_horizontal_from_scene_bind_group: wgpu::BindGroup,
+    blur_horizontal_from_output_bind_group: wgpu::BindGroup,
     blur_vertical_bind_group: wgpu::BindGroup,
     glass_bind_group_layout: wgpu::BindGroupLayout,
-    glass_bind_group: wgpu::BindGroup,
+    glass_from_scene_bind_group: wgpu::BindGroup,
+    glass_from_output_bind_group: wgpu::BindGroup,
     glass_uniform: wgpu::Buffer,
     blur_uniform: wgpu::Buffer,
     blur_weights: wgpu::Buffer,
@@ -175,6 +179,10 @@ pub struct GpuRenderer {
     blur_horizontal_pipeline: wgpu::RenderPipeline,
     blur_vertical_pipeline: wgpu::RenderPipeline,
     glass_pipeline: wgpu::RenderPipeline,
+    copy_bind_group_layout: wgpu::BindGroupLayout,
+    copy_bind_group: wgpu::BindGroup,
+    copy_pipeline: wgpu::RenderPipeline,
+    transparent_background: bool,
 }
 
 impl fmt::Debug for GpuRenderer {
@@ -235,6 +243,7 @@ impl GpuRenderer {
     ///
     /// Panics when either target dimension is zero.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn from_device_with_format(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -273,16 +282,25 @@ impl GpuRenderer {
         });
         let blur_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("liquid-glass blur uniform"),
-            size: u64::from(GLASS_UNIFORM_SIZE),
+            size: u64::from(glass_uniform_stride) * MAX_GLASS_NODES as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let blur_weights = create_blur_weights_buffer(&device);
+        let blur_weights = create_blur_weights_buffer(&device, MAX_GLASS_NODES);
         let placeholder_texture = create_placeholder_texture(&device);
-        let glass_bind_group = create_glass_bind_group(
+        let glass_from_scene_bind_group = create_glass_bind_group(
             &device,
             &glass_bind_group_layout,
             &targets.scene_view,
+            &targets.blur_vertical_view,
+            &sampler,
+            &glass_uniform,
+            &blur_weights,
+        );
+        let glass_from_output_bind_group = create_glass_bind_group(
+            &device,
+            &glass_bind_group_layout,
+            &targets.output_view,
             &targets.blur_vertical_view,
             &sampler,
             &glass_uniform,
@@ -296,10 +314,18 @@ impl GpuRenderer {
             &glass_uniform,
             &blur_weights,
         );
-        let blur_horizontal_bind_group = create_blur_bind_group(
+        let blur_horizontal_from_scene_bind_group = create_blur_bind_group(
             &device,
             &glass_bind_group_layout,
             &targets.scene_view,
+            &sampler,
+            &blur_uniform,
+            &blur_weights,
+        );
+        let blur_horizontal_from_output_bind_group = create_blur_bind_group(
+            &device,
+            &glass_bind_group_layout,
+            &targets.output_view,
             &sampler,
             &blur_uniform,
             &blur_weights,
@@ -315,6 +341,14 @@ impl GpuRenderer {
 
         let (background_pipeline, blur_horizontal_pipeline, blur_vertical_pipeline, glass_pipeline) =
             create_pipelines(&device, &glass_bind_group_layout, output_format);
+        let copy_bind_group_layout = create_copy_bind_group_layout(&device);
+        let copy_bind_group = create_copy_bind_group(
+            &device,
+            &copy_bind_group_layout,
+            &targets.output_view,
+            &sampler,
+        );
+        let copy_pipeline = create_copy_pipeline(&device, &copy_bind_group_layout, output_format);
 
         Self {
             device,
@@ -325,10 +359,12 @@ impl GpuRenderer {
             sampler,
             fullscreen_vertex_buffer,
             background_bind_group,
-            blur_horizontal_bind_group,
+            blur_horizontal_from_scene_bind_group,
+            blur_horizontal_from_output_bind_group,
             blur_vertical_bind_group,
             glass_bind_group_layout,
-            glass_bind_group,
+            glass_from_scene_bind_group,
+            glass_from_output_bind_group,
             glass_uniform,
             blur_uniform,
             blur_weights,
@@ -340,6 +376,10 @@ impl GpuRenderer {
             blur_horizontal_pipeline,
             blur_vertical_pipeline,
             glass_pipeline,
+            copy_bind_group_layout,
+            copy_bind_group,
+            copy_pipeline,
+            transparent_background: false,
         }
     }
 
@@ -354,10 +394,19 @@ impl GpuRenderer {
         }
         self.size = size;
         self.targets = FrameTargets::new(&self.device, size, self.output_format);
-        self.glass_bind_group = create_glass_bind_group(
+        self.glass_from_scene_bind_group = create_glass_bind_group(
             &self.device,
             &self.glass_bind_group_layout,
             &self.targets.scene_view,
+            &self.targets.blur_vertical_view,
+            &self.sampler,
+            &self.glass_uniform,
+            &self.blur_weights,
+        );
+        self.glass_from_output_bind_group = create_glass_bind_group(
+            &self.device,
+            &self.glass_bind_group_layout,
+            &self.targets.output_view,
             &self.targets.blur_vertical_view,
             &self.sampler,
             &self.glass_uniform,
@@ -371,13 +420,27 @@ impl GpuRenderer {
             &self.glass_uniform,
             &self.blur_weights,
         );
-        self.blur_horizontal_bind_group = create_blur_bind_group(
+        self.blur_horizontal_from_scene_bind_group = create_blur_bind_group(
             &self.device,
             &self.glass_bind_group_layout,
             &self.targets.scene_view,
             &self.sampler,
             &self.blur_uniform,
             &self.blur_weights,
+        );
+        self.blur_horizontal_from_output_bind_group = create_blur_bind_group(
+            &self.device,
+            &self.glass_bind_group_layout,
+            &self.targets.output_view,
+            &self.sampler,
+            &self.blur_uniform,
+            &self.blur_weights,
+        );
+        self.copy_bind_group = create_copy_bind_group(
+            &self.device,
+            &self.copy_bind_group_layout,
+            &self.targets.output_view,
+            &self.sampler,
         );
         self.blur_vertical_bind_group = create_blur_bind_group(
             &self.device,
@@ -408,6 +471,18 @@ impl GpuRenderer {
         self.background_bind_group = bind_group;
     }
 
+    /// Controls whether the base pass writes an opaque background or leaves
+    /// it transparent for the operating-system window compositor.
+    ///
+    /// A transparent frame still needs a backdrop source for local glass
+    /// optics. Applications that want refraction of the real desktop should
+    /// provide a platform-captured texture with [`Self::set_background_texture`];
+    /// window alpha alone can reveal the desktop, but it cannot make desktop
+    /// pixels available to a custom shader.
+    pub fn set_transparent_background(&mut self, transparent: bool) {
+        self.transparent_background = transparent;
+    }
+
     /// Encodes and submits one background, blur, and glass frame.
     ///
     /// # Panics
@@ -415,7 +490,7 @@ impl GpuRenderer {
     /// This panics only if the renderer's compile-time scene node capacity is
     /// smaller than one node.
     pub fn render_panel(&self, node: &GlassNode, time_seconds: f32) {
-        self.render_nodes_to_view(&self.targets.output_view, &[node], time_seconds)
+        self.render_nodes_to_view(&self.targets.output_view, &[node], time_seconds, false)
             .expect("a single glass node must fit in the scene uniform buffer");
     }
 
@@ -429,7 +504,7 @@ impl GpuRenderer {
     /// than the renderer's dynamic uniform capacity.
     pub fn render_scene(&self, scene: &GlassScene, time_seconds: f32) -> Result<(), GpuError> {
         let nodes = scene.nodes_in_render_order();
-        self.render_nodes_to_view(&self.targets.output_view, &nodes, time_seconds)
+        self.render_nodes_to_view(&self.targets.output_view, &nodes, time_seconds, false)
     }
 
     /// Encodes a scene into an externally owned texture view.
@@ -448,7 +523,7 @@ impl GpuRenderer {
         time_seconds: f32,
     ) -> Result<(), GpuError> {
         let nodes = scene.nodes_in_render_order();
-        self.render_nodes_to_view(output_view, &nodes, time_seconds)
+        self.render_nodes_to_view(output_view, &nodes, time_seconds, true)
     }
 
     /// Encodes and submits one frame into an externally owned texture view.
@@ -463,7 +538,7 @@ impl GpuRenderer {
         node: &GlassNode,
         time_seconds: f32,
     ) {
-        self.render_nodes_to_view(output_view, &[node], time_seconds)
+        self.render_nodes_to_view(output_view, &[node], time_seconds, true)
             .expect("a single glass node must fit in the scene uniform buffer");
     }
 
@@ -487,11 +562,13 @@ impl GpuRenderer {
         result
     }
 
+    #[allow(clippy::too_many_lines)]
     fn render_nodes_to_view(
         &self,
         output_view: &wgpu::TextureView,
         nodes: &[&GlassNode],
         time_seconds: f32,
+        copy_to_external_view: bool,
     ) -> Result<(), GpuError> {
         if nodes.len() > MAX_GLASS_NODES {
             return Err(GpuError::SceneNodeLimitExceeded { limit: MAX_GLASS_NODES });
@@ -506,16 +583,10 @@ impl GpuRenderer {
                 time_seconds,
                 self.background_texture.is_some(),
                 self.background_texture_ratio,
+                self.transparent_background,
             );
             self.queue.write_buffer(&self.glass_uniform, offset, bytemuck::bytes_of(&uniform));
         }
-        let blur_radius = blur_radius_for_nodes(nodes);
-        let blur_uniform =
-            BlurUniform { resolution: gpu_size_as_f32(self.size), radius: blur_radius, _pad: 0 };
-        self.queue.write_buffer(&self.blur_uniform, 0, bytemuck::bytes_of(&blur_uniform));
-        let blur_weights = gaussian_weights(blur_radius);
-        self.queue.write_buffer(&self.blur_weights, 0, bytemuck::cast_slice(&blur_weights));
-
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("liquid-glass frame encoder"),
         });
@@ -526,44 +597,139 @@ impl GpuRenderer {
             &self.background_pipeline,
             &self.fullscreen_vertex_buffer,
             Some(&self.background_bind_group),
+            Some(0),
             wgpu::Color { r: 0.04, g: 0.06, b: 0.12, a: 1.0 },
         );
-        encode_fullscreen_pass(
-            &mut encoder,
-            "liquid-glass horizontal blur pass",
-            &self.targets.blur_horizontal_view,
-            &self.blur_horizontal_pipeline,
-            &self.fullscreen_vertex_buffer,
-            Some(&self.blur_horizontal_bind_group),
-            wgpu::Color::BLACK,
-        );
-        encode_fullscreen_pass(
-            &mut encoder,
-            "liquid-glass vertical blur pass",
-            &self.targets.blur_vertical_view,
-            &self.blur_vertical_pipeline,
-            &self.fullscreen_vertex_buffer,
-            Some(&self.blur_vertical_bind_group),
-            wgpu::Color::BLACK,
-        );
-        encode_fullscreen_pass(
-            &mut encoder,
-            "liquid-glass output background pass",
-            output_view,
-            &self.background_pipeline,
-            &self.fullscreen_vertex_buffer,
-            Some(&self.background_bind_group),
-            wgpu::Color::BLACK,
-        );
-        encode_glass_pass(
-            &mut encoder,
-            output_view,
-            &self.glass_pipeline,
-            &self.glass_bind_group,
-            &self.fullscreen_vertex_buffer,
-            nodes.len(),
-            self.glass_uniform_stride,
-        );
+
+        let mut source = PingPongSource::Scene;
+        for (index, _) in nodes.iter().enumerate() {
+            let blur_radius = blur_radius_for_node(nodes[index]);
+            let uniform_offset =
+                self.glass_uniform_stride * u32::try_from(index).expect("node index fits in u32");
+            let weight_offset = (MAX_BLUR_RADIUS + 1) * index * std::mem::size_of::<f32>();
+            let blur_uniform = BlurUniform {
+                resolution: gpu_size_as_f32(self.size),
+                radius: blur_radius,
+                weight_offset: i32::try_from(weight_offset / std::mem::size_of::<f32>())
+                    .expect("blur weight offset fits in i32"),
+            };
+            self.queue.write_buffer(
+                &self.blur_uniform,
+                u64::from(uniform_offset),
+                bytemuck::bytes_of(&blur_uniform),
+            );
+            let blur_weights = gaussian_weights(blur_radius);
+            self.queue.write_buffer(
+                &self.blur_weights,
+                u64::try_from(weight_offset).expect("blur weight offset fits in u64"),
+                bytemuck::cast_slice(&blur_weights),
+            );
+
+            let (
+                source_texture,
+                destination_texture,
+                destination_view,
+                blur_bind_group,
+                glass_bind_group,
+            ) = match source {
+                PingPongSource::Scene => (
+                    &self.targets.scene,
+                    &self.targets.output,
+                    &self.targets.output_view,
+                    &self.blur_horizontal_from_scene_bind_group,
+                    &self.glass_from_scene_bind_group,
+                ),
+                PingPongSource::Output => (
+                    &self.targets.output,
+                    &self.targets.scene,
+                    &self.targets.scene_view,
+                    &self.blur_horizontal_from_output_bind_group,
+                    &self.glass_from_output_bind_group,
+                ),
+            };
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: source_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: destination_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: self.size.width,
+                    height: self.size.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            encode_fullscreen_pass(
+                &mut encoder,
+                "liquid-glass hierarchical horizontal blur pass",
+                &self.targets.blur_horizontal_view,
+                &self.blur_horizontal_pipeline,
+                &self.fullscreen_vertex_buffer,
+                Some(blur_bind_group),
+                Some(uniform_offset),
+                wgpu::Color::BLACK,
+            );
+            encode_fullscreen_pass(
+                &mut encoder,
+                "liquid-glass hierarchical vertical blur pass",
+                &self.targets.blur_vertical_view,
+                &self.blur_vertical_pipeline,
+                &self.fullscreen_vertex_buffer,
+                Some(&self.blur_vertical_bind_group),
+                Some(uniform_offset),
+                wgpu::Color::BLACK,
+            );
+            encode_glass_node_pass(
+                &mut encoder,
+                destination_view,
+                &self.glass_pipeline,
+                glass_bind_group,
+                &self.fullscreen_vertex_buffer,
+                uniform_offset,
+            );
+            source = source.other();
+        }
+
+        if source == PingPongSource::Scene {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.targets.scene,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.targets.output,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: self.size.width,
+                    height: self.size.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        if copy_to_external_view {
+            encode_fullscreen_pass(
+                &mut encoder,
+                "liquid-glass present copy pass",
+                output_view,
+                &self.copy_pipeline,
+                &self.fullscreen_vertex_buffer,
+                Some(&self.copy_bind_group),
+                None,
+                wgpu::Color::BLACK,
+            );
+        }
         self.queue.submit([encoder.finish()]);
         Ok(())
     }
@@ -605,6 +771,7 @@ impl GpuRenderer {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_fullscreen_pass(
     encoder: &mut wgpu::CommandEncoder,
     label: &str,
@@ -612,6 +779,7 @@ fn encode_fullscreen_pass(
     pipeline: &wgpu::RenderPipeline,
     vertex_buffer: &wgpu::Buffer,
     bind_group: Option<&wgpu::BindGroup>,
+    dynamic_offset: Option<u32>,
     clear: wgpu::Color,
 ) {
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -627,19 +795,37 @@ fn encode_fullscreen_pass(
     pass.set_pipeline(pipeline);
     pass.set_vertex_buffer(0, vertex_buffer.slice(..));
     if let Some(bind_group) = bind_group {
-        pass.set_bind_group(0, bind_group, &[0]);
+        if let Some(dynamic_offset) = dynamic_offset {
+            pass.set_bind_group(0, bind_group, &[dynamic_offset]);
+        } else {
+            pass.set_bind_group(0, bind_group, &[]);
+        }
     }
     pass.draw(0..4, 0..1);
 }
 
-fn encode_glass_pass(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PingPongSource {
+    Scene,
+    Output,
+}
+
+impl PingPongSource {
+    const fn other(self) -> Self {
+        match self {
+            Self::Scene => Self::Output,
+            Self::Output => Self::Scene,
+        }
+    }
+}
+
+fn encode_glass_node_pass(
     encoder: &mut wgpu::CommandEncoder,
     target: &wgpu::TextureView,
     pipeline: &wgpu::RenderPipeline,
     bind_group: &wgpu::BindGroup,
     vertex_buffer: &wgpu::Buffer,
-    node_count: usize,
-    uniform_stride: u32,
+    uniform_offset: u32,
 ) {
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("liquid-glass pass"),
@@ -653,12 +839,8 @@ fn encode_glass_pass(
     });
     pass.set_pipeline(pipeline);
     pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-    for index in 0..node_count {
-        let offset =
-            uniform_stride * u32::try_from(index).expect("scene node index fits in dynamic offset");
-        pass.set_bind_group(0, bind_group, &[offset]);
-        pass.draw(0..4, 0..1);
-    }
+    pass.set_bind_group(0, bind_group, &[uniform_offset]);
+    pass.draw(0..4, 0..1);
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
@@ -668,6 +850,7 @@ fn uniform_for_node(
     time_seconds: f32,
     background_texture_ready: bool,
     background_texture_ratio: f32,
+    transparent_background: bool,
 ) -> GlassUniform {
     let center_x = node.bounds.x + node.bounds.width * 0.5;
     let center_y = size.height as f32 - node.bounds.y - node.bounds.height * 0.5;
@@ -682,9 +865,24 @@ fn uniform_for_node(
         shape: [node.bounds.width, node.bounds.height, shape_radius, shape_roundness],
         capsule_bezier_x,
         capsule_bezier_y,
-        merge_glare_shadow: [0.05, time_seconds * 0.20, 25.0, 0.15],
-        shadow_position_bg_ratio: [0.0, 0.0, background_texture_ratio],
-        bg_type: if background_texture_ready { 11 } else { 0 },
+        merge_glare_shadow: [
+            0.05,
+            time_seconds * 0.20,
+            material.shadow.expand.max(1.0),
+            material.shadow.factor.clamp(0.0, 0.6),
+        ],
+        shadow_position_bg_ratio: [
+            material.shadow.offset[0],
+            material.shadow.offset[1],
+            background_texture_ratio,
+        ],
+        bg_type: if transparent_background {
+            12
+        } else if background_texture_ready {
+            11
+        } else {
+            0
+        },
         flags: [
             i32::from(background_texture_ready),
             0,
@@ -701,7 +899,7 @@ fn uniform_for_node(
             material.fresnel.strength,
         ],
         glare: [30.0, 0.2, 0.5, 0.8, 0.9],
-        _pad: material.opacity,
+        _pad: [material.opacity, 0.0, 0.0, 0.0, 0.0],
     }
 }
 
@@ -728,12 +926,8 @@ fn gpu_size_as_f32(size: GpuSize) -> [f32; 2] {
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
-fn blur_radius_for_nodes(nodes: &[&GlassNode]) -> i32 {
-    nodes
-        .iter()
-        .map(|node| node.material.blur.radius.round().clamp(0.0, MAX_BLUR_RADIUS as f32) as i32)
-        .max()
-        .unwrap_or(20)
+fn blur_radius_for_node(node: &GlassNode) -> i32 {
+    node.material.blur.radius.round().clamp(0.0, MAX_BLUR_RADIUS as f32) as i32
 }
 
 #[allow(clippy::cast_precision_loss, clippy::needless_range_loop)]
@@ -756,10 +950,10 @@ fn gaussian_weights(radius: i32) -> [f32; MAX_BLUR_RADIUS + 1] {
     weights
 }
 
-fn create_blur_weights_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+fn create_blur_weights_buffer(device: &wgpu::Device, node_capacity: usize) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("liquid-glass gaussian weights"),
-        size: u64::try_from((MAX_BLUR_RADIUS + 1) * std::mem::size_of::<f32>())
+        size: u64::try_from(node_capacity * (MAX_BLUR_RADIUS + 1) * std::mem::size_of::<f32>())
             .expect("blur weights size fits in u64"),
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
@@ -832,6 +1026,32 @@ fn create_glass_bind_group(
                     size: None,
                 }),
             },
+        ],
+    })
+}
+
+fn create_copy_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("liquid-glass copy layout"),
+        entries: &[texture_binding(0), sampler_binding(1)],
+    })
+}
+
+fn create_copy_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    source_view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("liquid-glass copy bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(source_view),
+            },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
         ],
     })
 }
@@ -1024,6 +1244,30 @@ fn create_pipeline(
         multiview: None,
         cache: None,
     })
+}
+
+fn create_copy_pipeline(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    output_format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("liquid-glass hierarchical copy shader"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Owned(format!(
+            "{}\n{}",
+            include_str!("../../../shaders/glass/reference/vertex.wgsl"),
+            include_str!("../../../shaders/glass/copy.wgsl"),
+        ))),
+    });
+    create_pipeline(
+        device,
+        "liquid-glass hierarchical copy pipeline",
+        &shader,
+        Some(bind_group_layout),
+        "fs_main",
+        None,
+        output_format,
+    )
 }
 
 fn create_pipelines(
@@ -1229,7 +1473,7 @@ mod tests {
         let (custom_bezier_x, _) = capsule_bezier_uniforms(&custom_capsule);
         assert!((bezier_x[0] - custom_bezier_x[0]).abs() > f32::EPSILON);
         assert!((shape_roundness(&circle) - 2.0).abs() < f32::EPSILON);
-        assert_eq!(std::mem::size_of::<GlassUniform>(), 192);
+        assert_eq!(std::mem::size_of::<GlassUniform>(), 208);
     }
 
     #[test]
