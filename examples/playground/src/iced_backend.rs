@@ -4,6 +4,7 @@ use std::{
     time::Instant,
 };
 
+use iced::window::raw_window_handle::HasWindowHandle;
 use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
 use liquid_glass::{
     GlassId, GlassNode, GlassRole, GlassScene, GpuRenderer, GpuSize, Rect, UiColorScheme, UiTheme,
@@ -24,6 +25,16 @@ pub fn set_color_scheme(scheme: UiColorScheme) {
         },
         Ordering::Relaxed,
     );
+}
+
+/// Reapply the native desktop backdrop after a window activation transition.
+pub fn refresh_native_backdrop<W>(window: &W)
+where
+    W: HasWindowHandle + ?Sized,
+{
+    if let Ok(handle) = window.window_handle() {
+        liquid_glass_native::refresh_desktop_blur(handle.as_raw());
+    }
 }
 
 fn active_color_scheme() -> UiColorScheme {

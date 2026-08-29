@@ -1311,6 +1311,14 @@ name = "liquid-glass-geometry"
 version = "0.1.0"
 
 [[package]]
+name = "liquid-glass-native"
+version = "0.1.0"
+dependencies = [
+ "objc2-app-kit 0.3.2",
+ "raw-window-handle",
+]
+
+[[package]]
 name = "liquid-glass-platform"
 version = "0.1.0"
 
@@ -1322,6 +1330,7 @@ dependencies = [
  "iced_wgpu",
  "image",
  "liquid-glass",
+ "liquid-glass-native",
  "pollster",
  "wgpu",
  "window-vibrancy",

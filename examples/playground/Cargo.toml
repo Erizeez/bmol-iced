@@ -11,6 +11,7 @@ iced = { version = "0.14.0", default-features = false, features = ["wgpu", "adva
 iced_wgpu = "0.14.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
 liquid-glass = { path = "../../crates/liquid-glass", version = "0.1.0" }
+liquid-glass-native = { path = "../../crates/liquid-glass-native", version = "0.1.0" }
 pollster = "1.0.1"
 wgpu = { version = "27.0.1", features = ["noop"] }
 window-vibrancy = "0.8.0"
