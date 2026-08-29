@@ -9,6 +9,11 @@ use liquid_glass::{
     GlassId, GlassNode, GlassRole, GlassScene, GpuRenderer, GpuSize, Rect, UiColorScheme, UiTheme,
 };
 
+#[cfg(target_os = "macos")]
+pub const CONTENT_TOP_INSET: f32 = 32.0;
+#[cfg(not(target_os = "macos"))]
+pub const CONTENT_TOP_INSET: f32 = 0.0;
+
 static ACTIVE_COLOR_SCHEME: AtomicU8 = AtomicU8::new(1);
 
 pub fn set_color_scheme(scheme: UiColorScheme) {
@@ -463,7 +468,8 @@ fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorSch
     let sidebar_width = 232.0;
     let content_x = sidebar_width + 1.0;
     let content_width = (logical_width - content_x).max(1.0);
-    let logical_height = size.height as f32 / scale_factor;
+    let logical_height = (size.height as f32 / scale_factor - CONTENT_TOP_INSET).max(1.0);
+    let content_y = CONTENT_TOP_INSET;
     let theme = UiTheme::new(color_scheme);
     let mut scene = GlassScene::default();
 
@@ -471,22 +477,22 @@ fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorSch
     // the actual translucent surface that reveals the OS-owned desktop
     // backdrop through the transparent window.
     scene.push(
-        GlassNode::new(GlassId(9), Rect::new(0.0, 0.0, sidebar_width, logical_height))
+        GlassNode::new(GlassId(9), Rect::new(0.0, content_y, sidebar_width, logical_height))
             .shape(theme.glass_shape(GlassRole::Sidebar))
             .material(theme.glass_material(GlassRole::Sidebar)),
     );
     scene.push(
-        GlassNode::new(GlassId(10), Rect::new(content_x, 0.0, content_width, 56.0))
+        GlassNode::new(GlassId(10), Rect::new(content_x, content_y, content_width, 56.0))
             .shape(theme.glass_shape(GlassRole::Toolbar))
             .material(theme.glass_material(GlassRole::Toolbar)),
     );
     scene.push(
-        GlassNode::new(GlassId(11), Rect::new(10.0, 10.0, 212.0, 36.0))
+        GlassNode::new(GlassId(11), Rect::new(10.0, content_y + 10.0, 212.0, 36.0))
             .shape(theme.glass_shape(GlassRole::InputField))
             .material(theme.glass_material(GlassRole::InputField)),
     );
     scene.push(
-        GlassNode::new(GlassId(12), Rect::new(content_x + 8.0, 10.0, 72.0, 36.0))
+        GlassNode::new(GlassId(12), Rect::new(content_x + 8.0, content_y + 10.0, 72.0, 36.0))
             .shape(theme.glass_shape(GlassRole::FloatingControl))
             .material(theme.glass_material(GlassRole::FloatingControl)),
     );

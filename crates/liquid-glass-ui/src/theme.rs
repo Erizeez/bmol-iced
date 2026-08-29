@@ -184,13 +184,18 @@ impl UiTheme {
         material.fresnel.range = 0.75;
         material.fresnel.hardness = 0.20;
         material.fresnel.strength = 0.20;
-        material.opacity = if role == GlassRole::Sidebar {
-            match self.scheme {
+        material.opacity = match role {
+            GlassRole::Sidebar => match self.scheme {
                 UiColorScheme::Light => 0.38,
                 UiColorScheme::Dark => 0.34,
-            }
-        } else {
-            1.0
+            },
+            // Keep the neutral layer present, but leave enough of the
+            // compositor backdrop visible to read as glass on a transparent
+            // desktop surface. The input remains the whitest control; the
+            // navigation capsule is lighter and more transparent.
+            GlassRole::Toolbar => 0.40,
+            GlassRole::InputField | GlassRole::SearchField => 0.36,
+            GlassRole::FloatingControl => 0.24,
         };
         material.shadow = match role {
             GlassRole::FloatingControl => ShadowStyle::elevated(),

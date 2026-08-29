@@ -8,7 +8,7 @@ use iced::{
         text_input, toggler,
     },
 };
-use iced_backend::Renderer;
+use iced_backend::{CONTENT_TOP_INSET, Renderer};
 use liquid_glass::{
     GlassContainer, GlassId, GlassMaterial, GlassRole, GlassSegment, GlassSegmentContent,
     GlassSegmentedControl, GlassShape, Rect, UiColorScheme, UiPalette, UiTheme,
@@ -166,10 +166,16 @@ fn view(state: &State) -> AppElement<'_> {
 
     let main = column![toolbar, content].width(Length::Fill).height(Length::Fill);
 
-    container(row![sidebar, rule::vertical(1).style(split_rule_style), main])
+    let window_content = container(row![sidebar, rule::vertical(1).style(split_rule_style), main])
         .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        .height(Length::Fill);
+
+    let titlebar = container(space())
+        .width(Length::Fill)
+        .height(Length::Fixed(CONTENT_TOP_INSET))
+        .style(titlebar_style);
+
+    container(column![titlebar, window_content]).width(Length::Fill).height(Length::Fill).into()
 }
 
 fn sidebar_button(label: &'static str, section: Section, active: Section) -> AppElement<'static> {
@@ -514,6 +520,15 @@ fn sidebar_style(theme: &Theme) -> container::Style {
     }
 }
 
+fn titlebar_style(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container::Style {
+        text_color: Some(palette.text_primary),
+        background: Some(Background::Color(palette.window_background)),
+        ..container::Style::default()
+    }
+}
+
 fn content_style(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container::Style {
@@ -635,17 +650,28 @@ fn split_rule_style(theme: &Theme) -> rule::Style {
 
 fn main() -> iced::Result {
     let window_config = liquid_glass::WindowConfig::desktop_backdrop();
+    let window_settings = iced::window::Settings {
+        transparent: window_config.transparent,
+        // winit requests compositor blur without adding a view above the
+        // wgpu CAMetalLayer, so Iced content remains visible.
+        blur: window_config.blur && (cfg!(target_os = "linux") || cfg!(target_os = "macos")),
+        #[cfg(target_os = "macos")]
+        platform_specific: iced::window::settings::PlatformSpecific {
+            // Keep the native titlebar opaque. The Iced content starts below
+            // it through CONTENT_TOP_INSET instead of drawing behind it.
+            titlebar_transparent: false,
+            fullsize_content_view: true,
+            ..iced::window::settings::PlatformSpecific::default()
+        },
+        #[cfg(not(target_os = "macos"))]
+        platform_specific: iced::window::settings::PlatformSpecific::default(),
+        ..iced::window::Settings::default()
+    };
     iced::application::<State, Message, Theme, Renderer>(boot, update, view)
         .title("System Settings")
         .theme(app_theme)
         .subscription(subscription)
-        .window(iced::window::Settings {
-            transparent: window_config.transparent,
-            // winit requests compositor blur without adding a view above the
-            // wgpu CAMetalLayer, so Iced content remains visible.
-            blur: window_config.blur && (cfg!(target_os = "linux") || cfg!(target_os = "macos")),
-            ..iced::window::Settings::default()
-        })
+        .window(window_settings)
         .window_size(iced::Size::new(1320.0, 760.0))
         .run()
 }
