@@ -24,8 +24,6 @@ struct State {
     volume: f32,
     content_scroll: f32,
     system_scheme: UiColorScheme,
-    backdrop_window: Option<iced::window::Id>,
-    backdrop_refresh_frames: u8,
 }
 
 impl Default for State {
@@ -40,8 +38,6 @@ impl Default for State {
             volume: 64.0,
             content_scroll: 0.0,
             system_scheme: UiColorScheme::Dark,
-            backdrop_window: None,
-            backdrop_refresh_frames: 0,
         }
     }
 }
@@ -84,8 +80,6 @@ enum Message {
     VolumeChanged(f32),
     ContentScrolled(f32),
     SystemThemeChanged(iced::theme::Mode),
-    WindowFocusChanged { id: iced::window::Id, focused: bool },
-    BackdropRefreshFrame,
 }
 
 type AppElement<'a> = Element<'a, Message, Theme, Renderer>;
@@ -109,45 +103,13 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::SystemThemeChanged(mode) => {
             state.system_scheme = UiColorScheme::from_mode(mode);
         }
-        Message::WindowFocusChanged { id, focused } => {
-            state.backdrop_window = Some(id);
-            // Stage Manager can keep rebuilding the compositor for a few
-            // frames after Focused arrives. Refresh through that short
-            // transition instead of relying on a single native call.
-            state.backdrop_refresh_frames = if focused { 24 } else { 8 };
-            return iced::window::run(id, |window| {
-                iced_backend::refresh_native_backdrop(window);
-            })
-            .discard();
-        }
-        Message::BackdropRefreshFrame => {
-            if state.backdrop_refresh_frames > 0 {
-                state.backdrop_refresh_frames -= 1;
-                if let Some(id) = state.backdrop_window {
-                    return iced::window::run(id, |window| {
-                        iced_backend::refresh_native_backdrop(window);
-                    })
-                    .discard();
-                }
-            }
-        }
     }
     iced_backend::set_color_scheme(state.color_scheme());
     Task::none()
 }
 
 fn subscription(_state: &State) -> Subscription<Message> {
-    Subscription::batch([
-        iced::system::theme_changes().map(Message::SystemThemeChanged),
-        iced::window::events().filter_map(|(id, event)| match event {
-            iced::window::Event::Focused => Some(Message::WindowFocusChanged { id, focused: true }),
-            iced::window::Event::Unfocused => {
-                Some(Message::WindowFocusChanged { id, focused: false })
-            }
-            _ => None,
-        }),
-        iced::window::frames().map(|_| Message::BackdropRefreshFrame),
-    ])
+    iced::system::theme_changes().map(Message::SystemThemeChanged)
 }
 
 fn app_theme(state: &State) -> Theme {

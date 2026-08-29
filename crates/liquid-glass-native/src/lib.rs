@@ -8,18 +8,38 @@
 
 use raw_window_handle::RawWindowHandle;
 
+/// A retained identity for the native window that owns a desktop backdrop.
+///
+/// The value is intentionally opaque and contains no borrowed `AppKit` object,
+/// so it can live alongside a graphics compositor between frames.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DesktopBlurTarget(usize);
+
+/// Gets a native desktop-blur target from a window handle, when supported.
+#[must_use]
+pub fn desktop_blur_target(handle: RawWindowHandle) -> Option<DesktopBlurTarget> {
+    #[cfg(target_os = "macos")]
+    return macos::desktop_blur_target(handle);
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = handle;
+        None
+    }
+}
+
 /// Reapplies the desktop blur associated with a transparent application
 /// window, when the current platform exposes that operation.
 ///
 /// On macOS, Stage Manager can rebuild a window's compositor state while the
-/// window is being restored. Reapplying the radius after focus changes keeps
-/// transparent pixels blurred instead of briefly showing a sharp desktop.
-pub fn refresh_desktop_blur(handle: RawWindowHandle) {
+/// window is being restored. Reapplying the radius around frame submission
+/// keeps transparent pixels blurred instead of briefly showing a sharp desktop.
+pub fn refresh_desktop_blur(target: DesktopBlurTarget) {
     #[cfg(target_os = "macos")]
-    macos::refresh_desktop_blur(handle);
+    macos::refresh_desktop_blur(target);
 
     #[cfg(not(target_os = "macos"))]
-    let _ = handle;
+    let _ = target;
 }
 
 #[cfg(target_os = "macos")]
@@ -28,6 +48,8 @@ mod macos {
 
     use objc2_app_kit::NSView;
     use raw_window_handle::{AppKitWindowHandle, RawWindowHandle};
+
+    use super::DesktopBlurTarget;
 
     const DESKTOP_BLUR_RADIUS: i64 = 80;
 
@@ -71,14 +93,21 @@ mod macos {
         })
     }
 
-    pub fn refresh_desktop_blur(handle: RawWindowHandle) {
+    pub fn desktop_blur_target(handle: RawWindowHandle) -> Option<DesktopBlurTarget> {
         let RawWindowHandle::AppKit(appkit_handle) = handle else {
-            return;
+            return None;
         };
 
         let AppKitWindowHandle { ns_view, .. } = appkit_handle;
-        // The handle is provided by winit and is valid for the duration of
-        // this synchronous callback on the AppKit main thread.
+        Some(DesktopBlurTarget(ns_view.as_ptr() as usize))
+    }
+
+    pub fn refresh_desktop_blur(target: DesktopBlurTarget) {
+        let Some(ns_view) = std::ptr::NonNull::new(target.0 as *mut c_void) else {
+            return;
+        };
+        // The target originates from winit's AppKit handle and is used only
+        // on the AppKit main thread while its window is alive.
         let view: &NSView = unsafe { ns_view.cast().as_ref() };
         let Some(window) = view.window() else {
             return;

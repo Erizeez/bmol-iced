@@ -4,7 +4,6 @@ use std::{
     time::Instant,
 };
 
-use iced::window::raw_window_handle::HasWindowHandle;
 use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
 use liquid_glass::{
     GlassId, GlassNode, GlassRole, GlassScene, GpuRenderer, GpuSize, Rect, UiColorScheme, UiTheme,
@@ -25,16 +24,6 @@ pub fn set_color_scheme(scheme: UiColorScheme) {
         },
         Ordering::Relaxed,
     );
-}
-
-/// Reapply the native desktop backdrop after a window activation transition.
-pub fn refresh_native_backdrop<W>(window: &W)
-where
-    W: HasWindowHandle + ?Sized,
-{
-    if let Ok(handle) = window.window_handle() {
-        liquid_glass_native::refresh_desktop_blur(handle.as_raw());
-    }
 }
 
 fn active_color_scheme() -> UiColorScheme {
@@ -234,6 +223,7 @@ pub struct Compositor {
     settings: iced_wgpu::Settings,
     device: wgpu::Device,
     liquid: GpuRenderer,
+    native_backdrop: Option<liquid_glass_native::DesktopBlurTarget>,
     color_scheme: UiColorScheme,
     started_at: Instant,
 }
@@ -269,6 +259,13 @@ impl graphics::Compositor for Compositor {
         }
 
         apply_native_backdrop(&compatible_window);
+        let native_backdrop = compatible_window
+            .window_handle()
+            .ok()
+            .and_then(|handle| liquid_glass_native::desktop_blur_target(handle.as_raw()));
+        if let Some(target) = native_backdrop {
+            liquid_glass_native::refresh_desktop_blur(target);
+        }
         let settings = iced_wgpu::Settings::from(settings);
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: settings.backends,
@@ -341,6 +338,7 @@ impl graphics::Compositor for Compositor {
             settings,
             device,
             liquid,
+            native_backdrop,
             color_scheme: active_color_scheme(),
             started_at: Instant::now(),
         })
@@ -399,6 +397,12 @@ impl graphics::Compositor for Compositor {
         background_color: iced::Color,
         on_pre_present: impl FnOnce(),
     ) -> Result<(), graphics::compositor::SurfaceError> {
+        // Stage Manager can rebuild the native window compositor between two
+        // redraws. Reapply the blur immediately around the transparent
+        // surface submission so no sharp desktop frame can slip through.
+        if let Some(target) = self.native_backdrop {
+            liquid_glass_native::refresh_desktop_blur(target);
+        }
         let frame = surface.get_current_texture().map_err(|error| map_surface_error(&error))?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let physical = viewport.physical_size();
@@ -416,6 +420,9 @@ impl graphics::Compositor for Compositor {
             .map_err(|_| graphics::compositor::SurfaceError::Other)?;
         renderer.inner.present(None, frame.texture.format(), &view, viewport);
         on_pre_present();
+        if let Some(target) = self.native_backdrop {
+            liquid_glass_native::refresh_desktop_blur(target);
+        }
         frame.present();
         let _ = background_color;
         Ok(())
