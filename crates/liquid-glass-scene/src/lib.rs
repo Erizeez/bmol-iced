@@ -130,10 +130,10 @@ pub enum GlassShape {
 }
 
 impl GlassShape {
-    /// Smooth-union width used where an exact circular cap meets the middle
-    /// rectangle. The resulting shoulder expands by at most one quarter of
-    /// this value while the outer cap stays circular.
-    pub const SMOOTH_CAPSULE_BLEND_PX: f32 = 3.0;
+    /// Outward crown used by the continuous capsule's nearly-horizontal top
+    /// and bottom edges. The circular caps are trimmed before their tangent
+    /// points and joined with a curvature-matched shoulder curve.
+    pub const CONTINUOUS_CAPSULE_BULGE_PX: f32 = 0.75;
 }
 
 impl Default for GlassShape {

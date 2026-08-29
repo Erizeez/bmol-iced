@@ -4,11 +4,6 @@ fn sdCircle(p: vec2f, r: f32) -> f32 {
   return length(p) - r;
 }
 
-fn sdBox(p: vec2f, halfSize: vec2f) -> f32 {
-  let q = abs(p) - halfSize;
-  return length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0);
-}
-
 fn continuousCornerSDF(p_in: vec2f, r: f32, n: f32) -> f32 {
   let p = abs(p_in);
   let exponent = max(n, 2.0);
@@ -43,41 +38,79 @@ fn smin(a: f32, b: f32, k: f32) -> f32 {
   return mix(b, a, h) - k * h * (1.0 - h);
 }
 
-fn smoothCapsuleSDF(
+fn continuousCapsuleProfile(
+  longitudinal: f32,
+  halfLong: f32,
+  radius: f32,
+  bulge: f32,
+) -> vec2f {
+  let trimSin = 0.309016994;
+  let trimCos = 0.951056516;
+  let trimTan = 0.324919696;
+  let capCenter = max(halfLong - radius, 0.0);
+  let trimX = capCenter + radius * trimSin;
+  let shoulderLength = min(radius * 0.75, capCenter);
+  let innerX = max(capCenter - shoulderLength, 0.0);
+
+  if (longitudinal <= innerX) {
+    if (innerX <= 0.000001) {
+      return vec2f(radius + bulge, 0.0);
+    }
+    let q = longitudinal / innerX;
+    let arch = max(1.0 - q * q, 0.0);
+    let crown = bulge * 0.25;
+    let y = radius + bulge + crown * arch * arch * arch;
+    let slope = -6.0 * crown * q * arch * arch / innerX;
+    return vec2f(y, slope);
+  }
+
+  let span = max(trimX - innerX, 0.000001);
+  let t = clamp((longitudinal - innerX) / span, 0.0, 1.0);
+  let y0 = radius + bulge;
+  let y1 = radius * trimCos;
+  let first1 = -trimTan * span;
+  let second1 = -span * span / (radius * trimCos * trimCos * trimCos);
+  let delta = y1 - y0;
+  let a3 = 10.0 * delta - 4.0 * first1 + 0.5 * second1;
+  let a4 = -15.0 * delta + 7.0 * first1 - second1;
+  let a5 = 6.0 * delta - 3.0 * first1 + 0.5 * second1;
+  let t2 = t * t;
+  let t3 = t2 * t;
+  let t4 = t3 * t;
+  let t5 = t4 * t;
+  let y = y0 + a3 * t3 + a4 * t4 + a5 * t5;
+  let slope = (3.0 * a3 * t2 + 4.0 * a4 * t3 + 5.0 * a5 * t4) / span;
+  return vec2f(y, slope);
+}
+
+fn continuousCapsuleSDF(
   p_in: vec2f,
   center: vec2f,
   width: f32,
   height: f32,
-  blendPixels: f32,
+  bulgePixels: f32,
 ) -> f32 {
-  let p = p_in - center;
+  let p = abs(p_in - center);
   let halfSize = vec2f(width, height) * u.u_dpr * 0.5;
   let radius = min(halfSize.x, halfSize.y);
-  let blend = max(blendPixels * u.u_dpr / u.u_resolution.y, 0.000001);
+  let bulge = bulgePixels * u.u_dpr / u.u_resolution.y;
+  let horizontal = halfSize.x >= halfSize.y;
+  let halfLong = select(halfSize.y, halfSize.x, horizontal);
+  let longitudinal = select(p.y, p.x, horizontal);
+  let transverse = select(p.x, p.y, horizontal);
+  let capCenter = max(halfLong - radius, 0.0);
 
-  if (halfSize.x >= halfSize.y) {
-    let offset = max(halfSize.x - radius, 0.0);
-    if (offset <= 0.000001) {
-      return sdCircle(p, radius);
-    }
-    let body = sdBox(p, vec2f(offset, radius));
-    let caps = min(
-      sdCircle(p + vec2f(offset, 0.0), radius),
-      sdCircle(p - vec2f(offset, 0.0), radius),
-    );
-    return smin(body, caps, blend);
-  }
-
-  let offset = max(halfSize.y - radius, 0.0);
-  if (offset <= 0.000001) {
+  if (capCenter <= 0.000001) {
     return sdCircle(p, radius);
   }
-  let body = sdBox(p, vec2f(radius, offset));
-  let caps = min(
-    sdCircle(p + vec2f(0.0, offset), radius),
-    sdCircle(p - vec2f(0.0, offset), radius),
-  );
-  return smin(body, caps, blend);
+
+  let trimX = capCenter + radius * 0.309016994;
+  if (longitudinal >= trimX) {
+    return length(vec2f(longitudinal - capCenter, transverse)) - radius;
+  }
+
+  let profile = continuousCapsuleProfile(longitudinal, halfLong, radius, bulge);
+  return (transverse - profile.x) / sqrt(1.0 + profile.y * profile.y);
 }
 
 fn mainSDF(p1: vec2f, p2: vec2f, p: vec2f) -> f32 {
@@ -91,7 +124,7 @@ fn mainSDF(p1: vec2f, p2: vec2f, p: vec2f) -> f32 {
   }
   var d2: f32;
   if (u.u_shapeRoundness < 0.0) {
-    d2 = smoothCapsuleSDF(
+    d2 = continuousCapsuleSDF(
       p2n,
       vec2f(0.0),
       u.u_shapeWidth / u.u_resolution.y,
