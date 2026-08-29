@@ -186,8 +186,8 @@ impl UiTheme {
         material.fresnel.strength = 0.20;
         material.opacity = if role == GlassRole::Sidebar {
             match self.scheme {
-                UiColorScheme::Light => 0.62,
-                UiColorScheme::Dark => 0.58,
+                UiColorScheme::Light => 0.38,
+                UiColorScheme::Dark => 0.34,
             }
         } else {
             1.0

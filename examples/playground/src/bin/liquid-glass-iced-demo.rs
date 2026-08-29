@@ -639,11 +639,10 @@ fn main() -> iced::Result {
         .title("System Settings")
         .theme(app_theme)
         .subscription(subscription)
-        .transparent(window_config.transparent)
         .window(iced::window::Settings {
-            // winit's compositor blur is safe here because it does not add a
-            // view above the wgpu CAMetalLayer. The custom renderer still
-            // owns the selective sidebar/toolbar/input glass surfaces.
+            transparent: window_config.transparent,
+            // winit requests compositor blur without adding a view above the
+            // wgpu CAMetalLayer, so Iced content remains visible.
             blur: window_config.blur && (cfg!(target_os = "linux") || cfg!(target_os = "macos")),
             ..iced::window::Settings::default()
         })

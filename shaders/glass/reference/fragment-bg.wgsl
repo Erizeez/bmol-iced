@@ -219,7 +219,11 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
     bgColor = vec3f(halfColor(pixel / u.u_resolution) * 0.6 + 0.3);
   } else if (u.u_bgType <= 12) {
     if (u.u_bgTextureReady != 1) {
-      bgColor = vec3f(1.0 - chessboard(pixel / u.u_dpr, 20.0, 2) / 4.0);
+      // A transparent desktop surface must not fall back to the reference
+      // project's checkerboard. The compositor supplies the pixels outside
+      // the application; until a platform frame is available, keep this
+      // pass neutral and fully transparent.
+      bgColor = vec3f(0.0);
     } else {
       let uv = getCoverUV(v_uv, u.u_resolution.x / u.u_resolution.y, u.u_bgTextureRatio);
       bgColor = textureSampleLevel(u_bgTexture, u_sampler, uv, 0.0).rgb;
