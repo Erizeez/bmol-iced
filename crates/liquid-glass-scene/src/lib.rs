@@ -7,6 +7,8 @@
 
 use std::fmt;
 
+pub use liquid_glass_geometry::{G2Continuity, G2Profile};
+
 /// A stable identifier for a glass element.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct GlassId(pub u64);
@@ -129,13 +131,6 @@ pub enum GlassShape {
     Ellipse,
 }
 
-impl GlassShape {
-    /// Outward crown used by the continuous capsule's nearly-horizontal top
-    /// and bottom edges. The circular caps are trimmed before their tangent
-    /// points and joined with a curvature-matched shoulder curve.
-    pub const CONTINUOUS_CAPSULE_BULGE_PX: f32 = 0.75;
-}
-
 impl Default for GlassShape {
     fn default() -> Self {
         Self::RoundedRect { radius: 16.0 }
@@ -246,6 +241,8 @@ pub struct GlassNode {
     pub bounds: Rect,
     pub shape: GlassShape,
     pub corner_curve: CornerCurve,
+    /// Parametric profile used by G2 capsules and rounded corners.
+    pub g2_continuity: G2Continuity,
     pub material: GlassMaterial,
     pub backdrop: BackdropRegion,
     pub z_index: i32,
@@ -260,6 +257,7 @@ impl GlassNode {
             bounds,
             shape: GlassShape::default(),
             corner_curve: CornerCurve::default(),
+            g2_continuity: G2Continuity::default(),
             backdrop: BackdropRegion { bounds, padding: 8.0, blur_radius: material.blur.radius },
             material,
             z_index: 0,
@@ -275,6 +273,12 @@ impl GlassNode {
     #[must_use]
     pub const fn corner_curve(mut self, corner_curve: CornerCurve) -> Self {
         self.corner_curve = corner_curve;
+        self
+    }
+
+    #[must_use]
+    pub const fn g2_continuity(mut self, continuity: G2Continuity) -> Self {
+        self.g2_continuity = continuity;
         self
     }
 

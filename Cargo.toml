@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/liquid-glass",
     "crates/liquid-glass-animation",
+    "crates/liquid-glass-geometry",
     "crates/liquid-glass-platform",
     "crates/liquid-glass-render",
     "crates/liquid-glass-scene",

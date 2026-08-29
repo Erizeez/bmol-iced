@@ -70,6 +70,8 @@ struct GlassUniform {
     resolution_dpr_pad: [f32; 4],
     mouse_and_spring: [f32; 4],
     shape: [f32; 4],
+    capsule_bezier_x: [f32; 4],
+    capsule_bezier_y: [f32; 4],
     merge_glare_shadow: [f32; 4],
     shadow_position_bg_ratio: [f32; 3],
     bg_type: i32,
@@ -673,10 +675,13 @@ fn uniform_for_node(
     let tint = tint_with_whiteness(material);
     let shape_radius = shape_radius(node);
     let shape_roundness = shape_roundness(node);
+    let (capsule_bezier_x, capsule_bezier_y) = capsule_bezier_uniforms(node);
     GlassUniform {
         resolution_dpr_pad: [size.width as f32, size.height as f32, 1.0, 0.0],
         mouse_and_spring: [center_x, center_y, center_x, center_y],
         shape: [node.bounds.width, node.bounds.height, shape_radius, shape_roundness],
+        capsule_bezier_x,
+        capsule_bezier_y,
         merge_glare_shadow: [0.05, time_seconds * 0.20, 25.0, 0.15],
         shadow_position_bg_ratio: [0.0, 0.0, background_texture_ratio],
         bg_type: if background_texture_ready { 11 } else { 0 },
@@ -1152,15 +1157,31 @@ fn shape_roundness(node: &GlassNode) -> f32 {
     match node.shape {
         GlassShape::Superellipse { exponent } => exponent,
         GlassShape::RoundedRect { .. } => node.corner_curve.exponent(),
-        GlassShape::Capsule => -GlassShape::CONTINUOUS_CAPSULE_BULGE_PX,
+        GlassShape::Capsule => -1.0,
         GlassShape::Circle | GlassShape::Ellipse => 2.0,
     }
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn capsule_bezier_uniforms(node: &GlassNode) -> ([f32; 4], [f32; 4]) {
+    if !matches!(node.shape, GlassShape::Capsule) {
+        return ([0.0; 4], [0.0; 4]);
+    }
+    let capsule =
+        node.g2_continuity.capsule(f64::from(node.bounds.width), f64::from(node.bounds.height));
+    let Some(bezier) = capsule.shoulder else {
+        return ([0.0; 4], [0.0; 4]);
+    };
+    (
+        [bezier.p0.x as f32, bezier.p1.x as f32, bezier.p2.x as f32, bezier.p3.x as f32],
+        [bezier.p0.y as f32, bezier.p1.y as f32, bezier.p2.y as f32, bezier.p3.y as f32],
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use liquid_glass_scene::{CornerCurve, GlassId, GlassMaterial, Rect};
+    use liquid_glass_scene::{CornerCurve, G2Continuity, G2Profile, GlassId, GlassMaterial, Rect};
 
     #[test]
     fn noop_device_can_build_and_submit_glass_frame() {
@@ -1175,6 +1196,7 @@ mod tests {
         let mut scene = GlassScene::default();
         scene.push(node.clone());
         let mut front = GlassNode::new(GlassId(2), Rect::new(48.0, 40.0, 64.0, 56.0))
+            .shape(GlassShape::Capsule)
             .material(GlassMaterial::interactive());
         front.z_index = 1;
         scene.push(front);
@@ -1195,11 +1217,19 @@ mod tests {
 
         assert!((shape_roundness(&continuous) - 5.0).abs() < f32::EPSILON);
         assert!((shape_roundness(&circular) - 2.0).abs() < f32::EPSILON);
-        assert!(
-            (shape_roundness(&capsule) + GlassShape::CONTINUOUS_CAPSULE_BULGE_PX).abs()
-                < f32::EPSILON
-        );
+        assert!((shape_roundness(&capsule) + 1.0).abs() < f32::EPSILON);
+        let (bezier_x, bezier_y) = capsule_bezier_uniforms(&capsule);
+        assert!(bezier_x[0] < 0.0);
+        assert!(bezier_x[3] > 0.0);
+        assert!(bezier_y[3] > 0.0);
+        let custom_capsule = capsule.clone().g2_continuity(G2Continuity::new(
+            G2Profile::ROUNDED_RECTANGLE,
+            G2Profile::new(0.2, 0.0, 1.0, 1.0),
+        ));
+        let (custom_bezier_x, _) = capsule_bezier_uniforms(&custom_capsule);
+        assert!((bezier_x[0] - custom_bezier_x[0]).abs() > f32::EPSILON);
         assert!((shape_roundness(&circle) - 2.0).abs() < f32::EPSILON);
+        assert_eq!(std::mem::size_of::<GlassUniform>(), 192);
     }
 
     #[test]

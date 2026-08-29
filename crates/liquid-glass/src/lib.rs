@@ -6,12 +6,17 @@
 #![deny(unsafe_code)]
 
 pub use liquid_glass_animation as animation;
+pub use liquid_glass_geometry as geometry;
 pub use liquid_glass_platform as platform;
 pub use liquid_glass_render as render;
 pub use liquid_glass_scene as scene;
 pub use liquid_glass_ui as ui;
 
 pub use animation::{Spring, SpringValue};
+pub use geometry::{
+    CapsuleAxis, CornerRadii, CubicBezier, G2Continuity, G2Profile, Path, PathSegment, Point,
+    ResolvedCapsule,
+};
 pub use render::{
     GpuError, GpuRenderer, GpuSize, LiquidRenderer, RenderGraph, RenderPass, TexturePool,
 };

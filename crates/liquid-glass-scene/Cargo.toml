@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+liquid-glass-geometry = { path = "../liquid-glass-geometry", version = "0.1.0" }
+
 [lints]
 workspace = true
-

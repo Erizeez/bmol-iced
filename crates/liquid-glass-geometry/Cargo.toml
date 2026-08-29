@@ -1,0 +1,10 @@
+[package]
+name = "liquid-glass-geometry"
+description = "Renderer-independent continuous-corner and capsule geometry for Liquid Glass."
+version.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+rust-version.workspace = true
+
+[lints]
+workspace = true

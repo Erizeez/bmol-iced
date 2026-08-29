@@ -1284,6 +1284,7 @@ name = "liquid-glass"
 version = "0.1.0"
 dependencies = [
  "liquid-glass-animation",
+ "liquid-glass-geometry",
  "liquid-glass-platform",
  "liquid-glass-render",
  "liquid-glass-scene",
@@ -1292,6 +1293,10 @@ dependencies = [
 
 [[package]]
 name = "liquid-glass-animation"
+version = "0.1.0"
+
+[[package]]
+name = "liquid-glass-geometry"
 version = "0.1.0"
 
 [[package]]
@@ -1323,6 +1328,9 @@ dependencies = [
 [[package]]
 name = "liquid-glass-scene"
 version = "0.1.0"
+dependencies = [
+ "liquid-glass-geometry",
+]
 
 [[package]]
 name = "liquid-glass-ui"

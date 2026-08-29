@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 liquid-glass-animation = { path = "../liquid-glass-animation", version = "0.1.0" }
+liquid-glass-geometry = { path = "../liquid-glass-geometry", version = "0.1.0" }
 liquid-glass-platform = { path = "../liquid-glass-platform", version = "0.1.0" }
 liquid-glass-render = { path = "../liquid-glass-render", version = "0.1.0" }
 liquid-glass-scene = { path = "../liquid-glass-scene", version = "0.1.0" }
@@ -15,4 +16,3 @@ liquid-glass-ui = { path = "../liquid-glass-ui", version = "0.1.0" }
 
 [lints]
 workspace = true
-
