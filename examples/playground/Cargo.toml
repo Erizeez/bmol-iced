@@ -7,8 +7,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-iced = { version = "0.14.0", default-features = false, features = ["wgpu", "advanced", "canvas"] }
-iced_wgpu = "0.14.0"
+iced = { version = "0.14.0", default-features = false, features = ["wgpu", "advanced", "canvas", "svg", "image-without-codecs"] }
+iced_wgpu = { version = "0.14.0", features = ["svg", "image"] }
+flate2 = "1.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
 liquid-glass = { path = "../../crates/liquid-glass", version = "0.1.0" }
 liquid-glass-native = { path = "../../crates/liquid-glass-native", version = "0.1.0" }

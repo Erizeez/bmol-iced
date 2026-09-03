@@ -6,3 +6,8 @@
 
 # Existing WebGPU reference project; it is an independent repository.
 /liquid-glass-studio/
+
+# UI fonts are user-supplied (e.g. SF Pro) and must not be committed.
+/crates/liquid-glass-ui/assets/fonts/*.otf
+/crates/liquid-glass-ui/assets/fonts/*.ttf
+/crates/liquid-glass-ui/assets/fonts/*.ttc

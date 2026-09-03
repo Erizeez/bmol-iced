@@ -2,21 +2,19 @@
 mod iced_backend;
 
 use iced::{
-    Background, Border, Color, Element, Length, Padding, Shadow, Subscription, Task, Theme,
-    widget::{
-        button, column, container, progress_bar, row, rule, scrollable, slider, space, stack, text,
-        text_input, toggler,
-    },
+    Color, Element, Length, Subscription, Task, Theme,
+    widget::{button, column, container, row, scrollable, space, stack, text},
 };
 use iced_backend::{CONTENT_TOP_INSET, Renderer};
 use liquid_glass::{
-    GlassContainer, GlassId, GlassMaterial, GlassRole, GlassSegment, GlassSegmentContent,
-    GlassSegmentedControl, GlassShape, Rect, UiColorScheme, UiPalette, UiTheme,
+    GlassId, Rect, UiColorScheme, UiIcon, UiTheme,
+    ui::{components, font},
 };
 
 struct State {
     active_section: Section,
     appearance: Appearance,
+    accent: Accent,
     search: String,
     auto_updates: bool,
     notifications: bool,
@@ -31,6 +29,7 @@ impl Default for State {
         Self {
             active_section: Section::General,
             appearance: Appearance::Automatic,
+            accent: Accent::Blue,
             search: String::new(),
             auto_updates: true,
             notifications: true,
@@ -55,10 +54,39 @@ impl State {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum Section {
     #[default]
+    AppleAccount,
+    FamilySharing,
+    Wifi,
+    Bluetooth,
+    Network,
+    Vpn,
+    Battery,
     General,
+    Accessibility,
+    MenuBar,
+    Spotlight,
+    Wallpaper,
     Appearance,
+    Displays,
+    Dock,
+    Siri,
     Notifications,
+    Sound,
+    Focus,
+    ScreenTime,
+    LockScreen,
     Privacy,
+    TouchId,
+    UsersGroups,
+    InternetAccounts,
+    Wallet,
+    GameCenter,
+    ICloud,
+    AirPods,
+    Keyboard,
+    Trackpad,
+    GameController,
+    PrintersScanners,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -69,10 +97,44 @@ enum Appearance {
     Dark,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Accent {
+    #[default]
+    Blue,
+    Purple,
+    Green,
+    Red,
+}
+
+impl Accent {
+    const ALL: [Self; 4] = [Self::Blue, Self::Purple, Self::Green, Self::Red];
+
+    fn color(self) -> Color {
+        match self {
+            Self::Blue => Color::from_rgb(0.20, 0.48, 1.0),
+            Self::Purple => Color::from_rgb(0.60, 0.35, 0.95),
+            Self::Green => Color::from_rgb(0.12, 0.72, 0.54),
+            Self::Red => Color::from_rgb(0.95, 0.38, 0.40),
+        }
+    }
+}
+
+impl std::fmt::Display for Accent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Blue => "Blue",
+            Self::Purple => "Purple",
+            Self::Green => "Green",
+            Self::Red => "Red",
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Message {
     SectionSelected(Section),
     AppearanceSelected(Appearance),
+    AccentSelected(Accent),
     SearchChanged(String),
     AutoUpdatesChanged(bool),
     NotificationsChanged(bool),
@@ -94,6 +156,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::SectionSelected(section) => state.active_section = section,
         Message::AppearanceSelected(appearance) => state.appearance = appearance,
+        Message::AccentSelected(accent) => state.accent = accent,
         Message::SearchChanged(search) => state.search = search,
         Message::AutoUpdatesChanged(enabled) => state.auto_updates = enabled,
         Message::NotificationsChanged(enabled) => state.notifications = enabled,
@@ -116,47 +179,130 @@ fn app_theme(state: &State) -> Theme {
     UiTheme::new(state.color_scheme()).iced_theme()
 }
 
-#[allow(clippy::too_many_lines)]
 fn view(state: &State) -> AppElement<'_> {
-    let sidebar: AppElement<'_> = container(column![
-        glass_search(&state.search, state.color_scheme()),
-        space().height(Length::Fixed(10.0)),
-        sidebar_button("⚙︎   General", Section::General, state.active_section),
-        sidebar_button("◐   Appearance", Section::Appearance, state.active_section),
-        sidebar_button("◉   Notifications", Section::Notifications, state.active_section),
-        sidebar_button("◆   Privacy & Security", Section::Privacy, state.active_section),
-        space().height(Length::Fill),
-        text("Liquid Glass UI").size(11),
-    ])
+    let sidebar_scroll = scrollable(column![
+            // Reserve the search field's vertical footprint inside the
+            // scrollable content. The first row starts below the field at the
+            // initial offset, but this space scrolls away with the list so
+            // rows can still pass behind the floating search field.
+            space().height(Length::Fixed(CONTENT_TOP_INSET + 46.0)),
+            sidebar_group(&[Section::AppleAccount, Section::FamilySharing], state.active_section),
+            sidebar_gap(),
+            sidebar_group(
+                &[
+                    Section::Wifi,
+                    Section::Bluetooth,
+                    Section::Network,
+                    Section::Vpn,
+                    Section::Battery,
+                ],
+                state.active_section,
+            ),
+            sidebar_gap(),
+            sidebar_group(
+                &[
+                    Section::General,
+                    Section::Accessibility,
+                    Section::MenuBar,
+                    Section::Spotlight,
+                    Section::Wallpaper,
+                    Section::Appearance,
+                    Section::Displays,
+                    Section::Dock,
+                    Section::Siri,
+                ],
+                state.active_section,
+            ),
+            sidebar_gap(),
+            sidebar_group(
+                &[
+                    Section::Notifications,
+                    Section::Sound,
+                    Section::Focus,
+                    Section::ScreenTime,
+                ],
+                state.active_section,
+            ),
+            sidebar_gap(),
+            sidebar_group(
+                &[
+                    Section::LockScreen,
+                    Section::Privacy,
+                    Section::TouchId,
+                    Section::UsersGroups,
+                ],
+                state.active_section,
+            ),
+            sidebar_gap(),
+            sidebar_group(
+                &[
+                    Section::InternetAccounts,
+                    Section::Wallet,
+                    Section::GameCenter,
+                    Section::ICloud,
+                ],
+                state.active_section,
+            ),
+            sidebar_gap(),
+            sidebar_group(
+                &[
+                    Section::AirPods,
+                    Section::Keyboard,
+                    Section::Trackpad,
+                    Section::GameController,
+                    Section::PrintersScanners,
+                ],
+                state.active_section,
+            ),
+        ])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::default()))
+        .style(components::sidebar_scrollable_style);
+
+    let search_overlay = container(components::search_field(
+        GlassId(11),
+        Rect::new(0.0, 0.0, 212.0, 36.0),
+        state.color_scheme(),
+        &state.search,
+        Message::SearchChanged,
+    ))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(iced::Padding::new(0.0).top(CONTENT_TOP_INSET + 10.0));
+
+    let sidebar: AppElement<'_> = container(stack![sidebar_scroll, search_overlay])
     .width(Length::Fixed(232.0))
     .height(Length::Fill)
-    .padding([10, 10])
-    .style(sidebar_style)
+    .padding(iced::Padding {
+        top: 0.0,
+        right: 10.0,
+        bottom: 10.0,
+        left: 10.0,
+    })
+    .style(components::transparent_surface)
     .into();
 
-    let toolbar_foreground_alpha = if state.content_scroll > 1.0 { 0.72 } else { 0.96 };
-    let toolbar = glass_surface_with_padding(
+    let toolbar = components::glass_surface(
         GlassId(10),
         Rect::new(0.0, 0.0, 1088.0, 56.0),
-        UiTheme::new(state.color_scheme()).glass_shape(GlassRole::Toolbar),
-        GlassRole::Toolbar,
+        liquid_glass::GlassRole::Toolbar,
         state.color_scheme(),
-        Padding::new(8.0),
-        Some(toolbar_foreground_alpha),
+        iced::Padding::new(8.0),
+        None,
         row![
-            compositor_navigation(
-                GlassId(12),
-                Message::SectionSelected(state.active_section),
-                Message::SectionSelected(state.active_section),
-                state.color_scheme(),
-            ),
+            compositor_navigation(state.color_scheme()),
             space().width(Length::Fill),
-            text(section_title(state.active_section)).size(15),
+            text(section_title(state.active_section))
+                .size(font::size::HEADLINE)
+                .font(font::ui_font(iced::font::Weight::Semibold)),
             space().width(Length::Fill),
-            button(text("?").size(14))
-                .on_press(Message::SectionSelected(state.active_section))
-                .width(Length::Fixed(36.0))
-                .style(toolbar_button_style),
+            button(components::icon_tinted(UiIcon::Question, 16.0, |palette| {
+                palette.text_secondary
+            }))
+            .on_press(Message::SectionSelected(state.active_section))
+            .width(Length::Fixed(36.0))
+            .style(components::toolbar_button_style),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center),
@@ -165,253 +311,436 @@ fn view(state: &State) -> AppElement<'_> {
     let content_body = container(settings_page(state))
         .width(Length::Fill)
         .max_width(720.0)
-        .padding(Padding::new(22.0).top(78.0));
+        .padding(iced::Padding::new(22.0).top(78.0));
     let content_scroll = scrollable(content_body)
         .width(Length::Fill)
         .height(Length::Fill)
+        .style(components::scrollable_style)
         .on_scroll(|viewport| Message::ContentScrolled(viewport.absolute_offset().y));
     let content = container(content_scroll)
         .width(Length::Fill)
         .height(Length::Fill)
         .padding([0, 34])
         .center_x(Length::Fill)
-        .style(content_style);
+        .style(components::compositor_content_surface);
 
-    let main = stack![content, toolbar].width(Length::Fill).height(Length::Fill);
+    let main = container(stack![content, toolbar])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(iced::Padding::new(0.0).top(CONTENT_TOP_INSET));
 
     let window_content = container(row![sidebar, main]).width(Length::Fill).height(Length::Fill);
-
-    let titlebar = container(space())
-        .width(Length::Fill)
-        .height(Length::Fixed(CONTENT_TOP_INSET))
-        .style(titlebar_style);
-
-    container(column![titlebar, window_content]).width(Length::Fill).height(Length::Fill).into()
+    window_content.into()
 }
 
-fn sidebar_button(label: &'static str, section: Section, active: Section) -> AppElement<'static> {
-    let selected = section == active;
-    button(text(label))
-        .on_press(Message::SectionSelected(section))
-        .width(Length::Fill)
-        .style(move |theme, status| sidebar_button_style(theme, status, selected))
-        .into()
+fn sidebar_group(sections: &[Section], active: Section) -> AppElement<'static> {
+    container(
+        column(
+            sections
+                .iter()
+                .copied()
+                .map(|section| components::glass_foreground(sidebar_entry(section, active)))
+                .collect::<Vec<_>>(),
+        )
+        .spacing(2),
+    )
+    .width(Length::Fill)
+    .into()
+}
+
+fn sidebar_gap() -> AppElement<'static> {
+    space().height(Length::Fixed(8.0)).into()
+}
+
+fn sidebar_entry(section: Section, active: Section) -> AppElement<'static> {
+    let (icon, chip, label) = sidebar_metadata(section);
+    components::sidebar_item(icon, chip, label, section == active, Message::SectionSelected(section))
+}
+
+fn sidebar_metadata(section: Section) -> (UiIcon, Color, &'static str) {
+    match section {
+        Section::AppleAccount => (
+            UiIcon::SystemAppleAccount,
+            Color::from_rgb(0.56, 0.56, 0.58),
+            "Apple 账户",
+        ),
+        Section::FamilySharing => (
+            UiIcon::SystemFamilySharing,
+            Color::from_rgb(0.18, 0.48, 0.96),
+            "家人共享",
+        ),
+        Section::Wifi => (UiIcon::SystemWifi, Color::from_rgb(0.16, 0.48, 0.96), "Wi-Fi"),
+        Section::Bluetooth => (
+            UiIcon::SystemBluetooth,
+            Color::from_rgb(0.14, 0.48, 0.96),
+            "蓝牙",
+        ),
+        Section::Network => (
+            UiIcon::SystemNetwork,
+            Color::from_rgb(0.18, 0.68, 0.34),
+            "网络",
+        ),
+        Section::Vpn => (UiIcon::SystemVpn, Color::from_rgb(0.20, 0.48, 0.94), "VPN"),
+        Section::Battery => (
+            UiIcon::SystemBattery,
+            Color::from_rgb(0.18, 0.70, 0.34),
+            "电池",
+        ),
+        Section::General => (UiIcon::SystemGeneral, Color::from_rgb(0.56, 0.56, 0.58), "通用"),
+        Section::Accessibility => (
+            UiIcon::SystemAccessibility,
+            Color::from_rgb(0.18, 0.48, 0.96),
+            "无障碍",
+        ),
+        Section::MenuBar => (
+            UiIcon::SystemMenuBar,
+            Color::from_rgb(0.38, 0.40, 0.44),
+            "菜单栏",
+        ),
+        Section::Spotlight => (
+            UiIcon::SystemSpotlight,
+            Color::from_rgb(0.20, 0.48, 0.96),
+            "聚焦",
+        ),
+        Section::Wallpaper => (
+            UiIcon::SystemWallpaper,
+            Color::from_rgb(0.18, 0.50, 0.96),
+            "墙纸",
+        ),
+        Section::Appearance => (
+            UiIcon::SystemAppearance,
+            Color::from_rgb(0.11, 0.11, 0.13),
+            "外观",
+        ),
+        Section::Displays => (
+            UiIcon::SystemDisplays,
+            Color::from_rgb(0.18, 0.62, 0.84),
+            "显示器",
+        ),
+        Section::Dock => (
+            UiIcon::SystemDock,
+            Color::from_rgb(0.20, 0.48, 0.96),
+            "桌面与程序坞",
+        ),
+        Section::Siri => (UiIcon::SystemSiri, Color::from_rgb(0.68, 0.35, 0.92), "Siri"),
+        Section::Notifications => (
+            UiIcon::SystemNotifications,
+            Color::from_rgb(1.0, 0.27, 0.23),
+            "通知",
+        ),
+        Section::Sound => (UiIcon::SystemSound, Color::from_rgb(0.96, 0.38, 0.22), "声效"),
+        Section::Focus => (UiIcon::SystemFocus, Color::from_rgb(0.48, 0.32, 0.90), "专注模式"),
+        Section::ScreenTime => (
+            UiIcon::SystemScreenTime,
+            Color::from_rgb(0.48, 0.34, 0.90),
+            "屏幕时间",
+        ),
+        Section::LockScreen => (
+            UiIcon::SystemLockScreen,
+            Color::from_rgb(0.42, 0.44, 0.48),
+            "锁屏",
+        ),
+        Section::Privacy => (
+            UiIcon::SystemPrivacySecurity,
+            Color::from_rgb(0.04, 0.52, 1.0),
+            "隐私与安全",
+        ),
+        Section::TouchId => (
+            UiIcon::SystemTouchId,
+            Color::from_rgb(0.18, 0.48, 0.96),
+            "触控 ID 与密码",
+        ),
+        Section::UsersGroups => (
+            UiIcon::SystemUsersGroups,
+            Color::from_rgb(0.20, 0.48, 0.96),
+            "用户与群组",
+        ),
+        Section::InternetAccounts => (
+            UiIcon::SystemInternetAccounts,
+            Color::from_rgb(0.18, 0.48, 0.96),
+            "互联网账户",
+        ),
+        Section::Wallet => (
+            UiIcon::SystemWallet,
+            Color::from_rgb(0.12, 0.12, 0.14),
+            "钱包与 Apple Pay",
+        ),
+        Section::GameCenter => (
+            UiIcon::SystemGameCenter,
+            Color::from_rgb(0.20, 0.48, 0.96),
+            "Game Center",
+        ),
+        Section::ICloud => (UiIcon::SystemICloud, Color::from_rgb(0.18, 0.56, 0.96), "iCloud"),
+        Section::AirPods => (
+            UiIcon::SystemAirPods,
+            Color::from_rgb(0.52, 0.54, 0.58),
+            "AirPods",
+        ),
+        Section::Keyboard => (
+            UiIcon::SystemKeyboard,
+            Color::from_rgb(0.42, 0.44, 0.48),
+            "键盘",
+        ),
+        Section::Trackpad => (
+            UiIcon::SystemTrackpad,
+            Color::from_rgb(0.42, 0.44, 0.48),
+            "触控板",
+        ),
+        Section::GameController => (
+            UiIcon::SystemGameController,
+            Color::from_rgb(0.42, 0.32, 0.82),
+            "游戏控制器",
+        ),
+        Section::PrintersScanners => (
+            UiIcon::SystemPrintersScanners,
+            Color::from_rgb(0.42, 0.44, 0.48),
+            "打印机与扫描仪",
+        ),
+    }
 }
 
 fn section_title(section: Section) -> &'static str {
-    match section {
-        Section::General => "General",
-        Section::Appearance => "Appearance",
-        Section::Notifications => "Notifications",
-        Section::Privacy => "Privacy & Security",
-    }
+    sidebar_metadata(section).2
 }
 
 fn section_description(section: Section) -> &'static str {
     match section {
-        Section::General => "Your Mac, your rules. Make the everyday details feel right.",
-        Section::Appearance => "A small set of controls with a clear, familiar hierarchy.",
-        Section::Notifications => "Decide what deserves your attention and when.",
-        Section::Privacy => "Review access without burying the important choices.",
+        Section::General => "你的 Mac，你的规则。调整日常使用体验。",
+        Section::Appearance => "个性化系统的外观、颜色和动态效果。",
+        Section::Notifications => "决定哪些 App 可以提醒你，以及提醒方式。",
+        Section::Privacy => "管理数据访问权限，保护你的隐私与安全。",
+        _ => "在这里查看和调整相关的系统设置。",
     }
 }
 
 #[allow(clippy::too_many_lines)]
 fn settings_page(state: &State) -> AppElement<'_> {
+    let description: AppElement<'_> =
+        text(section_description(state.active_section)).size(font::size::BODY).into();
     match state.active_section {
         Section::General => column![
-            text(section_description(state.active_section)).size(13),
-            section_heading("General", "The essentials for this Mac"),
-            settings_group(
-                setting_link("About This Mac", "Apple M3 Pro · 18 GB memory", "›"),
-                setting_link("Software Update", "macOS is up to date", "›"),
-                setting_toggle(
-                    "Automatic Updates",
-                    "Install security responses and system files automatically",
-                    toggler(state.auto_updates).on_toggle(Message::AutoUpdatesChanged),
+            description,
+            components::section_heading("General", "The essentials for this Mac"),
+            components::settings_group(vec![
+                components::setting_link_with_icon(
+                    UiIcon::Laptop,
+                    "About This Mac",
+                    Some("Apple M3 Pro · 18 GB memory".into()),
+                    Message::SectionSelected(Section::General),
                 ),
-            ),
-            section_heading("Input & Output", "The small details that shape every interaction"),
-            settings_group(
-                setting_control(
+                components::setting_link_with_icon(
+                    UiIcon::SoftwareUpdateBadge,
+                    "Software Update",
+                    Some("macOS is up to date".into()),
+                    Message::SectionSelected(Section::General),
+                ),
+                components::setting_toggle(
+                    "Automatic Updates",
+                    Some("Install security responses and system files automatically".into()),
+                    state.auto_updates,
+                    Message::AutoUpdatesChanged,
+                ),
+            ]),
+            components::section_heading("Input & Output", "The small details that shape every interaction"),
+            components::settings_group(vec![
+                components::setting_slider(
                     "Sound volume",
                     format!("{}%", state.volume.round()),
-                    slider(0.0..=100.0, state.volume, Message::VolumeChanged)
-                        .width(Length::Fixed(170.0)),
+                    state.volume,
+                    0.0..=100.0,
+                    Message::VolumeChanged,
                 ),
-                setting_link("Keyboard", "Key repeat and modifier keys", "›"),
-                setting_link("Trackpad", "Point & click, scroll & zoom", "›"),
-            ),
-            section_heading("Connectivity", "Keep nearby devices and services within reach"),
-            settings_group(
-                setting_link("AirDrop", "Contacts Only", "›"),
-                setting_link("Bluetooth", "On · 3 devices connected", "›"),
-                setting_link("Handoff", "Allow handoff between this Mac and your devices", "›"),
-            ),
+                components::setting_link_with_icon(
+                    UiIcon::Keyboard,
+                    "Keyboard",
+                    Some("Key repeat and modifier keys".into()),
+                    Message::SectionSelected(Section::General),
+                ),
+                components::setting_link_with_icon(
+                    UiIcon::Mouse,
+                    "Trackpad",
+                    Some("Point & click, scroll & zoom".into()),
+                    Message::SectionSelected(Section::General),
+                ),
+            ]),
+            components::section_heading("Connectivity", "Keep nearby devices and services within reach"),
+            components::settings_group(vec![
+                components::setting_link("AirDrop", Some("Contacts Only".into()), Message::SectionSelected(Section::General)),
+                components::setting_link_with_icon(
+                    UiIcon::Bluetooth,
+                    "Bluetooth",
+                    Some("On · 3 devices connected".into()),
+                    Message::SectionSelected(Section::General),
+                ),
+                components::setting_link(
+                    "Handoff",
+                    Some("Allow handoff between this Mac and your devices".into()),
+                    Message::SectionSelected(Section::General),
+                ),
+            ]),
         ]
         .spacing(14)
         .into(),
         Section::Appearance => column![
-            text(section_description(state.active_section)).size(13),
-            section_heading("Appearance", "Personalize the way your system looks"),
-            settings_group(
-                setting_control(
+            description,
+            components::section_heading("Appearance", "Personalize the way your system looks"),
+            components::settings_group(vec![
+                components::setting_row(
                     "Appearance",
-                    "Choose how windows, controls, and menus look",
+                    Some("Choose how windows, controls, and menus look".into()),
                     appearance_picker(state.appearance),
                 ),
-                setting_control(
+                components::setting_row(
                     "Accent color",
-                    "Used for buttons, links, and selected items",
-                    accent_picker(),
+                    Some("Used for buttons, links, and selected items".into()),
+                    row![
+                        components::accent_dot(state.accent.color()),
+                        iced::widget::pick_list(
+                            Accent::ALL.to_vec(),
+                            Some(state.accent),
+                            Message::AccentSelected,
+                        )
+                        .style(components::pick_list_style)
+                        .menu_style(components::menu_style),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
                 ),
-                setting_control(
+                components::setting_pick_list(
                     "Sidebar icon size",
-                    "Small",
-                    button(text("Small  ›"))
-                        .on_press(Message::SectionSelected(Section::Appearance))
-                        .style(list_button_style),
+                    Some("Space reserved for sidebar icons".into()),
+                    vec!["Small", "Medium", "Large"],
+                    Some("Small"),
+                    |_| Message::SectionSelected(Section::Appearance),
                 ),
-            ),
-            section_heading("Motion", "Keep feedback expressive without getting in the way"),
-            settings_group(
-                setting_toggle(
+            ]),
+            components::section_heading("Motion", "Keep feedback expressive without getting in the way"),
+            components::settings_group(vec![
+                components::setting_toggle(
                     "Reduce motion",
-                    "Reduce animation and parallax effects",
-                    toggler(state.reduce_motion).on_toggle(Message::ReduceMotionChanged),
+                    Some("Reduce animation and parallax effects".into()),
+                    state.reduce_motion,
+                    Message::ReduceMotionChanged,
                 ),
-                setting_link("Desktop & Dock", "Size, position, and behavior", "›"),
-                setting_link("Screen Saver", "Idle visuals and timing", "›"),
-            ),
+                components::setting_link(
+                    "Desktop & Dock",
+                    Some("Size, position, and behavior".into()),
+                    Message::SectionSelected(Section::Appearance),
+                ),
+                components::setting_link(
+                    "Screen Saver",
+                    Some("Idle visuals and timing".into()),
+                    Message::SectionSelected(Section::Appearance),
+                ),
+            ]),
         ]
         .spacing(14)
         .into(),
         Section::Notifications => column![
-            text(section_description(state.active_section)).size(13),
-            section_heading("Notifications", "Choose how apps alert you"),
-            settings_group(
-                setting_toggle(
+            description,
+            components::section_heading("Notifications", "Choose how apps alert you"),
+            components::settings_group(vec![
+                components::setting_toggle(
                     "Allow notifications",
-                    "Show alerts and banners from supported apps",
-                    toggler(state.notifications).on_toggle(Message::NotificationsChanged),
+                    Some("Show alerts and banners from supported apps".into()),
+                    state.notifications,
+                    Message::NotificationsChanged,
                 ),
-                setting_control(
+                components::setting_pick_list(
                     "Notification style",
-                    "Banners",
-                    button(text("Banners  ›"))
-                        .on_press(Message::SectionSelected(Section::Notifications))
-                        .style(list_button_style),
+                    None,
+                    vec!["None", "Banners", "Alerts"],
+                    Some("Banners"),
+                    |_| Message::SectionSelected(Section::Notifications),
                 ),
-                setting_link("Scheduled Summary", "Deliver a summary at 8:00 AM", "›"),
-            ),
-            section_heading("App Notifications", "Each app can have its own delivery rules"),
-            settings_group(
-                setting_link("Mail", "Banners · Sounds", "›"),
-                setting_link("Calendar", "Alerts · Badges", "›"),
-                setting_link("Messages", "Banners · Sounds · Badges", "›"),
-            ),
+                components::setting_link(
+                    "Scheduled Summary",
+                    Some("Deliver a summary at 8:00 AM".into()),
+                    Message::SectionSelected(Section::Notifications),
+                ),
+            ]),
+            components::section_heading("App Notifications", "Each app can have its own delivery rules"),
+            components::settings_group(vec![
+                components::setting_link("Mail", Some("Banners · Sounds".into()), Message::SectionSelected(Section::Notifications)),
+                components::setting_link("Calendar", Some("Alerts · Badges".into()), Message::SectionSelected(Section::Notifications)),
+                components::setting_link(
+                    "Messages",
+                    Some("Banners · Sounds · Badges".into()),
+                    Message::SectionSelected(Section::Notifications),
+                ),
+            ]),
         ]
         .spacing(14)
         .into(),
         Section::Privacy => column![
-            text(section_description(state.active_section)).size(13),
-            section_heading("Privacy & Security", "Control access to your data"),
-            settings_group(
-                setting_link("Location Services", "On for 6 apps", "›"),
-                setting_link("File and Folder Access", "Review permissions", "›"),
-                setting_link("Analytics & Improvements", "Share diagnostics: Off", "›"),
-            ),
-            section_heading("Security", "Keep your device and account protected"),
-            settings_group(
-                setting_link("FileVault", "Disk encryption is on", "›"),
-                setting_link("Lockdown Mode", "Off", "›"),
-                setting_link("Passwords", "Manage saved credentials", "›"),
-            ),
-            container(progress_bar(0.0..=100.0, 72.0))
-                .width(Length::Fill)
-                .height(Length::Fixed(4.0))
-                .style(progress_style),
+            description,
+            components::section_heading("Privacy & Security", "Control access to your data"),
+            components::settings_group(vec![
+                components::setting_link(
+                    "Location Services",
+                    Some("On for 6 apps".into()),
+                    Message::SectionSelected(Section::Privacy),
+                ),
+                components::setting_link(
+                    "File and Folder Access",
+                    Some("Review permissions".into()),
+                    Message::SectionSelected(Section::Privacy),
+                ),
+                components::setting_link(
+                    "Analytics & Improvements",
+                    Some("Share diagnostics: Off".into()),
+                    Message::SectionSelected(Section::Privacy),
+                ),
+            ]),
+            components::section_heading("Security", "Keep your device and account protected"),
+            components::settings_group(vec![
+                components::setting_link_with_icon(
+                    UiIcon::FileVault,
+                    "FileVault",
+                    Some("Disk encryption is on".into()),
+                    Message::SectionSelected(Section::Privacy),
+                ),
+                components::setting_link("Lockdown Mode", Some("Off".into()), Message::SectionSelected(Section::Privacy)),
+                components::setting_link(
+                    "Passwords",
+                    Some("Manage saved credentials".into()),
+                    Message::SectionSelected(Section::Privacy),
+                ),
+            ]),
+            components::progress_indicator::<Message, Renderer>(72.0),
         ]
         .spacing(14)
         .into(),
+        _ => generic_settings_page(state),
     }
 }
 
-fn section_heading(title: &'static str, subtitle: &'static str) -> AppElement<'static> {
+fn generic_settings_page(state: &State) -> AppElement<'_> {
+    let section = state.active_section;
+    let (icon, _, title) = sidebar_metadata(section);
     column![
-        text(title).size(20),
-        text(subtitle)
-            .size(12)
-            .style(|theme| text::Style { color: Some(palette(theme).text_secondary) })
+        text(section_description(section)).size(font::size::BODY),
+        components::section_heading(title, "系统设置中的相关选项"),
+        components::settings_group(vec![
+            components::setting_link_with_icon(
+                icon,
+                format!("{title} 设置"),
+                Some("查看和管理此部分的设置".into()),
+                Message::SectionSelected(section),
+            ),
+            components::setting_link(
+                "高级设置",
+                Some("更多系统级选项和详细配置".into()),
+                Message::SectionSelected(section),
+            ),
+            components::setting_link(
+                "关于此设置",
+                Some("了解相关功能和可用选项".into()),
+                Message::SectionSelected(section),
+            ),
+        ]),
     ]
-    .spacing(3)
-    .padding(iced::Padding::new(8.0).left(4.0))
-    .into()
-}
-
-fn settings_group(
-    first: AppElement<'static>,
-    second: AppElement<'static>,
-    third: impl Into<AppElement<'static>>,
-) -> AppElement<'static> {
-    container(column![
-        first,
-        rule::horizontal(1).style(rule_style),
-        second,
-        rule::horizontal(1).style(rule_style),
-        third.into()
-    ])
-    .width(Length::Fill)
-    .padding(4)
-    .style(list_group_style)
-    .into()
-}
-
-fn setting_link(
-    label: &'static str,
-    detail: &'static str,
-    trailing: &'static str,
-) -> AppElement<'static> {
-    setting_control(
-        label,
-        detail,
-        button(row![space().width(Length::Fill), text(trailing).size(22)])
-            .on_press(Message::SectionSelected(Section::General))
-            .width(Length::Fixed(64.0))
-            .style(list_button_style),
-    )
-}
-
-fn setting_toggle(
-    label: &'static str,
-    detail: &'static str,
-    control: impl Into<AppElement<'static>>,
-) -> AppElement<'static> {
-    setting_control(label, detail, control)
-}
-
-fn setting_control(
-    label: &'static str,
-    detail: impl Into<String>,
-    control: impl Into<AppElement<'static>>,
-) -> AppElement<'static> {
-    container(
-        row![
-            column![
-                text(label).size(14),
-                text(detail.into())
-                    .size(11)
-                    .style(|theme| text::Style { color: Some(palette(theme).text_secondary) })
-            ]
-            .spacing(3)
-            .width(Length::Fill),
-            control.into(),
-        ]
-        .spacing(18)
-        .align_y(iced::Alignment::Center),
-    )
-    .width(Length::Fill)
-    .padding([12, 14])
+    .spacing(14)
     .into()
 }
 
@@ -430,260 +759,39 @@ fn segmented_button(
     appearance: Appearance,
     selected: Appearance,
 ) -> AppElement<'static> {
-    button(text(label).size(11))
+    button(text(label).size(font::size::CAPTION))
         .on_press(Message::AppearanceSelected(appearance))
-        .style(move |theme, status| segmented_button_style(theme, status, appearance == selected))
+        .style(move |theme, status| components::segmented_style(theme, status, appearance == selected))
         .into()
 }
 
-fn accent_picker() -> AppElement<'static> {
-    row![
-        accent_dot(Color::from_rgb(0.20, 0.48, 1.0)),
-        accent_dot(Color::from_rgb(0.60, 0.35, 0.95)),
-        accent_dot(Color::from_rgb(0.12, 0.72, 0.54)),
-        accent_dot(Color::from_rgb(0.95, 0.38, 0.40)),
-    ]
-    .spacing(7)
-    .into()
-}
+fn compositor_navigation(scheme: UiColorScheme) -> AppElement<'static> {
+    use liquid_glass::{GlassSegment, GlassSegmentContent, GlassSegmentedControl};
 
-fn accent_dot(color: Color) -> AppElement<'static> {
-    container(text(" "))
-        .width(Length::Fixed(14.0))
-        .height(Length::Fixed(14.0))
-        .style(move |theme| container::Style {
-            background: Some(Background::Color(color)),
-            border: Border::default().rounded(7.0).width(1.0).color(palette(theme).group_border),
-            ..container::Style::default()
-        })
-        .into()
-}
-
-fn glass_search(value: &str, scheme: UiColorScheme) -> AppElement<'_> {
-    let field = text_input("Search", value)
-        .on_input(Message::SearchChanged)
-        .width(Length::Fill)
-        .padding([4, 0])
-        .style(search_style);
-    let field = row![
-        text("⌕")
-            .size(18)
-            .style(|theme| text::Style { color: Some(palette(theme).text_secondary) }),
-        field,
-    ]
-    .width(Length::Fill)
-    .spacing(7)
-    .align_y(iced::Alignment::Center);
-    glass_surface_with_padding(
-        GlassId(11),
-        Rect::new(0.0, 0.0, 212.0, 36.0),
-        UiTheme::new(scheme).glass_shape(GlassRole::InputField),
-        GlassRole::InputField,
-        scheme,
-        Padding::new(2.0).left(10.0).right(10.0),
-        None,
-        field,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn glass_surface_with_padding<'a>(
-    id: GlassId,
-    bounds: Rect,
-    shape: GlassShape,
-    role: GlassRole,
-    scheme: UiColorScheme,
-    padding: Padding,
-    foreground_alpha: Option<f32>,
-    content: impl Into<AppElement<'a>>,
-) -> AppElement<'a> {
-    let mut overlay_material = GlassMaterial::clear();
-    overlay_material.tint = if role == GlassRole::FloatingControl {
-        liquid_glass::Color::rgba(1.0, 1.0, 1.0, 0.10)
-    } else {
-        liquid_glass::Color::transparent()
-    };
-    let background = GlassContainer::new(id, bounds)
-        .shape(shape)
-        .material(overlay_material)
-        .chrome(UiTheme::new(scheme).compositor_chrome(role))
-        .into_element::<Message, Theme, Renderer>();
-    let foreground: AppElement<'a> = container(content)
-        .width(Length::Fixed(bounds.width))
-        .height(Length::Fixed(bounds.height))
-        .padding(padding)
-        .align_y(iced::Alignment::Center)
-        .style(move |theme| {
-            let background = foreground_alpha.map(|alpha| {
-                Background::Color(palette(theme).content_background.scale_alpha(alpha))
-            });
-            container::Style { background, ..container::Style::default() }
-        })
-        .into();
-    stack![background, foreground].into()
-}
-
-fn compositor_navigation(
-    id: GlassId,
-    on_back: Message,
-    on_forward: Message,
-    scheme: UiColorScheme,
-) -> AppElement<'static> {
-    let mut overlay_material = GlassMaterial::clear();
+    let mut overlay_material = liquid_glass::GlassMaterial::clear();
     overlay_material.tint = liquid_glass::Color::transparent();
     GlassSegmentedControl::new(
-        id,
+        GlassId(12),
         Rect::new(0.0, 0.0, 72.0, 36.0),
         [
-            GlassSegment::new(GlassSegmentContent::ChevronLeft, on_back),
-            GlassSegment::new(GlassSegmentContent::ChevronRight, on_forward).enabled(false),
+            GlassSegment::new(
+                GlassSegmentContent::ChevronLeft,
+                Message::SectionSelected(Section::General),
+            ),
+            GlassSegment::new(
+                GlassSegmentContent::ChevronRight,
+                Message::SectionSelected(Section::General),
+            )
+            .enabled(false),
         ],
     )
     .material(overlay_material)
-    .chrome(UiTheme::new(scheme).glass_chrome(GlassRole::FloatingControl))
+    .chrome(UiTheme::new(scheme).glass_chrome(liquid_glass::GlassRole::FloatingControl))
     .into_element::<Theme, Renderer>()
 }
 
-fn palette(theme: &Theme) -> UiPalette {
-    UiTheme::from_iced(theme).palette()
-}
-
-fn sidebar_style(theme: &Theme) -> container::Style {
-    let palette = palette(theme);
-    container::Style {
-        text_color: Some(palette.text_primary),
-        background: None,
-        border: Border::default(),
-        shadow: Shadow::default(),
-        snap: true,
-    }
-}
-
-fn titlebar_style(theme: &Theme) -> container::Style {
-    let palette = palette(theme);
-    container::Style {
-        text_color: Some(palette.text_primary),
-        background: Some(Background::Color(palette.window_background)),
-        ..container::Style::default()
-    }
-}
-
-fn content_style(theme: &Theme) -> container::Style {
-    let palette = palette(theme);
-    container::Style {
-        text_color: Some(palette.text_primary),
-        background: Some(Background::Color(palette.content_background)),
-        ..container::Style::default()
-    }
-}
-
-fn list_group_style(theme: &Theme) -> container::Style {
-    let palette = palette(theme);
-    container::Style {
-        text_color: Some(palette.text_primary),
-        background: Some(Background::Color(palette.group_background)),
-        border: Border::default().rounded(10.0).width(1.0).color(palette.group_border),
-        ..container::Style::default()
-    }
-}
-
-fn progress_style(theme: &Theme) -> container::Style {
-    container::Style {
-        background: Some(Background::Color(palette(theme).group_background)),
-        ..container::Style::default()
-    }
-}
-
-fn sidebar_button_style(theme: &Theme, status: button::Status, selected: bool) -> button::Style {
-    let palette = palette(theme);
-    let background = match (selected, status) {
-        (true, button::Status::Pressed) => palette.accent.scale_alpha(0.28),
-        (true, _) => palette.selection,
-        (false, button::Status::Hovered | button::Status::Pressed) => palette.hover,
-        (false, _) => Color::TRANSPARENT,
-    };
-    button::Style {
-        background: Some(Background::Color(background)),
-        text_color: palette.text_primary,
-        border: Border::default().rounded(7.0),
-        ..button::Style::default()
-    }
-}
-
-fn list_button_style(theme: &Theme, status: button::Status) -> button::Style {
-    let palette = palette(theme);
-    let background = match status {
-        button::Status::Hovered => palette.hover,
-        button::Status::Pressed => palette.selection,
-        _ => Color::TRANSPARENT,
-    };
-    button::Style {
-        background: Some(Background::Color(background)),
-        text_color: palette.accent,
-        border: Border::default().rounded(8.0),
-        ..button::Style::default()
-    }
-}
-
-fn toolbar_button_style(theme: &Theme, status: button::Status) -> button::Style {
-    let palette = palette(theme);
-    let background = if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-        palette.hover
-    } else {
-        Color::TRANSPARENT
-    };
-    button::Style {
-        background: Some(Background::Color(background)),
-        text_color: palette.text_primary,
-        border: Border::default().rounded(10.0),
-        ..button::Style::default()
-    }
-}
-
-fn segmented_button_style(theme: &Theme, status: button::Status, selected: bool) -> button::Style {
-    let palette = palette(theme);
-    let background = if selected {
-        palette.selection
-    } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-        palette.hover
-    } else {
-        Color::TRANSPARENT
-    };
-    button::Style {
-        background: Some(Background::Color(background)),
-        text_color: palette.text_primary,
-        border: Border::default().rounded(7.0).width(1.0).color(Color::from_rgba(
-            palette.group_border.r,
-            palette.group_border.g,
-            palette.group_border.b,
-            if selected { 0.30 } else { palette.group_border.a },
-        )),
-        ..button::Style::default()
-    }
-}
-
-fn search_style(theme: &Theme, _status: text_input::Status) -> text_input::Style {
-    let palette = palette(theme);
-    text_input::Style {
-        background: Background::Color(Color::TRANSPARENT),
-        border: Border::default().rounded(8.0).width(0.0).color(Color::TRANSPARENT),
-        icon: palette.text_secondary,
-        placeholder: palette.text_secondary,
-        value: palette.text_primary,
-        selection: palette.selection,
-    }
-}
-
-fn rule_style(theme: &Theme) -> rule::Style {
-    rule::Style {
-        color: palette(theme).separator,
-        radius: 0.0.into(),
-        fill_mode: rule::FillMode::Full,
-        snap: true,
-    }
-}
-
 fn main() -> iced::Result {
+    let fonts = font::ui_fonts();
     let window_config = liquid_glass::WindowConfig::desktop_backdrop();
     let window_settings = iced::window::Settings {
         transparent: window_config.transparent,
@@ -692,9 +800,11 @@ fn main() -> iced::Result {
         blur: window_config.blur && (cfg!(target_os = "linux") || cfg!(target_os = "macos")),
         #[cfg(target_os = "macos")]
         platform_specific: iced::window::settings::PlatformSpecific {
-            // Keep the native titlebar opaque. The Iced content starts below
-            // it through CONTENT_TOP_INSET instead of drawing behind it.
-            titlebar_transparent: false,
+            // Let the Iced surface extend beneath the native titlebar. The
+            // sidebar compositor now owns the background behind the traffic
+            // lights, while content keeps its inset through layout padding.
+            titlebar_transparent: true,
+            title_hidden: true,
             fullsize_content_view: true,
             ..iced::window::settings::PlatformSpecific::default()
         },
@@ -702,11 +812,18 @@ fn main() -> iced::Result {
         platform_specific: iced::window::settings::PlatformSpecific::default(),
         ..iced::window::Settings::default()
     };
-    iced::application::<State, Message, Theme, Renderer>(boot, update, view)
+
+    let mut app = iced::application::<State, Message, Theme, Renderer>(boot, update, view)
         .title("System Settings")
         .theme(app_theme)
         .subscription(subscription)
         .window(window_settings)
-        .window_size(iced::Size::new(1320.0, 760.0))
-        .run()
+        .window_size(iced::Size::new(1320.0, 760.0));
+    for bytes in &fonts.bytes {
+        app = app.font(bytes.clone());
+    }
+    if let Some(ui_font) = fonts.font() {
+        app = app.default_font(ui_font);
+    }
+    app.run()
 }

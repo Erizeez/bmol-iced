@@ -15,17 +15,11 @@ Iced UI → Liquid Scene → Liquid Compositor → wgpu → Metal / Vulkan / DX1
 - `liquid-glass-geometry`：独立的 G2 continuous corner/capsule 曲线、路径段和宽高比渐进算法
 - `liquid-glass-render`：RenderGraph、TexturePool、Renderer contract
 - `liquid-glass-animation`：Spring 基础类型
-- `liquid-glass-ui`：Iced `GlassContainer` / `GlassButton` / 任意数量的 `GlassSegmentedControl`、逐段 enabled/disabled 状态，以及 Light/Dark 语义主题
+- `liquid-glass-ui`：Iced `GlassContainer` / `GlassButton` / 任意数量的 `GlassSegmentedControl`、逐段 enabled/disabled 状态，以及 Light/Dark 语义主题；`components` 模块提供 macOS 设置风格的共享组件（`settings_group` / `setting_row` / `setting_link` / `setting_toggle` / `setting_slider` / `setting_pick_list` / `sidebar_item` / `search_field` / `section_heading` 等），`icon` 模块提供从系统提取的 SF Symbols 矢量图标（资产生成见 playground 的 `extract_sf_symbols` 开发工具），`font` 模块负责 UI 字体解析（构建期内嵌 `assets/fonts/`，macOS 运行时回退系统 SF 字体）
 - `liquid-glass-platform`：DPI、透明窗口、OS desktop backdrop 配置与平台帧 provider contract
 - `liquid-glass`：对外统一 facade
 
 `liquid-glass-render` 已包含真实 `wgpu` compositor：参考项目的背景 Pass、full-resolution horizontal/vertical Gaussian blur、连续超椭圆角 SDF、折射、色散、Fresnel、glare、tint/whiteness 合成，以及按 `z_index` 绘制多个玻璃节点。圆角矩形默认使用 exponent 5 的 continuous curve，也可显式切换为 circular 或自定义 exponent；胶囊则使用 `liquid-glass-geometry` 从 Kyant0/Capsule 移植的 G2 profile，只保留两端外侧圆弧，并以曲率连续的三次 Bézier 肩部接入水平边。算法会随宽高比在正圆和完整胶囊之间渐进。`whiteness` 独立表达中性白覆盖量，使输入框可以在保留主题 tint 的同时比按钮更白；`ShadowStyle` 则将玻璃的边缘光学效果与有意的层级投影分开控制。`liquid-glass-ui` 提供 Iced layout 到 `GlassNode` 的桥接；原生 playground 会使用这份布局结果驱动 compositor。透明窗口现在可以通过 `BackdropFrame` / `DesktopBackdropProvider` 描述和注入真实桌面帧，`set_background_rgba8` 会把它接入完整 shader 链路；具体的 macOS、Windows、Wayland 采集实现仍需按平台权限和窗口排除策略接入。
-
-## 运行 playground
-
-```bash
-cargo run -p liquid-glass-playground --bin liquid-glass-playground
-```
 
 运行来源算法的最小融合基准：
 
@@ -36,8 +30,6 @@ cargo run -p liquid-glass-playground --bin liquid-glass-reference-demo
 这个基准只绘制一个玻璃节点，复现来源仓库的 `smin(circle, roundedRect)`
 融合，以及融合边界上的折射、色散、Fresnel、高光、模糊和阴影；它与设置页
 demo 的多节点层级合成分开，用于判断基础液态玻璃光学效果是否正确。
-
-该命令会创建一个原生 `winit` 窗口，配置 `wgpu` Surface，并持续渲染由多个玻璃节点组成的场景。它是查看完整液态玻璃 shader 效果的入口，包含 full-resolution blur、refraction、dispersion、Fresnel 和 glare；窗口支持 Resize、Surface 重建和关闭事件。
 
 运行 Iced custom widget 示例：
 

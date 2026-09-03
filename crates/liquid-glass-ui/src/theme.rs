@@ -61,9 +61,16 @@ pub struct UiPalette {
     pub separator: IcedColor,
     pub text_primary: IcedColor,
     pub text_secondary: IcedColor,
+    /// De-emphasized text such as disclosure chevrons and placeholders.
+    pub text_tertiary: IcedColor,
     pub accent: IcedColor,
+    /// Accent-tinted selection used inside lists and text fields.
     pub selection: IcedColor,
+    /// Neutral pill drawn behind the selected sidebar item.
+    pub sidebar_selection: IcedColor,
     pub hover: IcedColor,
+    /// The track of an off toggle switch.
+    pub control_track_off: IcedColor,
     pub shadow: IcedColor,
 }
 
@@ -122,9 +129,12 @@ impl UiTheme {
                 separator: rgba(0.0, 0.0, 0.0, 0.10),
                 text_primary: rgba(0.08, 0.08, 0.09, 1.0),
                 text_secondary: rgba(0.32, 0.32, 0.35, 1.0),
+                text_tertiary: rgba(0.0, 0.0, 0.0, 0.26),
                 accent: rgba(0.04, 0.42, 0.95, 1.0),
                 selection: rgba(0.12, 0.46, 0.95, 0.18),
+                sidebar_selection: rgba(0.0, 0.0, 0.0, 0.085),
                 hover: rgba(0.0, 0.0, 0.0, 0.055),
+                control_track_off: rgba(0.0, 0.0, 0.0, 0.10),
                 shadow: rgba(0.0, 0.0, 0.0, 0.16),
             },
             UiColorScheme::Dark => UiPalette {
@@ -136,9 +146,12 @@ impl UiTheme {
                 separator: rgba(1.0, 1.0, 1.0, 0.085),
                 text_primary: rgba(0.94, 0.94, 0.96, 1.0),
                 text_secondary: rgba(0.66, 0.66, 0.69, 1.0),
+                text_tertiary: rgba(1.0, 1.0, 1.0, 0.25),
                 accent: rgba(0.24, 0.55, 1.0, 1.0),
                 selection: rgba(0.20, 0.48, 0.95, 0.30),
+                sidebar_selection: rgba(1.0, 1.0, 1.0, 0.12),
                 hover: rgba(1.0, 1.0, 1.0, 0.065),
+                control_track_off: rgba(1.0, 1.0, 1.0, 0.17),
                 shadow: rgba(0.0, 0.0, 0.0, 0.34),
             },
         }
@@ -149,28 +162,30 @@ impl UiTheme {
     pub fn glass_material(self, role: GlassRole) -> GlassMaterial {
         let (blur_radius, tint, whiteness) = match (self.scheme, role) {
             (UiColorScheme::Light, GlassRole::Sidebar) => {
-                (34.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.055), 0.12)
+                (32.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.18), 0.55)
             }
             (UiColorScheme::Light, GlassRole::Toolbar) => {
-                (16.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.04), 0.04)
+                (8.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.04), 0.04)
             }
             (UiColorScheme::Light, GlassRole::InputField | GlassRole::SearchField) => {
-                (14.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.06), 0.14)
+                (7.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.06), 0.14)
             }
             (UiColorScheme::Light, GlassRole::FloatingControl) => {
-                (9.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.06), 0.06)
+                // Navigation content is drawn inside this capsule. Keep its
+                // interior nearly sharp while retaining the refractive edge.
+                (2.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.06), 0.06)
             }
             (UiColorScheme::Dark, GlassRole::Sidebar) => {
-                (34.0, GlassColor::rgba(0.12, 0.16, 0.25, 0.10), 0.10)
+                (32.0, GlassColor::rgba(0.12, 0.16, 0.25, 0.14), 0.36)
             }
             (UiColorScheme::Dark, GlassRole::Toolbar) => {
-                (16.0, GlassColor::rgba(0.10, 0.13, 0.20, 0.08), 0.025)
+                (8.0, GlassColor::rgba(0.10, 0.13, 0.20, 0.08), 0.025)
             }
             (UiColorScheme::Dark, GlassRole::InputField | GlassRole::SearchField) => {
-                (14.0, GlassColor::rgba(0.14, 0.18, 0.27, 0.09), 0.10)
+                (7.0, GlassColor::rgba(0.14, 0.18, 0.27, 0.09), 0.10)
             }
             (UiColorScheme::Dark, GlassRole::FloatingControl) => {
-                (9.0, GlassColor::rgba(0.17, 0.22, 0.34, 0.10), 0.05)
+                (2.0, GlassColor::rgba(0.17, 0.22, 0.34, 0.10), 0.05)
             }
         };
 
@@ -180,22 +195,33 @@ impl UiTheme {
         material.whiteness = whiteness;
         material.refraction.thickness = 0.20;
         material.refraction.index = 1.40;
+        material.refraction.strength = 0.70;
         material.dispersion.strength = 0.07;
         material.fresnel.range = 0.75;
         material.fresnel.hardness = 0.20;
         material.fresnel.strength = 0.20;
+        if role == GlassRole::Sidebar {
+            // The sidebar is a broad system surface, not a floating optical
+            // object. Keep only the Gaussian backdrop blur and neutral wash;
+            // the reference shader uses zero refraction as its flat-blur
+            // mode, which also suppresses Fresnel and glare in the fragment
+            // path.
+            material.refraction.strength = 0.0;
+            material.dispersion.strength = 0.0;
+            material.fresnel.strength = 0.0;
+        }
         material.opacity = match role {
             GlassRole::Sidebar => match self.scheme {
-                UiColorScheme::Light => 0.38,
-                UiColorScheme::Dark => 0.34,
+                UiColorScheme::Light => 0.84,
+                UiColorScheme::Dark => 0.76,
             },
             // Keep the neutral layer present, but leave enough of the
             // compositor backdrop visible to read as glass on a transparent
             // desktop surface. The input remains the whitest control; the
             // navigation capsule is lighter and more transparent.
-            GlassRole::Toolbar => 0.40,
-            GlassRole::InputField | GlassRole::SearchField => 0.36,
-            GlassRole::FloatingControl => 0.24,
+            GlassRole::Toolbar => 0.54,
+            GlassRole::InputField | GlassRole::SearchField => 0.64,
+            GlassRole::FloatingControl => 0.72,
         };
         material.shadow = match role {
             GlassRole::FloatingControl => ShadowStyle::elevated(),
@@ -324,15 +350,18 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_is_whiter_but_more_transparent_and_blurred() {
+    fn sidebar_is_whiter_and_more_blurred_than_toolbar() {
         let theme = UiTheme::light();
         let sidebar = theme.glass_material(GlassRole::Sidebar);
         let toolbar = theme.glass_material(GlassRole::Toolbar);
 
         assert!(sidebar.blur.radius > toolbar.blur.radius);
         assert!(sidebar.whiteness > toolbar.whiteness);
-        assert!(sidebar.opacity < toolbar.opacity);
+        assert!(sidebar.opacity > toolbar.opacity);
         assert!(sidebar.shadow.factor > 0.0);
+        assert_eq!(sidebar.refraction.strength, 0.0);
+        assert_eq!(sidebar.dispersion.strength, 0.0);
+        assert_eq!(sidebar.fresnel.strength, 0.0);
     }
 
     #[test]

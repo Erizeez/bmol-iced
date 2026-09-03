@@ -29,6 +29,7 @@ pub use scene::{
     Rect, ShadowStyle,
 };
 pub use ui::{
-    GlassButton, GlassButtonIcon, GlassChrome, GlassContainer, GlassNavigationControl, GlassRole,
-    GlassSegment, GlassSegmentContent, GlassSegmentedControl, UiColorScheme, UiPalette, UiTheme,
+    GlassButton, GlassButtonIcon, GlassChrome, GlassContainer, GlassForeground,
+    GlassForegroundRenderer, GlassNavigationControl, GlassRole, GlassSegment, GlassSegmentContent,
+    GlassSegmentedControl, UiColorScheme, UiIcon, UiPalette, UiTheme,
 };

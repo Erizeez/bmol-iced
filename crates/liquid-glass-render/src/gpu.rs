@@ -95,6 +95,33 @@ struct BlurUniform {
     weight_offset: i32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct FlatBlurUniform {
+    tint: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct GradientCompositeUniform {
+    fallback: [f32; 4],
+    // [start_y, end_y, unused, unused] in normalized texture coordinates.
+    gradient: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct RegionBlurUniform {
+    resolution: [f32; 2],
+    radius: i32,
+    weight_offset: i32,
+    region: [f32; 4],
+    // [start_y, end_y, minimum_radius, maximum_radius]. A zero-height range
+    // keeps the bounded blur uniform, while a valid range enables a vertical
+    // top-to-bottom blur gradient.
+    gradient: [f32; 4],
+}
+
 struct FrameTargets {
     scene: wgpu::Texture,
     scene_view: wgpu::TextureView,
@@ -187,6 +214,22 @@ pub struct GpuRenderer {
     copy_bind_group_layout: wgpu::BindGroupLayout,
     copy_bind_group: wgpu::BindGroup,
     copy_pipeline: wgpu::RenderPipeline,
+    foreground_copy_pipeline: wgpu::RenderPipeline,
+    flat_blur_bind_group_layout: wgpu::BindGroupLayout,
+    flat_blur_bind_group: wgpu::BindGroup,
+    flat_blur_uniform: wgpu::Buffer,
+    flat_blur_pipeline: wgpu::RenderPipeline,
+    region_blur_bind_group_layout: wgpu::BindGroupLayout,
+    region_blur_horizontal_bind_group: wgpu::BindGroup,
+    region_blur_horizontal_from_output_bind_group: wgpu::BindGroup,
+    region_blur_vertical_bind_group: wgpu::BindGroup,
+    region_blur_uniform: wgpu::Buffer,
+    region_blur_horizontal_pipeline: wgpu::RenderPipeline,
+    region_blur_vertical_pipeline: wgpu::RenderPipeline,
+    gradient_composite_bind_group_layout: wgpu::BindGroupLayout,
+    gradient_composite_bind_group: wgpu::BindGroup,
+    gradient_composite_uniform: wgpu::Buffer,
+    gradient_composite_pipeline: wgpu::RenderPipeline,
     transparent_background: bool,
 }
 
@@ -287,11 +330,11 @@ impl GpuRenderer {
         });
         let blur_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("liquid-glass blur uniform"),
-            size: u64::from(glass_uniform_stride) * MAX_GLASS_NODES as u64,
+            size: u64::from(glass_uniform_stride) * (MAX_GLASS_NODES as u64 + 1),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let blur_weights = create_blur_weights_buffer(&device, MAX_GLASS_NODES);
+        let blur_weights = create_blur_weights_buffer(&device, MAX_GLASS_NODES + 2);
         let placeholder_texture = create_placeholder_texture(&device);
         let glass_from_scene_bind_group = create_glass_bind_group(
             &device,
@@ -353,7 +396,100 @@ impl GpuRenderer {
             &targets.output_view,
             &sampler,
         );
-        let copy_pipeline = create_copy_pipeline(&device, &copy_bind_group_layout, output_format);
+        let copy_pipeline =
+            create_copy_pipeline(&device, &copy_bind_group_layout, output_format, None);
+        let foreground_copy_pipeline = create_copy_pipeline(
+            &device,
+            &copy_bind_group_layout,
+            output_format,
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+        );
+        let flat_blur_bind_group_layout = create_flat_blur_bind_group_layout(&device);
+        let flat_blur_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("liquid-glass flat blur tint uniform"),
+            size: u64::try_from(std::mem::size_of::<FlatBlurUniform>())
+                .expect("flat blur uniform size fits in u64"),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let flat_blur_bind_group = create_flat_blur_bind_group(
+            &device,
+            &flat_blur_bind_group_layout,
+            &targets.blur_vertical_view,
+            &sampler,
+            &flat_blur_uniform,
+        );
+        let flat_blur_pipeline = create_flat_blur_pipeline(
+            &device,
+            &flat_blur_bind_group_layout,
+            output_format,
+        );
+        let region_blur_bind_group_layout = create_region_blur_bind_group_layout(&device);
+        let region_blur_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("liquid-glass region blur uniform"),
+            size: u64::try_from(std::mem::size_of::<RegionBlurUniform>())
+                .expect("region blur uniform size fits in u64"),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let region_blur_horizontal_bind_group = create_region_blur_bind_group(
+            &device,
+            &region_blur_bind_group_layout,
+            &targets.scene_view,
+            &sampler,
+            &region_blur_uniform,
+            &blur_weights,
+        );
+        let region_blur_horizontal_from_output_bind_group = create_region_blur_bind_group(
+            &device,
+            &region_blur_bind_group_layout,
+            &targets.output_view,
+            &sampler,
+            &region_blur_uniform,
+            &blur_weights,
+        );
+        let region_blur_vertical_bind_group = create_region_blur_bind_group(
+            &device,
+            &region_blur_bind_group_layout,
+            &targets.blur_horizontal_view,
+            &sampler,
+            &region_blur_uniform,
+            &blur_weights,
+        );
+        let region_blur_horizontal_pipeline = create_region_blur_pipeline(
+            &device,
+            &region_blur_bind_group_layout,
+            output_format,
+            true,
+        );
+        let region_blur_vertical_pipeline = create_region_blur_pipeline(
+            &device,
+            &region_blur_bind_group_layout,
+            output_format,
+            false,
+        );
+        let gradient_composite_bind_group_layout =
+            create_gradient_composite_bind_group_layout(&device);
+        let gradient_composite_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("liquid-glass gradient composite uniform"),
+            size: u64::try_from(std::mem::size_of::<GradientCompositeUniform>())
+                .expect("gradient composite uniform size fits in u64"),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let gradient_composite_bind_group = create_gradient_composite_bind_group(
+            &device,
+            &gradient_composite_bind_group_layout,
+            &targets.blur_vertical_view,
+            &targets.scene_view,
+            &sampler,
+            &gradient_composite_uniform,
+        );
+        let gradient_composite_pipeline = create_gradient_composite_pipeline(
+            &device,
+            &gradient_composite_bind_group_layout,
+            output_format,
+        );
 
         Self {
             device,
@@ -384,6 +520,22 @@ impl GpuRenderer {
             copy_bind_group_layout,
             copy_bind_group,
             copy_pipeline,
+            foreground_copy_pipeline,
+            flat_blur_bind_group_layout,
+            flat_blur_bind_group,
+            flat_blur_uniform,
+            flat_blur_pipeline,
+            region_blur_bind_group_layout,
+            region_blur_horizontal_bind_group,
+            region_blur_horizontal_from_output_bind_group,
+            region_blur_vertical_bind_group,
+            region_blur_uniform,
+            region_blur_horizontal_pipeline,
+            region_blur_vertical_pipeline,
+            gradient_composite_bind_group_layout,
+            gradient_composite_bind_group,
+            gradient_composite_uniform,
+            gradient_composite_pipeline,
             transparent_background: false,
         }
     }
@@ -446,6 +598,45 @@ impl GpuRenderer {
             &self.copy_bind_group_layout,
             &self.targets.output_view,
             &self.sampler,
+        );
+        self.flat_blur_bind_group = create_flat_blur_bind_group(
+            &self.device,
+            &self.flat_blur_bind_group_layout,
+            &self.targets.blur_vertical_view,
+            &self.sampler,
+            &self.flat_blur_uniform,
+        );
+        self.region_blur_horizontal_bind_group = create_region_blur_bind_group(
+            &self.device,
+            &self.region_blur_bind_group_layout,
+            &self.targets.scene_view,
+            &self.sampler,
+            &self.region_blur_uniform,
+            &self.blur_weights,
+        );
+        self.region_blur_horizontal_from_output_bind_group = create_region_blur_bind_group(
+            &self.device,
+            &self.region_blur_bind_group_layout,
+            &self.targets.output_view,
+            &self.sampler,
+            &self.region_blur_uniform,
+            &self.blur_weights,
+        );
+        self.region_blur_vertical_bind_group = create_region_blur_bind_group(
+            &self.device,
+            &self.region_blur_bind_group_layout,
+            &self.targets.blur_horizontal_view,
+            &self.sampler,
+            &self.region_blur_uniform,
+            &self.blur_weights,
+        );
+        self.gradient_composite_bind_group = create_gradient_composite_bind_group(
+            &self.device,
+            &self.gradient_composite_bind_group_layout,
+            &self.targets.blur_vertical_view,
+            &self.targets.scene_view,
+            &self.sampler,
+            &self.gradient_composite_uniform,
         );
         self.blur_vertical_bind_group = create_blur_bind_group(
             &self.device,
@@ -604,7 +795,14 @@ impl GpuRenderer {
     /// This panics only if the renderer's compile-time scene node capacity is
     /// smaller than one node.
     pub fn render_panel(&self, node: &GlassNode, time_seconds: f32) {
-        self.render_nodes_to_view(&self.targets.output_view, &[node], time_seconds, false)
+        self.render_nodes_to_view(
+            &self.targets.output_view,
+            &[node],
+            time_seconds,
+            false,
+            None,
+            None,
+        )
             .expect("a single glass node must fit in the scene uniform buffer");
     }
 
@@ -618,7 +816,14 @@ impl GpuRenderer {
     /// than the renderer's dynamic uniform capacity.
     pub fn render_scene(&self, scene: &GlassScene, time_seconds: f32) -> Result<(), GpuError> {
         let nodes = scene.nodes_in_render_order();
-        self.render_nodes_to_view(&self.targets.output_view, &nodes, time_seconds, false)
+        self.render_nodes_to_view(
+            &self.targets.output_view,
+            &nodes,
+            time_seconds,
+            false,
+            None,
+            None,
+        )
     }
 
     /// Encodes a scene into an externally owned texture view.
@@ -637,7 +842,87 @@ impl GpuRenderer {
         time_seconds: f32,
     ) -> Result<(), GpuError> {
         let nodes = scene.nodes_in_render_order();
-        self.render_nodes_to_view(output_view, &nodes, time_seconds, true)
+        self.render_nodes_to_view(output_view, &nodes, time_seconds, true, None, None)
+    }
+
+    /// Encodes a scene into an externally owned view while using an external
+    /// texture as the first compositing layer.
+    ///
+    /// The source texture must use the renderer's output format and include
+    /// [`wgpu::TextureUsages::COPY_SRC`]. It is copied into the renderer's
+    /// scene target before any glass node is evaluated, so every pixel drawn by
+    /// the caller—including text and icons—can be refracted by the nodes.
+    /// Nodes are still evaluated in ascending `z_index` order, and each later
+    /// node samples the previous glass composite.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuError::SceneNodeLimitExceeded`] when the scene is larger
+    /// than the renderer's dynamic uniform capacity.
+    pub fn render_scene_to_view_with_source(
+        &self,
+        output_view: &wgpu::TextureView,
+        source_texture: &wgpu::Texture,
+        scene: &GlassScene,
+        time_seconds: f32,
+    ) -> Result<(), GpuError> {
+        let nodes = scene.nodes_in_render_order();
+        self.render_nodes_to_view(
+            output_view,
+            &nodes,
+            time_seconds,
+            true,
+            Some(source_texture),
+            None,
+        )
+    }
+
+    /// Renders a scene over the renderer's current output instead of
+    /// rebuilding it from an external source. This is used for glass controls
+    /// that must sit above a post-composition layer such as a sidebar fade.
+    pub fn render_scene_over_output(
+        &self,
+        output_view: &wgpu::TextureView,
+        scene: &GlassScene,
+        time_seconds: f32,
+    ) -> Result<(), GpuError> {
+        let nodes = scene.nodes_in_render_order();
+        self.render_nodes_to_view(
+            output_view,
+            &nodes,
+            time_seconds,
+            true,
+            Some(&self.targets.output),
+            None,
+        )
+    }
+
+    /// Encodes a scene using a plain rectangular Gaussian-blur surface below
+    /// the liquid-glass nodes.
+    ///
+    /// The blur region is deliberately not a [`GlassNode`]: it has no SDF,
+    /// refraction, dispersion, Fresnel, glare, or liquid edge treatment. The
+    /// tint alpha controls the amount of the uniform medium mixed over the
+    /// blurred source.
+    pub fn render_scene_to_view_with_source_and_blur_region(
+        &self,
+        output_view: &wgpu::TextureView,
+        source_texture: &wgpu::Texture,
+        blur_region: (u32, u32, u32, u32),
+        blur_radius: u32,
+        tint: [f32; 4],
+        scene: &GlassScene,
+        time_seconds: f32,
+    ) -> Result<(), GpuError> {
+        let nodes = scene.nodes_in_render_order();
+        self.render_nodes_to_view(
+            output_view,
+            &nodes,
+            time_seconds,
+            true,
+            Some(source_texture),
+            Some(SimpleBlurRegion { bounds: blur_region, radius: blur_radius, tint }),
+        )
     }
 
     /// Encodes and submits one frame into an externally owned texture view.
@@ -652,8 +937,338 @@ impl GpuRenderer {
         node: &GlassNode,
         time_seconds: f32,
     ) {
-        self.render_nodes_to_view(output_view, &[node], time_seconds, true)
+        self.render_nodes_to_view(output_view, &[node], time_seconds, true, None, None)
             .expect("a single glass node must fit in the scene uniform buffer");
+    }
+
+    /// Renders the current backdrop texture into an external target view.
+    ///
+    /// This is used to seed an application-owned offscreen UI surface before
+    /// the UI renderer draws its content over it. The resulting texture can
+    /// then be passed to [`Self::render_scene_to_view_with_source`].
+    pub fn render_background_to_view(&self, output_view: &wgpu::TextureView) {
+        let node = GlassNode::new(
+            liquid_glass_scene::GlassId(0),
+            liquid_glass_scene::Rect::new(0.0, 0.0, self.size.width as f32, self.size.height as f32),
+        );
+        let mut uniform = uniform_for_node(
+            self.size,
+            &node,
+            0.0,
+            self.background_texture.is_some(),
+            self.background_texture_ratio,
+            true,
+            false,
+        );
+        uniform.bg_type = if self.background_texture.is_some() { 11 } else { 12 };
+        self.queue.write_buffer(&self.glass_uniform, 0, bytemuck::bytes_of(&uniform));
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("liquid-glass external source background encoder"),
+        });
+        encode_fullscreen_pass(
+            &mut encoder,
+            "liquid-glass external source background pass",
+            output_view,
+            &self.background_pipeline,
+            &self.fullscreen_vertex_buffer,
+            Some(&self.background_bind_group),
+            Some(0),
+            wgpu::Color::BLACK,
+        );
+        self.queue.submit([encoder.finish()]);
+    }
+
+    /// Fills a physical-pixel region of an external view with a solid color.
+    ///
+    /// This is useful for transparent-window demos that have an opaque app
+    /// surface beside a native desktop-glass surface. The fill happens before
+    /// the caller draws its source UI, so that source pixels remain available
+    /// to the glass compositor while the final foreground pass stays clear.
+    pub fn render_solid_region_to_view(
+        &self,
+        output_view: &wgpu::TextureView,
+        region: (u32, u32, u32, u32),
+        color: [f32; 4],
+    ) {
+        let node = GlassNode::new(
+            liquid_glass_scene::GlassId(0),
+            liquid_glass_scene::Rect::new(0.0, 0.0, self.size.width as f32, self.size.height as f32),
+        );
+        let mut uniform = uniform_for_node(
+            self.size,
+            &node,
+            0.0,
+            false,
+            1.0,
+            false,
+            false,
+        );
+        uniform.bg_type = 3;
+        uniform.tint = color;
+        self.queue.write_buffer(&self.glass_uniform, 0, bytemuck::bytes_of(&uniform));
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("liquid-glass external solid region encoder"),
+        });
+        encode_scissored_fullscreen_pass(
+            &mut encoder,
+            "liquid-glass external solid region pass",
+            output_view,
+            &self.background_pipeline,
+            &self.fullscreen_vertex_buffer,
+            Some(&self.background_bind_group),
+            Some(0),
+            wgpu::Color::TRANSPARENT,
+            region,
+        );
+        self.queue.submit([encoder.finish()]);
+    }
+
+    /// Alpha-composites an application-owned transparent layer over an
+    /// already-composited glass view.
+    ///
+    /// The source texture must use the renderer's output format and have the
+    /// same dimensions as the renderer. Pixels with zero alpha leave the
+    /// existing glass result untouched.
+    pub fn composite_texture_to_view(
+        &self,
+        output_view: &wgpu::TextureView,
+        source_texture: &wgpu::Texture,
+    ) {
+        let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = create_copy_bind_group(
+            &self.device,
+            &self.copy_bind_group_layout,
+            &source_view,
+            &self.sampler,
+        );
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("liquid-glass foreground composite encoder"),
+        });
+        encode_fullscreen_load_pass(
+            &mut encoder,
+            "liquid-glass foreground composite pass",
+            output_view,
+            &self.foreground_copy_pipeline,
+            &self.fullscreen_vertex_buffer,
+            &bind_group,
+        );
+        self.queue.submit([encoder.finish()]);
+    }
+
+    /// Alpha-composites an application-owned transparent layer into the
+    /// renderer's ping-pong output before a later post-composition pass.
+    pub fn composite_texture_to_output(&self, source_texture: &wgpu::Texture) {
+        let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = create_copy_bind_group(
+            &self.device,
+            &self.copy_bind_group_layout,
+            &source_view,
+            &self.sampler,
+        );
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("liquid-glass internal foreground composite encoder"),
+        });
+        encode_fullscreen_load_pass(
+            &mut encoder,
+            "liquid-glass internal foreground composite pass",
+            &self.targets.output_view,
+            &self.foreground_copy_pipeline,
+            &self.fullscreen_vertex_buffer,
+            &bind_group,
+        );
+        self.queue.submit([encoder.finish()]);
+    }
+
+    /// Copies the renderer's final internal output into an external target.
+    pub fn copy_output_to_view(&self, output_view: &wgpu::TextureView) {
+        let source_view = self.targets.output.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = create_copy_bind_group(
+            &self.device,
+            &self.copy_bind_group_layout,
+            &source_view,
+            &self.sampler,
+        );
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("liquid-glass final output copy encoder"),
+        });
+        encode_fullscreen_load_pass(
+            &mut encoder,
+            "liquid-glass final output copy pass",
+            output_view,
+            &self.copy_pipeline,
+            &self.fullscreen_vertex_buffer,
+            &bind_group,
+        );
+        self.queue.submit([encoder.finish()]);
+    }
+
+    /// Applies a uniformly blurred overlay whose opacity fades from top to
+    /// bottom. The blur uses `maximum_radius`; `minimum_radius` is retained
+    /// for compatibility with the earlier radius-gradient implementation.
+    pub fn render_vertical_gradient_blur_to_output(
+        &self,
+        region: (u32, u32, u32, u32),
+        minimum_radius: u32,
+        maximum_radius: u32,
+        fallback_color: [f32; 4],
+    ) {
+        self.render_vertical_gradient_blur_to_output_with_source(
+            &self.targets.output,
+            region,
+            region.1,
+            minimum_radius,
+            maximum_radius,
+            fallback_color,
+        );
+    }
+
+    /// Applies a uniformly blurred overlay with a flat opaque top, followed
+    /// by a top-to-bottom alpha fade. This models a floating search field:
+    /// content above its upper edge stays strongly blurred, while the area
+    /// between its upper and lower edges fades to the clear list below.
+    pub fn render_vertical_blur_with_flat_top_to_output(
+        &self,
+        region: (u32, u32, u32, u32),
+        fade_start_y: u32,
+        maximum_radius: u32,
+        fallback_color: [f32; 4],
+    ) {
+        self.render_vertical_gradient_blur_to_output_with_source(
+            &self.targets.output,
+            region,
+            fade_start_y,
+            0,
+            maximum_radius,
+            fallback_color,
+        );
+    }
+
+    fn render_vertical_gradient_blur_to_output_with_source(
+        &self,
+        source_texture: &wgpu::Texture,
+        region: (u32, u32, u32, u32),
+        fade_start_y: u32,
+        _minimum_radius: u32,
+        maximum_radius: u32,
+        fallback_color: [f32; 4],
+    ) {
+        let x = region.0.min(self.size.width);
+        let y = region.1.min(self.size.height);
+        let width = region.2.min(self.size.width.saturating_sub(x));
+        let height = region.3.min(self.size.height.saturating_sub(y));
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        let maximum_radius = maximum_radius.min(MAX_BLUR_RADIUS as u32);
+        let fade_start_y = fade_start_y.clamp(y, y + height);
+        let gradient_weight_offset =
+            (MAX_GLASS_NODES + 1) * (MAX_BLUR_RADIUS + 1) * std::mem::size_of::<f32>();
+        let uniform = RegionBlurUniform {
+            resolution: gpu_size_as_f32(self.size),
+            radius: maximum_radius as i32,
+            weight_offset: i32::try_from(
+                gradient_weight_offset / std::mem::size_of::<f32>(),
+            )
+            .expect("gradient blur weight offset fits in i32"),
+            region: [x as f32, y as f32, width as f32, height as f32],
+            // Keep the blur itself uniform. The vertical gradient is carried
+            // by the composite alpha below, so there is only one transition.
+            gradient: [0.0; 4],
+        };
+        self.queue.write_buffer(
+            &self.region_blur_uniform,
+            0,
+            bytemuck::bytes_of(&uniform),
+        );
+        let blur_weights = gaussian_weights(maximum_radius as i32);
+        self.queue.write_buffer(
+            &self.blur_weights,
+            u64::try_from(gradient_weight_offset).expect("gradient weight offset fits in u64"),
+            bytemuck::cast_slice(&blur_weights),
+        );
+        self.queue.write_buffer(
+            &self.gradient_composite_uniform,
+            0,
+            bytemuck::bytes_of(&GradientCompositeUniform {
+                fallback: fallback_color,
+                gradient: [
+                    fade_start_y as f32 / self.size.height as f32,
+                    (y + height) as f32 / self.size.height as f32,
+                    0.0,
+                    0.0,
+                ],
+            }),
+        );
+        let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let source_bind_group = create_region_blur_bind_group(
+            &self.device,
+            &self.region_blur_bind_group_layout,
+            &source_view,
+            &self.sampler,
+            &self.region_blur_uniform,
+            &self.blur_weights,
+        );
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("liquid-glass vertical gradient blur encoder"),
+        });
+        let scissor = (x, y, width, height);
+        // Preserve the unblurred output for the final mix. This prevents
+        // transparent or not-yet-captured desktop pixels from turning into a
+        // black rectangle when the gradient is applied.
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.targets.output,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.targets.scene,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: self.size.width,
+                height: self.size.height,
+                depth_or_array_layers: 1,
+            },
+        );
+        encode_scissored_fullscreen_pass(
+            &mut encoder,
+            "liquid-glass vertical gradient horizontal pass",
+            &self.targets.blur_horizontal_view,
+            &self.region_blur_horizontal_pipeline,
+            &self.fullscreen_vertex_buffer,
+            Some(&source_bind_group),
+            None,
+            wgpu::Color::BLACK,
+            scissor,
+        );
+        encode_scissored_fullscreen_pass(
+            &mut encoder,
+            "liquid-glass vertical gradient vertical pass",
+            &self.targets.blur_vertical_view,
+            &self.region_blur_vertical_pipeline,
+            &self.fullscreen_vertex_buffer,
+            Some(&self.region_blur_vertical_bind_group),
+            None,
+            wgpu::Color::BLACK,
+            scissor,
+        );
+        encode_scissored_fullscreen_pass(
+            &mut encoder,
+            "liquid-glass vertical gradient composite pass",
+            &self.targets.output_view,
+            &self.gradient_composite_pipeline,
+            &self.fullscreen_vertex_buffer,
+            Some(&self.gradient_composite_bind_group),
+            None,
+            wgpu::Color::TRANSPARENT,
+            scissor,
+        );
+        self.queue.submit([encoder.finish()]);
     }
 
     /// Renders a scene directly to a configured `wgpu` `SurfaceTexture`.
@@ -683,6 +1298,8 @@ impl GpuRenderer {
         nodes: &[&GlassNode],
         time_seconds: f32,
         copy_to_external_view: bool,
+        source_texture: Option<&wgpu::Texture>,
+        simple_blur: Option<SimpleBlurRegion>,
     ) -> Result<(), GpuError> {
         if nodes.len() > MAX_GLASS_NODES {
             return Err(GpuError::SceneNodeLimitExceeded { limit: MAX_GLASS_NODES });
@@ -698,26 +1315,145 @@ impl GpuRenderer {
                 self.background_texture.is_some(),
                 self.background_texture_ratio,
                 self.transparent_background,
+                source_texture.is_some() || index > 0,
             );
             self.queue.write_buffer(&self.glass_uniform, offset, bytemuck::bytes_of(&uniform));
         }
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("liquid-glass frame encoder"),
         });
-        encode_fullscreen_pass(
-            &mut encoder,
-            "liquid-glass scene pass",
-            &self.targets.scene_view,
-            &self.background_pipeline,
-            &self.fullscreen_vertex_buffer,
-            Some(&self.background_bind_group),
-            Some(0),
-            wgpu::Color { r: 0.04, g: 0.06, b: 0.12, a: 1.0 },
-        );
+        if let Some(source_texture) = source_texture {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: source_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.targets.scene,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: self.size.width,
+                    height: self.size.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        } else {
+            encode_fullscreen_pass(
+                &mut encoder,
+                "liquid-glass scene pass",
+                &self.targets.scene_view,
+                &self.background_pipeline,
+                &self.fullscreen_vertex_buffer,
+                Some(&self.background_bind_group),
+                Some(0),
+                wgpu::Color { r: 0.04, g: 0.06, b: 0.12, a: 1.0 },
+            );
+        }
 
         let mut source = PingPongSource::Scene;
+        if let Some(simple_blur) = simple_blur {
+            let flat_blur_weight_offset =
+                MAX_GLASS_NODES * (MAX_BLUR_RADIUS + 1) * std::mem::size_of::<f32>();
+            let x = simple_blur.bounds.0.min(self.size.width);
+            let y = simple_blur.bounds.1.min(self.size.height);
+            let width = simple_blur.bounds.2.min(self.size.width.saturating_sub(x));
+            let height = simple_blur.bounds.3.min(self.size.height.saturating_sub(y));
+            if width > 0 && height > 0 {
+                let blur_uniform = RegionBlurUniform {
+                    resolution: gpu_size_as_f32(self.size),
+                    radius: simple_blur.radius.min(MAX_BLUR_RADIUS as u32) as i32,
+                    weight_offset: i32::try_from(
+                        flat_blur_weight_offset / std::mem::size_of::<f32>(),
+                    )
+                    .expect("flat blur weight offset fits in i32"),
+                    region: [x as f32, y as f32, width as f32, height as f32],
+                    gradient: [0.0; 4],
+                };
+                self.queue.write_buffer(
+                    &self.region_blur_uniform,
+                    0,
+                    bytemuck::bytes_of(&blur_uniform),
+                );
+                let blur_weights = gaussian_weights(blur_uniform.radius);
+                self.queue.write_buffer(
+                    &self.blur_weights,
+                    u64::try_from(flat_blur_weight_offset)
+                        .expect("flat blur weight offset fits in u64"),
+                    bytemuck::cast_slice(&blur_weights),
+                );
+                self.queue.write_buffer(
+                    &self.flat_blur_uniform,
+                    0,
+                    bytemuck::bytes_of(&FlatBlurUniform { tint: simple_blur.tint }),
+                );
+                encoder.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &self.targets.scene,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &self.targets.output,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: self.size.width,
+                        height: self.size.height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                encode_scissored_fullscreen_pass(
+                    &mut encoder,
+                    "liquid-glass bounded blur horizontal pass",
+                    &self.targets.blur_horizontal_view,
+                    &self.region_blur_horizontal_pipeline,
+                    &self.fullscreen_vertex_buffer,
+                    Some(&self.region_blur_horizontal_bind_group),
+                    None,
+                    wgpu::Color::BLACK,
+                    (x, y, width, height),
+                );
+                encode_scissored_fullscreen_pass(
+                    &mut encoder,
+                    "liquid-glass bounded blur vertical pass",
+                    &self.targets.blur_vertical_view,
+                    &self.region_blur_vertical_pipeline,
+                    &self.fullscreen_vertex_buffer,
+                    Some(&self.region_blur_vertical_bind_group),
+                    None,
+                    wgpu::Color::BLACK,
+                    (x, y, width, height),
+                );
+                encode_scissored_fullscreen_pass(
+                    &mut encoder,
+                    "liquid-glass flat blur tint pass",
+                    &self.targets.output_view,
+                    &self.flat_blur_pipeline,
+                    &self.fullscreen_vertex_buffer,
+                    Some(&self.flat_blur_bind_group),
+                    None,
+                    wgpu::Color::TRANSPARENT,
+                    (x, y, width, height),
+                );
+                source = PingPongSource::Output;
+            }
+        }
         for (index, _) in nodes.iter().enumerate() {
             let blur_radius = blur_radius_for_node(nodes[index]);
+            let Some(glass_region) = node_bounds_region(nodes[index], self.size) else {
+                continue;
+            };
+            let Some(blur_region) = node_render_region(nodes[index], self.size, blur_radius) else {
+                continue;
+            };
             let uniform_offset =
                 self.glass_uniform_stride * u32::try_from(index).expect("node index fits in u32");
             let weight_offset = (MAX_BLUR_RADIUS + 1) * index * std::mem::size_of::<f32>();
@@ -780,7 +1516,7 @@ impl GpuRenderer {
                     depth_or_array_layers: 1,
                 },
             );
-            encode_fullscreen_pass(
+            encode_scissored_fullscreen_pass(
                 &mut encoder,
                 "liquid-glass hierarchical horizontal blur pass",
                 &self.targets.blur_horizontal_view,
@@ -789,8 +1525,9 @@ impl GpuRenderer {
                 Some(blur_bind_group),
                 Some(uniform_offset),
                 wgpu::Color::BLACK,
+                blur_region,
             );
-            encode_fullscreen_pass(
+            encode_scissored_fullscreen_pass(
                 &mut encoder,
                 "liquid-glass hierarchical vertical blur pass",
                 &self.targets.blur_vertical_view,
@@ -799,6 +1536,7 @@ impl GpuRenderer {
                 Some(&self.blur_vertical_bind_group),
                 Some(uniform_offset),
                 wgpu::Color::BLACK,
+                blur_region,
             );
             encode_glass_node_pass(
                 &mut encoder,
@@ -807,6 +1545,7 @@ impl GpuRenderer {
                 glass_bind_group,
                 &self.fullscreen_vertex_buffer,
                 uniform_offset,
+                glass_region,
             );
             source = source.other();
         }
@@ -896,13 +1635,56 @@ fn encode_fullscreen_pass(
     dynamic_offset: Option<u32>,
     clear: wgpu::Color,
 ) {
+    encode_fullscreen_pass_with_load(
+        encoder,
+        label,
+        target,
+        pipeline,
+        vertex_buffer,
+        bind_group,
+        dynamic_offset,
+        wgpu::LoadOp::Clear(clear),
+    );
+}
+
+fn encode_fullscreen_load_pass(
+    encoder: &mut wgpu::CommandEncoder,
+    label: &str,
+    target: &wgpu::TextureView,
+    pipeline: &wgpu::RenderPipeline,
+    vertex_buffer: &wgpu::Buffer,
+    bind_group: &wgpu::BindGroup,
+) {
+    encode_fullscreen_pass_with_load(
+        encoder,
+        label,
+        target,
+        pipeline,
+        vertex_buffer,
+        Some(bind_group),
+        None,
+        wgpu::LoadOp::Load,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_fullscreen_pass_with_load(
+    encoder: &mut wgpu::CommandEncoder,
+    label: &str,
+    target: &wgpu::TextureView,
+    pipeline: &wgpu::RenderPipeline,
+    vertex_buffer: &wgpu::Buffer,
+    bind_group: Option<&wgpu::BindGroup>,
+    dynamic_offset: Option<u32>,
+    load: wgpu::LoadOp<wgpu::Color>,
+) {
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view: target,
             depth_slice: None,
             resolve_target: None,
-            ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store },
+            ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
         })],
         ..Default::default()
     });
@@ -916,6 +1698,52 @@ fn encode_fullscreen_pass(
         }
     }
     pass.draw(0..4, 0..1);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_scissored_fullscreen_pass(
+    encoder: &mut wgpu::CommandEncoder,
+    label: &str,
+    target: &wgpu::TextureView,
+    pipeline: &wgpu::RenderPipeline,
+    vertex_buffer: &wgpu::Buffer,
+    bind_group: Option<&wgpu::BindGroup>,
+    dynamic_offset: Option<u32>,
+    clear_color: wgpu::Color,
+    region: (u32, u32, u32, u32),
+) {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: target,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        ..Default::default()
+    });
+    pass.set_pipeline(pipeline);
+    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+    pass.set_scissor_rect(region.0, region.1, region.2.max(1), region.3.max(1));
+    if let Some(bind_group) = bind_group {
+        if let Some(dynamic_offset) = dynamic_offset {
+            pass.set_bind_group(0, bind_group, &[dynamic_offset]);
+        } else {
+            pass.set_bind_group(0, bind_group, &[]);
+        }
+    }
+    let _ = clear_color;
+    pass.draw(0..4, 0..1);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SimpleBlurRegion {
+    bounds: (u32, u32, u32, u32),
+    radius: u32,
+    tint: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -940,6 +1768,7 @@ fn encode_glass_node_pass(
     bind_group: &wgpu::BindGroup,
     vertex_buffer: &wgpu::Buffer,
     uniform_offset: u32,
+    region: (u32, u32, u32, u32),
 ) {
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("liquid-glass pass"),
@@ -953,18 +1782,55 @@ fn encode_glass_node_pass(
     });
     pass.set_pipeline(pipeline);
     pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+    pass.set_scissor_rect(region.0, region.1, region.2.max(1), region.3.max(1));
     pass.set_bind_group(0, bind_group, &[uniform_offset]);
     pass.draw(0..4, 0..1);
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn node_bounds_region(node: &GlassNode, size: GpuSize) -> Option<(u32, u32, u32, u32)> {
+    let x = node.bounds.x.max(0.0).floor() as u32;
+    let y = node.bounds.y.max(0.0).floor() as u32;
+    let right = (node.bounds.x + node.bounds.width).max(0.0).ceil() as u32;
+    let bottom = (node.bounds.y + node.bounds.height).max(0.0).ceil() as u32;
+    let x = x.min(size.width);
+    let y = y.min(size.height);
+    let right = right.min(size.width);
+    let bottom = bottom.min(size.height);
+    let width = right.saturating_sub(x);
+    let height = bottom.saturating_sub(y);
+    (width > 0 && height > 0).then_some((x, y, width, height))
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn node_render_region(
+    node: &GlassNode,
+    size: GpuSize,
+    blur_radius: i32,
+) -> Option<(u32, u32, u32, u32)> {
+    let padding = blur_radius.max(0) as f32 + node.backdrop.padding.max(0.0) + 4.0;
+    let left = (node.bounds.x - padding).max(0.0).floor() as u32;
+    let top = (node.bounds.y - padding).max(0.0).floor() as u32;
+    let right = (node.bounds.x + node.bounds.width + padding).max(0.0).ceil() as u32;
+    let bottom = (node.bounds.y + node.bounds.height + padding).max(0.0).ceil() as u32;
+    let left = left.min(size.width);
+    let top = top.min(size.height);
+    let right = right.min(size.width);
+    let bottom = bottom.min(size.height);
+    let width = right.saturating_sub(left);
+    let height = bottom.saturating_sub(top);
+    (width > 0 && height > 0).then_some((left, top, width, height))
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
 fn uniform_for_node(
     size: GpuSize,
     node: &GlassNode,
-    time_seconds: f32,
+    _time_seconds: f32,
     background_texture_ready: bool,
     background_texture_ratio: f32,
     transparent_background: bool,
+    has_composited_source: bool,
 ) -> GlassUniform {
     let center_x = node.bounds.x + node.bounds.width * 0.5;
     let center_y = size.height as f32 - node.bounds.y - node.bounds.height * 0.5;
@@ -981,7 +1847,10 @@ fn uniform_for_node(
         capsule_bezier_y,
         merge_glare_shadow: [
             material.merge_rate.max(f32::EPSILON),
-            time_seconds * 0.20,
+            // Apple-style system glass uses a stable vertical light field:
+            // the upper and lower edges catch light while the sides remain
+            // subdued. Do not rotate the glare with frame time.
+            0.0,
             material.shadow.expand.max(1.0),
             material.shadow.factor.clamp(0.0, 0.6),
         ],
@@ -991,7 +1860,7 @@ fn uniform_for_node(
             background_texture_ratio,
         ],
         bg_type: if transparent_background {
-            12
+            if has_composited_source { 13 } else { 12 }
         } else if background_texture_ready {
             11
         } else {
@@ -1013,7 +1882,11 @@ fn uniform_for_node(
             material.fresnel.strength,
         ],
         glare: [30.0, 0.2, 0.5, 0.8, 0.9],
-        _pad: [material.opacity, 0.0, 0.0, 0.0, 0.0],
+        // The final five floats are kept as a 16-byte-aligned tail in the
+        // uniform. Use the first two instead of dropping refraction.strength:
+        // the reference shader's offset is otherwise effectively hard-coded
+        // and small controls look like plain translucent pills.
+        _pad: [material.refraction.strength, material.opacity, 0.0, 0.0, 0.0],
     }
 }
 
@@ -1148,6 +2021,202 @@ fn create_copy_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("liquid-glass copy layout"),
         entries: &[texture_binding(0), sampler_binding(1)],
+    })
+}
+
+fn create_flat_blur_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("liquid-glass flat blur layout"),
+        entries: &[
+            texture_binding(0),
+            sampler_binding(1),
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        u64::try_from(std::mem::size_of::<FlatBlurUniform>())
+                            .expect("flat blur uniform size fits in u64"),
+                    ),
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
+fn create_flat_blur_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    blurred_view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+    uniform: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("liquid-glass flat blur bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(blurred_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: uniform,
+                    offset: 0,
+                    size: Some(
+                        wgpu::BufferSize::new(
+                            u64::try_from(std::mem::size_of::<FlatBlurUniform>())
+                                .expect("flat blur uniform size fits in u64"),
+                        )
+                        .expect("flat blur uniform size is non-zero"),
+                    ),
+                }),
+            },
+        ],
+    })
+}
+
+fn create_gradient_composite_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("liquid-glass gradient composite layout"),
+        entries: &[
+            texture_binding(0),
+            texture_binding(1),
+            sampler_binding(2),
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        u64::try_from(std::mem::size_of::<GradientCompositeUniform>())
+                            .expect("gradient composite uniform size fits in u64"),
+                    ),
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
+fn create_gradient_composite_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    blurred_view: &wgpu::TextureView,
+    original_view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+    uniform: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("liquid-glass gradient composite bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(blurred_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(original_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: uniform,
+                    offset: 0,
+                    size: Some(
+                        wgpu::BufferSize::new(
+                            u64::try_from(std::mem::size_of::<GradientCompositeUniform>())
+                                .expect("gradient composite uniform size fits in u64"),
+                        )
+                        .expect("gradient composite uniform size is non-zero"),
+                    ),
+                }),
+            },
+        ],
+    })
+}
+
+fn create_region_blur_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("liquid-glass bounded blur layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        u64::try_from(std::mem::size_of::<RegionBlurUniform>())
+                            .expect("region blur uniform size fits in u64"),
+                    ),
+                },
+                count: None,
+            },
+            texture_binding(1),
+            sampler_binding(2),
+            storage_binding(3),
+        ],
+    })
+}
+
+fn create_region_blur_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    source_view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+    uniform: &wgpu::Buffer,
+    blur_weights: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("liquid-glass bounded blur bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: uniform,
+                    offset: 0,
+                    size: Some(
+                        wgpu::BufferSize::new(
+                            u64::try_from(std::mem::size_of::<RegionBlurUniform>())
+                                .expect("region blur uniform size fits in u64"),
+                        )
+                        .expect("region blur uniform size is non-zero"),
+                    ),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(source_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: blur_weights,
+                    offset: 0,
+                    size: None,
+                }),
+            },
+        ],
     })
 }
 
@@ -1364,6 +2433,7 @@ fn create_copy_pipeline(
     device: &wgpu::Device,
     bind_group_layout: &wgpu::BindGroupLayout,
     output_format: wgpu::TextureFormat,
+    blend: Option<wgpu::BlendState>,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("liquid-glass hierarchical copy shader"),
@@ -1376,6 +2446,84 @@ fn create_copy_pipeline(
     create_pipeline(
         device,
         "liquid-glass hierarchical copy pipeline",
+        &shader,
+        Some(bind_group_layout),
+        "fs_main",
+        blend,
+        output_format,
+    )
+}
+
+fn create_flat_blur_pipeline(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    output_format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("liquid-glass flat blur tint shader"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Owned(format!(
+            "{}\n{}",
+            include_str!("../../../shaders/glass/reference/vertex.wgsl"),
+            include_str!("../../../shaders/glass/flat-blur.wgsl"),
+        ))),
+    });
+    create_pipeline(
+        device,
+        "liquid-glass flat blur tint pipeline",
+        &shader,
+        Some(bind_group_layout),
+        "fs_main",
+        None,
+        output_format,
+    )
+}
+
+fn create_gradient_composite_pipeline(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    output_format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("liquid-glass gradient composite shader"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Owned(format!(
+            "{}\n{}",
+            include_str!("../../../shaders/glass/reference/vertex.wgsl"),
+            include_str!("../../../shaders/glass/gradient-composite.wgsl"),
+        ))),
+    });
+    create_pipeline(
+        device,
+        "liquid-glass gradient composite pipeline",
+        &shader,
+        Some(bind_group_layout),
+        "fs_main",
+        None,
+        output_format,
+    )
+}
+
+fn create_region_blur_pipeline(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    output_format: wgpu::TextureFormat,
+    horizontal: bool,
+) -> wgpu::RenderPipeline {
+    let shader_name = if horizontal { "flat-blur-horizontal.wgsl" } else { "flat-blur-vertical.wgsl" };
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("liquid-glass bounded blur shader"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Owned(format!(
+            "{}\n{}",
+            include_str!("../../../shaders/glass/reference/vertex.wgsl"),
+            if horizontal {
+                include_str!("../../../shaders/glass/flat-blur-horizontal.wgsl")
+            } else {
+                include_str!("../../../shaders/glass/flat-blur-vertical.wgsl")
+            },
+        ))),
+    });
+    create_pipeline(
+        device,
+        &format!("liquid-glass bounded blur {shader_name}"),
         &shader,
         Some(bind_group_layout),
         "fs_main",

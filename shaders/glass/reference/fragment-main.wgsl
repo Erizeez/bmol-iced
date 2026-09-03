@@ -40,8 +40,9 @@ struct Uniforms {
   u_glareConvergence: f32,
   u_glareOppositeFactor: f32,
   u_glareFactor: f32,
-  _pad1: f32,
-  _pad2: vec4f,
+  u_refStrength: f32,
+  u_opacity: f32,
+  _pad2: vec2f,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -270,11 +271,11 @@ fn vec2ToAngle(v: vec2f) -> f32 {
 
 fn sampleBlurred(v_uv: vec2f, offset: vec2f) -> vec4f {
   if (u.u_bgType == 12 && u.u_bgTextureReady != 1) {
-    // In a real transparent window the OS owns the pixels behind us. Keep
-    // the custom surface neutral so the actual desktop remains visible.
-    return vec4f(1.0);
+    // The OS owns the pixels behind a transparent window. Without a captured
+    // desktop frame, keep a tinted translucent surface instead of painting a
+    // bright white placeholder over the window.
+    return vec4f(u.u_tint.rgb, 1.0);
   }
-  let sharp = textureSampleLevel(u_bg, u_sampler, v_uv + offset, 0.0);
   let blurred = textureSampleLevel(u_blurredBg, u_sampler, v_uv + offset, 0.0);
   return blurred;
 }
@@ -282,6 +283,9 @@ fn sampleBlurred(v_uv: vec2f, offset: vec2f) -> vec4f {
 fn getTextureDispersion(v_uv: vec2f, mixRate: f32, offset: vec2f, factor: f32) -> vec4f {
   var pixel = vec4f(1.0);
   if (u.u_bgType == 12 && u.u_bgTextureReady != 1) {
+    // The first transparent layer has no sampleable desktop backdrop yet.
+    // Later layers use bgType 13 and continue sampling the prior composite.
+    pixel = vec4f(u.u_tint.rgb, 1.0);
     return pixel;
   }
   let bgR = textureSampleLevel(u_bg, u_sampler, v_uv + offset * (1.0 - (N_R - 1.0) * factor), 0.0).r;
@@ -309,44 +313,50 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
   var outColor: vec4f;
 
   if (merged < 0.005) {
-    let nmerged = -1.0 * (merged * u_resolution1x.y);
-    let x_R_ratio = 1.0 - nmerged / u.u_refThickness;
-    let thetaI = safeAsin(pow(x_R_ratio, 2.0));
-    let thetaT = safeAsin(1.0 / u.u_refFactor * sin(thetaI));
-    var edgeFactor = -1.0 * tan(thetaT - thetaI);
-    if (nmerged >= u.u_refThickness) { edgeFactor = 0.0; }
-
-    if (edgeFactor <= 0.0) {
+    if (u.u_refStrength <= 0.0001) {
       outColor = sampleBlurred(v_uv, vec2f(0.0));
       outColor = mix(outColor, vec4f(u.u_tint.r, u.u_tint.g, u.u_tint.b, 1.0), u.u_tint.a * 0.8);
     } else {
-      let edgeH = nmerged / u.u_refThickness;
-      let normal = getNormal(p1, p2, pixel);
-      var blurMixRate: f32;
-      if (u.u_blurEdge > 0) { blurMixRate = 1.0; } else { blurMixRate = edgeH; }
-      let refOffset = -normal * edgeFactor * 0.05 * u.u_dpr * vec2f(u.u_resolution.y / (u_resolution1x.x * u.u_dpr), 1.0);
-      let blurredPixel = getTextureDispersion(v_uv, blurMixRate, vec2f(refOffset.x, -refOffset.y), u.u_refDispersion);
-      outColor = mix(blurredPixel, vec4f(u.u_tint.r, u.u_tint.g, u.u_tint.b, 1.0), u.u_tint.a * 0.8);
+      let nmerged = -1.0 * (merged * u_resolution1x.y);
+      let x_R_ratio = 1.0 - nmerged / u.u_refThickness;
+      let thetaI = safeAsin(pow(x_R_ratio, 2.0));
+      let thetaT = safeAsin(1.0 / u.u_refFactor * sin(thetaI));
+      var edgeFactor = -1.0 * tan(thetaT - thetaI);
+      if (nmerged >= u.u_refThickness) { edgeFactor = 0.0; }
 
-      let fresnelFactor = clamp(pow(1.0 + merged * u_resolution1x.y / 1500.0 * pow(500.0 / u.u_refFresnelRange, 2.0) + u.u_refFresnelHardness, 5.0), 0.0, 1.0);
-      var fresnelTintLCH = SRGB_TO_LCH(mix(vec3f(1.0), vec3f(u.u_tint.r, u.u_tint.g, u.u_tint.b), u.u_tint.a * 0.5));
-      fresnelTintLCH.x += 20.0 * fresnelFactor * u.u_refFresnelFactor;
-      fresnelTintLCH.x = clamp(fresnelTintLCH.x, 0.0, 100.0);
-      outColor = mix(outColor, vec4f(LCH_TO_SRGB(fresnelTintLCH), 1.0), fresnelFactor * u.u_refFresnelFactor * 0.7 * length(normal));
+      if (edgeFactor <= 0.0) {
+        outColor = sampleBlurred(v_uv, vec2f(0.0));
+        outColor = mix(outColor, vec4f(u.u_tint.r, u.u_tint.g, u.u_tint.b, 1.0), u.u_tint.a * 0.8);
+      } else {
+        let edgeH = nmerged / u.u_refThickness;
+        let normal = getNormal(p1, p2, pixel);
+        let normalStrength = clamp(length(normal), 0.0, 1.0);
+        var blurMixRate: f32;
+        if (u.u_blurEdge > 0) { blurMixRate = 1.0; } else { blurMixRate = edgeH; }
+        let refOffset = -normal * edgeFactor * 0.05 * u.u_refStrength * u.u_dpr * vec2f(u.u_resolution.y / (u_resolution1x.x * u.u_dpr), 1.0);
+        let blurredPixel = getTextureDispersion(v_uv, blurMixRate, vec2f(refOffset.x, -refOffset.y), u.u_refDispersion);
+        outColor = mix(blurredPixel, vec4f(u.u_tint.r, u.u_tint.g, u.u_tint.b, 1.0), u.u_tint.a * 0.8);
 
-      let glareGeoFactor = clamp(pow(1.0 + merged * u_resolution1x.y / 1500.0 * pow(500.0 / u.u_glareRange, 2.0) + u.u_glareHardness, 5.0), 0.0, 1.0);
-      let glareAngle = (vec2ToAngle(safeNormalize(normal)) - PI / 4.0 + u.u_glareAngle) * 2.0;
-      var glareFarside: i32 = 0;
-      if ((glareAngle > PI * (2.0 - 0.5) && glareAngle < PI * (4.0 - 0.5)) || glareAngle < PI * (0.0 - 0.5)) { glareFarside = 1; }
-      var glareSideFactor: f32;
-      if (glareFarside == 1) { glareSideFactor = 1.2 * u.u_glareOppositeFactor; } else { glareSideFactor = 1.2; }
-      var glareAngleFactor = (0.5 + sin(glareAngle) * 0.5) * glareSideFactor * u.u_glareFactor;
-      glareAngleFactor = clamp(pow(glareAngleFactor, 0.1 + u.u_glareConvergence * 2.0), 0.0, 1.0);
-      var glareTintLCH = SRGB_TO_LCH(mix(blurredPixel.rgb, vec3f(u.u_tint.r, u.u_tint.g, u.u_tint.b), u.u_tint.a * 0.5));
-      glareTintLCH.x += 150.0 * glareAngleFactor * glareGeoFactor;
-      glareTintLCH.y += 30.0 * glareAngleFactor * glareGeoFactor;
-      glareTintLCH.x = clamp(glareTintLCH.x, 0.0, 120.0);
-      outColor = mix(outColor, vec4f(LCH_TO_SRGB(glareTintLCH), 1.0), glareAngleFactor * glareGeoFactor * length(normal));
+        let fresnelFactor = clamp(pow(1.0 + merged * u_resolution1x.y / 1500.0 * pow(500.0 / u.u_refFresnelRange, 2.0) + u.u_refFresnelHardness, 5.0), 0.0, 1.0);
+        var fresnelTintLCH = SRGB_TO_LCH(mix(vec3f(1.0), vec3f(u.u_tint.r, u.u_tint.g, u.u_tint.b), u.u_tint.a * 0.5));
+        fresnelTintLCH.x += 20.0 * fresnelFactor * u.u_refFresnelFactor;
+        fresnelTintLCH.x = clamp(fresnelTintLCH.x, 0.0, 100.0);
+        outColor = mix(outColor, vec4f(LCH_TO_SRGB(fresnelTintLCH), 1.0), clamp(fresnelFactor * u.u_refFresnelFactor * 0.7 * normalStrength, 0.0, 1.0));
+
+        let glareGeoFactor = clamp(pow(1.0 + merged * u_resolution1x.y / 1500.0 * pow(500.0 / u.u_glareRange, 2.0) + u.u_glareHardness, 5.0), 0.0, 1.0);
+        let glareAngle = (vec2ToAngle(safeNormalize(normal)) - PI / 4.0 + u.u_glareAngle) * 2.0;
+        var glareFarside: i32 = 0;
+        if ((glareAngle > PI * (2.0 - 0.5) && glareAngle < PI * (4.0 - 0.5)) || glareAngle < PI * (0.0 - 0.5)) { glareFarside = 1; }
+        var glareSideFactor: f32;
+        if (glareFarside == 1) { glareSideFactor = 1.2 * u.u_glareOppositeFactor; } else { glareSideFactor = 1.2; }
+        var glareAngleFactor = (0.5 + sin(glareAngle) * 0.5) * glareSideFactor * u.u_glareFactor;
+        glareAngleFactor = clamp(pow(glareAngleFactor, 0.1 + u.u_glareConvergence * 2.0), 0.0, 1.0);
+        var glareTintLCH = SRGB_TO_LCH(mix(blurredPixel.rgb, vec3f(u.u_tint.r, u.u_tint.g, u.u_tint.b), u.u_tint.a * 0.5));
+        glareTintLCH.x += 150.0 * glareAngleFactor * glareGeoFactor;
+        glareTintLCH.y += 30.0 * glareAngleFactor * glareGeoFactor;
+        glareTintLCH.x = clamp(glareTintLCH.x, 0.0, 120.0);
+        outColor = mix(outColor, vec4f(LCH_TO_SRGB(glareTintLCH), 1.0), clamp(glareAngleFactor * glareGeoFactor * normalStrength, 0.0, 1.0));
+      }
     }
   } else {
     outColor = textureSampleLevel(u_bg, u_sampler, v_uv, 0.0);
@@ -358,5 +368,5 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
   let shadowAlpha = exp(-1.0 / u.u_shadowExpand * max(shadowMerged, 0.0) * u_resolution1x.y)
     * 0.6 * u.u_shadowFactor * shadowVisible;
   outColor = mix(outColor, vec4f(0.0, 0.0, 0.0, 1.0), shadowAlpha);
-  return vec4f(outColor.rgb, max(shapeAlpha * clamp(u._pad1, 0.0, 1.0), shadowAlpha));
+  return vec4f(outColor.rgb, max(shapeAlpha * clamp(u.u_opacity, 0.0, 1.0), shadowAlpha));
 }

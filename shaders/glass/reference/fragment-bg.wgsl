@@ -217,6 +217,8 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
     }
   } else if (u.u_bgType <= 2) {
     bgColor = vec3f(halfColor(pixel / u.u_resolution) * 0.6 + 0.3);
+  } else if (u.u_bgType <= 3) {
+    bgColor = u.u_tint.rgb;
   } else if (u.u_bgType <= 12) {
     if (u.u_bgTextureReady != 1) {
       // A transparent desktop surface must not fall back to the reference

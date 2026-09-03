@@ -1,13 +1,14 @@
 use std::{
     fmt,
     sync::atomic::{AtomicU8, Ordering},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
-use liquid_glass::{
-    GlassId, GlassNode, GlassRole, GlassScene, GpuRenderer, GpuSize, Rect, UiColorScheme, UiTheme,
-};
+use liquid_glass::{GlassId, GlassNode, GlassRole, GlassScene, GpuRenderer, GpuSize, Rect, UiColorScheme, UiTheme};
+
+#[path = "background.rs"]
+mod background;
 
 #[cfg(target_os = "macos")]
 pub const CONTENT_TOP_INSET: f32 = 32.0;
@@ -35,6 +36,17 @@ fn active_color_scheme() -> UiColorScheme {
 
 pub struct Renderer {
     inner: IcedRenderer,
+    foreground: Option<IcedRenderer>,
+    overlay: Option<IcedRenderer>,
+    active_layer: RenderLayer,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum RenderLayer {
+    #[default]
+    Source,
+    Foreground,
+    Overlay,
 }
 
 impl fmt::Debug for Renderer {
@@ -44,26 +56,101 @@ impl fmt::Debug for Renderer {
 }
 
 impl Renderer {
-    fn new(inner: IcedRenderer) -> Self {
-        Self { inner }
+    fn new(engine: Engine, default_font: iced::Font, default_text_size: iced::Pixels) -> Self {
+        Self {
+            inner: IcedRenderer::new(engine.clone(), default_font, default_text_size),
+            foreground: Some(IcedRenderer::new(engine.clone(), default_font, default_text_size)),
+            overlay: Some(IcedRenderer::new(
+                engine,
+                default_font,
+                default_text_size,
+            )),
+            active_layer: RenderLayer::Source,
+        }
+    }
+
+    fn active_mut(&mut self) -> &mut IcedRenderer {
+        match self.active_layer {
+            RenderLayer::Foreground => {
+                if let Some(foreground) = self.foreground.as_mut() {
+                    return foreground;
+                }
+            }
+            RenderLayer::Overlay => {
+                if let Some(overlay) = self.overlay.as_mut() {
+                    return overlay;
+                }
+            }
+            RenderLayer::Source => {}
+        }
+        &mut self.inner
+    }
+}
+
+impl liquid_glass::GlassForegroundRenderer for Renderer {
+    fn begin_glass_foreground(&mut self) {
+        self.active_layer = RenderLayer::Foreground;
+    }
+
+    fn end_glass_foreground(&mut self) {
+        self.active_layer = RenderLayer::Source;
+    }
+
+    fn begin_glass_overlay(&mut self) {
+        self.active_layer = RenderLayer::Overlay;
+    }
+
+    fn end_glass_overlay(&mut self) {
+        self.active_layer = RenderLayer::Source;
     }
 }
 
 impl iced::advanced::Renderer for Renderer {
     fn start_layer(&mut self, bounds: iced::Rectangle) {
+        // Scrollable widgets establish their clip layer before drawing the
+        // child. The child may be routed to the foreground renderer, so both
+        // renderer instances must enter the same layer or stale pixels can
+        // remain visible after a scroll.
         self.inner.start_layer(bounds);
+        if let Some(foreground) = self.foreground.as_mut() {
+            foreground.start_layer(bounds);
+        }
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.start_layer(bounds);
+        }
     }
 
     fn end_layer(&mut self) {
         self.inner.end_layer();
+        if let Some(foreground) = self.foreground.as_mut() {
+            foreground.end_layer();
+        }
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.end_layer();
+        }
     }
 
     fn start_transformation(&mut self, transformation: iced::Transformation) {
+        // Keep scroll translations identical across the source and
+        // foreground render targets. A foreground widget can be drawn after
+        // the parent scrollable has already pushed this transformation.
         self.inner.start_transformation(transformation);
+        if let Some(foreground) = self.foreground.as_mut() {
+            foreground.start_transformation(transformation);
+        }
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.start_transformation(transformation);
+        }
     }
 
     fn end_transformation(&mut self) {
         self.inner.end_transformation();
+        if let Some(foreground) = self.foreground.as_mut() {
+            foreground.end_transformation();
+        }
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.end_transformation();
+        }
     }
 
     fn fill_quad(
@@ -71,11 +158,17 @@ impl iced::advanced::Renderer for Renderer {
         quad: iced::advanced::renderer::Quad,
         background: impl Into<iced::Background>,
     ) {
-        self.inner.fill_quad(quad, background);
+        self.active_mut().fill_quad(quad, background);
     }
 
     fn reset(&mut self, new_bounds: iced::Rectangle) {
         self.inner.reset(new_bounds);
+        if let Some(foreground) = self.foreground.as_mut() {
+            foreground.reset(new_bounds);
+        }
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.reset(new_bounds);
+        }
     }
 
     fn allocate_image(
@@ -85,7 +178,7 @@ impl iced::advanced::Renderer for Renderer {
         + Send
         + 'static,
     ) {
-        self.inner.allocate_image(handle, callback);
+        self.active_mut().allocate_image(handle, callback);
     }
 }
 
@@ -121,7 +214,7 @@ impl iced::advanced::text::Renderer for Renderer {
         color: iced::Color,
         clip_bounds: iced::Rectangle,
     ) {
-        self.inner.fill_paragraph(text, position, color, clip_bounds);
+        self.active_mut().fill_paragraph(text, position, color, clip_bounds);
     }
 
     fn fill_editor(
@@ -131,7 +224,7 @@ impl iced::advanced::text::Renderer for Renderer {
         color: iced::Color,
         clip_bounds: iced::Rectangle,
     ) {
-        self.inner.fill_editor(editor, position, color, clip_bounds);
+        self.active_mut().fill_editor(editor, position, color, clip_bounds);
     }
 
     fn fill_text(
@@ -141,23 +234,23 @@ impl iced::advanced::text::Renderer for Renderer {
         color: iced::Color,
         clip_bounds: iced::Rectangle,
     ) {
-        self.inner.fill_text(text, position, color, clip_bounds);
+        self.active_mut().fill_text(text, position, color, clip_bounds);
     }
 }
 
 impl graphics::text::Renderer for Renderer {
     fn fill_raw(&mut self, raw: graphics::text::Raw) {
-        self.inner.fill_raw(raw);
+        self.active_mut().fill_raw(raw);
     }
 }
 
 impl graphics::mesh::Renderer for Renderer {
     fn draw_mesh(&mut self, mesh: graphics::Mesh) {
-        self.inner.draw_mesh(mesh);
+        self.active_mut().draw_mesh(mesh);
     }
 
     fn draw_mesh_cache(&mut self, cache: graphics::mesh::Cache) {
-        self.inner.draw_mesh_cache(cache);
+        self.active_mut().draw_mesh_cache(cache);
     }
 }
 
@@ -166,11 +259,24 @@ impl graphics::geometry::Renderer for Renderer {
     type Frame = <IcedRenderer as graphics::geometry::Renderer>::Frame;
 
     fn new_frame(&self, bounds: iced::Rectangle) -> Self::Frame {
+        match self.active_layer {
+            RenderLayer::Foreground => {
+                if let Some(foreground) = self.foreground.as_ref() {
+                    return foreground.new_frame(bounds);
+                }
+            }
+            RenderLayer::Overlay => {
+                if let Some(overlay) = self.overlay.as_ref() {
+                    return overlay.new_frame(bounds);
+                }
+            }
+            RenderLayer::Source => {}
+        }
         self.inner.new_frame(bounds)
     }
 
     fn draw_geometry(&mut self, geometry: Self::Geometry) {
-        self.inner.draw_geometry(geometry);
+        self.active_mut().draw_geometry(geometry);
     }
 }
 
@@ -180,7 +286,46 @@ impl iced_wgpu::primitive::Renderer for Renderer {
         bounds: iced::Rectangle,
         primitive: impl iced_wgpu::primitive::Primitive,
     ) {
-        self.inner.draw_primitive(bounds, primitive);
+        self.active_mut().draw_primitive(bounds, primitive);
+    }
+}
+
+impl iced::advanced::svg::Renderer for Renderer {
+    fn measure_svg(&self, handle: &iced::advanced::svg::Handle) -> iced::Size<u32> {
+        iced::advanced::svg::Renderer::measure_svg(&self.inner, handle)
+    }
+
+    fn draw_svg(
+        &mut self,
+        svg: iced::advanced::svg::Svg,
+        bounds: iced::Rectangle,
+        clip_bounds: iced::Rectangle,
+    ) {
+        iced::advanced::svg::Renderer::draw_svg(self.active_mut(), svg, bounds, clip_bounds);
+    }
+}
+
+impl iced::advanced::image::Renderer for Renderer {
+    type Handle = iced::advanced::image::Handle;
+
+    fn load_image(
+        &self,
+        handle: &Self::Handle,
+    ) -> Result<iced::advanced::image::Allocation, iced::advanced::image::Error> {
+        iced::advanced::image::Renderer::load_image(&self.inner, handle)
+    }
+
+    fn measure_image(&self, handle: &Self::Handle) -> Option<iced::Size<u32>> {
+        iced::advanced::image::Renderer::measure_image(&self.inner, handle)
+    }
+
+    fn draw_image(
+        &mut self,
+        image: iced::advanced::image::Image,
+        bounds: iced::Rectangle,
+        clip_bounds: iced::Rectangle,
+    ) {
+        iced::advanced::image::Renderer::draw_image(self.active_mut(), image, bounds, clip_bounds);
     }
 }
 
@@ -196,7 +341,12 @@ impl iced::advanced::renderer::Headless for Renderer {
             backend,
         )
         .await
-        .map(Self::new)
+        .map(|inner| Self {
+            inner,
+            foreground: None,
+            overlay: None,
+            active_layer: RenderLayer::Source,
+        })
     }
 
     fn name(&self) -> String {
@@ -223,7 +373,14 @@ pub struct Compositor {
     settings: iced_wgpu::Settings,
     device: wgpu::Device,
     liquid: GpuRenderer,
+    iced_source: Option<wgpu::Texture>,
+    iced_source_size: GpuSize,
+    iced_foreground: Option<wgpu::Texture>,
+    iced_foreground_size: GpuSize,
+    iced_overlay: Option<wgpu::Texture>,
+    iced_overlay_size: GpuSize,
     native_backdrop: Option<liquid_glass_native::DesktopBlurTarget>,
+    last_backdrop_capture: Instant,
     color_scheme: UiColorScheme,
     started_at: Instant,
 }
@@ -265,6 +422,9 @@ impl graphics::Compositor for Compositor {
             .and_then(|handle| liquid_glass_native::desktop_blur_target(handle.as_raw()));
         if let Some(target) = native_backdrop {
             liquid_glass_native::refresh_desktop_blur(target);
+            // Stage Manager resets the blur asynchronously between redraws;
+            // the guard reapplies it on every workspace transition.
+            liquid_glass_native::install_stage_manager_guard(target);
         }
         let settings = iced_wgpu::Settings::from(settings);
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -317,9 +477,21 @@ impl graphics::Compositor for Compositor {
             format,
         );
         // The window owns the real desktop backdrop. The renderer writes
-        // transparent pixels outside glass surfaces instead of painting a
-        // bundled image over the desktop.
+        // transparent pixels outside glass surfaces. Non-macOS builds may add
+        // a deterministic wallpaper source below; macOS waits for a real
+        // desktop capture instead of inventing a misaligned backdrop.
         liquid.set_transparent_background(true);
+        // On macOS the native compositor already owns the real desktop
+        // backdrop. Do not put a bundled wallpaper into the shader when
+        // Screen Recording permission is unavailable: that creates a second,
+        // visibly misaligned desktop behind the glass. Other platforms keep
+        // the deterministic wallpaper source for the demo.
+        #[cfg(not(target_os = "macos"))]
+        {
+            let (fallback, fallback_ratio) =
+                background::settings_background_texture(&device, &queue, active_color_scheme());
+            liquid.set_background_texture(fallback, fallback_ratio);
+        }
         let engine = Engine::new(
             &adapter,
             device.clone(),
@@ -338,18 +510,25 @@ impl graphics::Compositor for Compositor {
             settings,
             device,
             liquid,
+            iced_source: None,
+            iced_source_size: GpuSize::new(0, 0),
+            iced_foreground: None,
+            iced_foreground_size: GpuSize::new(0, 0),
+            iced_overlay: None,
+            iced_overlay_size: GpuSize::new(0, 0),
             native_backdrop,
+            last_backdrop_capture: Instant::now() - Duration::from_secs(1),
             color_scheme: active_color_scheme(),
             started_at: Instant::now(),
         })
     }
 
     fn create_renderer(&self) -> Self::Renderer {
-        Renderer::new(IcedRenderer::new(
+        Renderer::new(
             self.engine.clone(),
             self.settings.default_font,
             self.settings.default_text_size,
-        ))
+        )
     }
 
     fn create_surface<W: graphics::compositor::Window + Clone>(
@@ -410,15 +589,172 @@ impl graphics::Compositor for Compositor {
         if self.liquid.size() != size {
             self.liquid.resize(size).map_err(|_| graphics::compositor::SurfaceError::Other)?;
         }
+        // CGWindowListCreateImage is synchronous on macOS. Sampling it every
+        // 50 ms made an otherwise GPU-smooth scroll periodically block the UI
+        // thread. The desktop is visually stable enough for a 120 ms source
+        // cadence while the UI itself can continue presenting at display rate.
+        if self.last_backdrop_capture.elapsed() >= Duration::from_millis(120) {
+            if let Some(target) = self.native_backdrop
+                && let Some((width, height, rgba8)) =
+                    liquid_glass_native::capture_desktop_backdrop(target)
+            {
+                let stride = width.saturating_mul(4);
+                let _ = self.liquid.set_background_rgba8(width, height, stride, &rgba8);
+            }
+            self.last_backdrop_capture = Instant::now();
+        }
+        if self.iced_source_size != size {
+            self.iced_source = Some(self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("liquid-glass Iced source texture"),
+                size: wgpu::Extent3d {
+                    width: size.width,
+                    height: size.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            }));
+            self.iced_source_size = size;
+        }
+        if self.iced_foreground_size != size {
+            self.iced_foreground = Some(self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("liquid-glass Iced foreground texture"),
+                size: wgpu::Extent3d {
+                    width: size.width,
+                    height: size.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            }));
+            self.iced_foreground_size = size;
+        }
+        if self.iced_overlay_size != size {
+            self.iced_overlay = Some(self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("liquid-glass Iced overlay texture"),
+                size: wgpu::Extent3d {
+                    width: size.width,
+                    height: size.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            }));
+            self.iced_overlay_size = size;
+        }
+        let source_texture = self.iced_source.as_ref().expect("Iced source texture is initialized");
+        let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let color_scheme = active_color_scheme();
+        let sidebar_medium = match color_scheme {
+            UiColorScheme::Light => [0.89, 0.90, 0.91, 1.0],
+            UiColorScheme::Dark => [0.21, 0.23, 0.27, 1.0],
+        };
+        self.liquid.render_background_to_view(&source_view);
+        let scale = viewport.scale_factor().max(1.0);
+        let right_x = (232.0 * scale).round() as u32;
+        // Above the search field the sidebar uses one fixed, strong blur.
+        // Only the search field's own height is the fade band: it starts at
+        // the field's top edge and reaches zero at its bottom edge. The
+        // search field is composited afterward, above this entire treatment.
+        let sidebar_gradient_y = 0;
+        let search_top_y = ((CONTENT_TOP_INSET + 10.0) * scale).round() as u32;
+        let search_bottom_y = ((CONTENT_TOP_INSET + 46.0) * scale).round() as u32;
+        let sidebar_gradient_height = search_bottom_y.saturating_sub(sidebar_gradient_y);
+        // The sidebar is a flat, opaque medium. Seed it before Iced draws its
+        // transparent rows so every later blur sample has a real background
+        // instead of transparent black RGB from the window compositor.
+        self.liquid.render_solid_region_to_view(
+            &source_view,
+            (0, 0, right_x, size.height),
+            sidebar_medium,
+        );
+        self.liquid.render_solid_region_to_view(
+            &source_view,
+            (right_x, 0, size.width.saturating_sub(right_x), size.height),
+            [0.97, 0.97, 0.98, 1.0],
+        );
+        renderer.inner.present(None, frame.texture.format(), &source_view, viewport);
         if self.color_scheme != color_scheme {
             self.color_scheme = color_scheme;
         }
         let scene = scene_for_viewport(size, viewport.scale_factor(), color_scheme);
         self.liquid
-            .render_scene_to_view(&view, &scene, self.started_at.elapsed().as_secs_f32())
+            .render_scene_to_view_with_source_and_blur_region(
+                &view,
+                source_texture,
+                (
+                    0,
+                    0,
+                    right_x,
+                    size.height,
+                ),
+                (64.0 * scale).round() as u32,
+                match color_scheme {
+                    UiColorScheme::Light => [0.89, 0.90, 0.91, 0.78],
+                    UiColorScheme::Dark => [0.21, 0.23, 0.27, 0.76],
+                },
+                &scene,
+                self.started_at.elapsed().as_secs_f32(),
+            )
             .map_err(|_| graphics::compositor::SurfaceError::Other)?;
-        renderer.inner.present(None, frame.texture.format(), &view, viewport);
+        if let Some(foreground_texture) = self.iced_foreground.as_ref()
+            && let Some(foreground) = renderer.foreground.as_mut()
+        {
+            let foreground_view =
+                foreground_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            foreground.present(
+                Some(iced::Color::TRANSPARENT),
+                frame.texture.format(),
+                &foreground_view,
+                viewport,
+            );
+            self.liquid.composite_texture_to_output(foreground_texture);
+            // Keep the top region at a fixed radius of 128. Within the
+            // search field bounds only the overlay opacity changes, ending
+            // fully transparent at the field's lower edge.
+            self.liquid.render_vertical_blur_with_flat_top_to_output(
+                (0, sidebar_gradient_y, right_x, sidebar_gradient_height.max(1)),
+                search_top_y,
+                (128.0 * scale).round() as u32,
+                sidebar_medium,
+            );
+        }
+        let search_scene = search_scene_for_viewport(size, viewport.scale_factor(), color_scheme);
+        self.liquid
+            .render_scene_over_output(
+                &view,
+                &search_scene,
+                self.started_at.elapsed().as_secs_f32(),
+            )
+            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        if let Some(overlay_texture) = self.iced_overlay.as_ref()
+            && let Some(overlay) = renderer.overlay.as_mut()
+        {
+            let overlay_view = overlay_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            overlay.present(
+                Some(iced::Color::TRANSPARENT),
+                frame.texture.format(),
+                &overlay_view,
+                viewport,
+            );
+            self.liquid.composite_texture_to_output(overlay_texture);
+        }
+        self.liquid.copy_output_to_view(&view);
         on_pre_present();
         if let Some(target) = self.native_backdrop {
             liquid_glass_native::refresh_desktop_blur(target);
@@ -486,35 +822,50 @@ fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorSch
     let sidebar_width = 232.0;
     let content_x = sidebar_width;
     let content_width = (logical_width - content_x).max(1.0);
-    let logical_height = (size.height as f32 / scale_factor - CONTENT_TOP_INSET).max(1.0);
     let content_y = CONTENT_TOP_INSET;
     let theme = UiTheme::new(color_scheme);
     let mut scene = GlassScene::default();
 
-    // The Iced sidebar itself is intentionally background-free. This node is
-    // the actual translucent surface that reveals the OS-owned desktop
-    // backdrop through the transparent window.
-    scene.push(
-        GlassNode::new(GlassId(9), Rect::new(0.0, content_y, sidebar_width, logical_height))
-            .shape(theme.glass_shape(GlassRole::Sidebar))
-            .material(theme.glass_material(GlassRole::Sidebar)),
-    );
-    scene.push(
-        GlassNode::new(GlassId(10), Rect::new(content_x, content_y, content_width, 56.0))
-            .shape(theme.glass_shape(GlassRole::Toolbar))
-            .material(theme.glass_material(GlassRole::Toolbar)),
-    );
-    scene.push(
-        GlassNode::new(GlassId(11), Rect::new(10.0, content_y + 10.0, 212.0, 36.0))
-            .shape(theme.glass_shape(GlassRole::InputField))
-            .material(theme.glass_material(GlassRole::InputField)),
-    );
-    scene.push(
-        GlassNode::new(GlassId(12), Rect::new(content_x + 8.0, content_y + 10.0, 72.0, 36.0))
-            .shape(theme.glass_shape(GlassRole::FloatingControl))
-            .material(theme.glass_material(GlassRole::FloatingControl)),
-    );
+    let mut toolbar = GlassNode::new(
+        GlassId(10),
+        Rect::new(content_x, content_y, content_width, 56.0),
+    )
+    .shape(theme.glass_shape(GlassRole::Toolbar))
+    .material(theme.glass_material(GlassRole::Toolbar));
+    toolbar.z_index = 10;
+    scene.push(toolbar);
+
+    let mut navigation = GlassNode::new(
+        GlassId(12),
+        Rect::new(content_x + 8.0, content_y + 10.0, 72.0, 36.0),
+    )
+    .shape(theme.glass_shape(GlassRole::FloatingControl))
+    .material(theme.glass_material(GlassRole::FloatingControl));
+    navigation.z_index = 20;
+    scene.push(navigation);
     scale_scene(&mut scene, scale_factor);
+    scene
+}
+
+fn search_scene_for_viewport(
+    size: GpuSize,
+    scale_factor: f32,
+    color_scheme: UiColorScheme,
+) -> GlassScene {
+    let scale_factor = scale_factor.max(1.0);
+    let content_y = CONTENT_TOP_INSET;
+    let theme = UiTheme::new(color_scheme);
+    let mut scene = GlassScene::default();
+    let mut search = GlassNode::new(
+        GlassId(11),
+        Rect::new(10.0, content_y + 10.0, 212.0, 36.0),
+    )
+    .shape(theme.glass_shape(GlassRole::InputField))
+    .material(theme.glass_material(GlassRole::InputField));
+    search.z_index = 30;
+    scene.push(search);
+    scale_scene(&mut scene, scale_factor);
+    let _ = size;
     scene
 }
 

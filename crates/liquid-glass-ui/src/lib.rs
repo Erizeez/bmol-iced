@@ -5,8 +5,14 @@
 
 #![deny(unsafe_code)]
 
+use std::fmt;
+
+pub mod components;
+pub mod font;
+pub mod icon;
 mod theme;
 
+pub use icon::UiIcon;
 pub use theme::{GlassChrome, GlassRole, UiColorScheme, UiPalette, UiTheme};
 
 use iced::advanced::text::Renderer as TextRenderer;
@@ -15,6 +21,304 @@ use iced::{
     advanced::{self, Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget::Tree},
 };
 use liquid_glass_scene::{CornerCurve, GlassId, GlassMaterial, GlassNode, GlassShape, Rect};
+
+/// Allows a compositor to route the visual contents of a glass surface into
+/// a separate foreground renderer.
+pub trait GlassForegroundRenderer {
+    fn begin_glass_foreground(&mut self);
+    fn end_glass_foreground(&mut self);
+    fn begin_glass_overlay(&mut self);
+    fn end_glass_overlay(&mut self);
+}
+
+/// Wraps a widget whose pixels belong above the glass composition pass.
+pub struct GlassForeground<'a, Message, Theme, Renderer> {
+    content: iced::Element<'a, Message, Theme, Renderer>,
+}
+
+impl<'a, Message, Theme, Renderer> GlassForeground<'a, Message, Theme, Renderer> {
+    #[must_use]
+    pub fn new(content: iced::Element<'a, Message, Theme, Renderer>) -> Self {
+        Self { content }
+    }
+}
+
+impl<Message, Theme, Renderer> fmt::Debug for GlassForeground<'_, Message, Theme, Renderer> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("GlassForeground").finish_non_exhaustive()
+    }
+}
+
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for GlassForeground<'_, Message, Theme, Renderer>
+where
+    Renderer: advanced::Renderer + GlassForegroundRenderer,
+{
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content.as_widget_mut().layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        renderer.begin_glass_foreground();
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+        renderer.end_glass_foreground();
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(self.content.as_widget())]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(&[self.content.as_widget()]);
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn advanced::widget::Operation,
+    ) {
+        self.content.as_widget_mut().operate(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            operation,
+        );
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
+/// Wraps a widget whose pixels belong above both the glass composition and
+/// any post-composition masks applied to a foreground layer.
+pub struct GlassOverlay<'a, Message, Theme, Renderer> {
+    content: iced::Element<'a, Message, Theme, Renderer>,
+}
+
+impl<'a, Message, Theme, Renderer> GlassOverlay<'a, Message, Theme, Renderer> {
+    #[must_use]
+    pub fn new(content: iced::Element<'a, Message, Theme, Renderer>) -> Self {
+        Self { content }
+    }
+}
+
+impl<Message, Theme, Renderer> fmt::Debug for GlassOverlay<'_, Message, Theme, Renderer> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("GlassOverlay").finish_non_exhaustive()
+    }
+}
+
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for GlassOverlay<'_, Message, Theme, Renderer>
+where
+    Renderer: advanced::Renderer + GlassForegroundRenderer,
+{
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content.as_widget_mut().layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        renderer.begin_glass_overlay();
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+        renderer.end_glass_overlay();
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(self.content.as_widget())]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(&[self.content.as_widget()]);
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn advanced::widget::Operation,
+    ) {
+        self.content.as_widget_mut().operate(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            operation,
+        );
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
 
 /// A container that can later host any Iced widget tree.
 #[derive(Clone, Debug)]

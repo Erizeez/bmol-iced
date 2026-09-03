@@ -43,8 +43,10 @@ pub fn reference_grid_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> (wg
 ///
 /// The Tahoe wallpapers are kept in the checked-in reference project so the
 /// standalone renderer can be exercised without an OS desktop backdrop. The
-/// Settings example does not use this fallback: its transparent window leaves
-/// the actual desktop to the platform compositor.
+/// non-macOS Settings example uses this as a deterministic shader-source
+/// fallback when a platform cannot provide a captured desktop frame to the
+/// GPU. macOS deliberately leaves the source transparent until it has a real
+/// desktop capture, so it cannot show a mismatched wallpaper through glass.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
 #[allow(dead_code)]
 pub fn settings_background_texture(
