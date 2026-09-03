@@ -980,7 +980,7 @@ fn uniform_for_node(
         capsule_bezier_x,
         capsule_bezier_y,
         merge_glare_shadow: [
-            0.05,
+            material.merge_rate.max(f32::EPSILON),
             time_seconds * 0.20,
             material.shadow.expand.max(1.0),
             material.shadow.factor.clamp(0.0, 0.6),
@@ -999,7 +999,7 @@ fn uniform_for_node(
         },
         flags: [
             i32::from(background_texture_ready),
-            0,
+            i32::from(material.show_shape1),
             material.blur.radius.round() as i32,
             i32::from(material.blur.edge_blur),
         ],

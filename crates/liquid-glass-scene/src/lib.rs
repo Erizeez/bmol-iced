@@ -212,6 +212,14 @@ pub struct GlassMaterial {
     pub dispersion: DispersionStyle,
     pub fresnel: FresnelStyle,
     pub opacity: f32,
+    /// Smooth-min blend radius used by the reference two-shape composition.
+    ///
+    /// When [`Self::show_shape1`] is enabled, the compositor combines a
+    /// 100px circle with the node's shape before evaluating the optical
+    /// effects. A zero value disables the visible merge band.
+    pub merge_rate: f32,
+    /// Whether to include the reference circle in the SDF composition.
+    pub show_shape1: bool,
     /// Per-surface cast shadow. `clear()` deliberately disables it for
     /// compositor overlays; regular and interactive presets enable it.
     pub shadow: ShadowStyle,
@@ -228,6 +236,8 @@ impl GlassMaterial {
             dispersion: DispersionStyle { strength: 0.08, spread: 0.02 },
             fresnel: FresnelStyle { range: 0.75, hardness: 0.6, strength: 0.35 },
             opacity: 0.92,
+            merge_rate: 0.05,
+            show_shape1: false,
             shadow: ShadowStyle::none(),
         }
     }

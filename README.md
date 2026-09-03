@@ -27,6 +27,16 @@ Iced UI → Liquid Scene → Liquid Compositor → wgpu → Metal / Vulkan / DX1
 cargo run -p liquid-glass-playground --bin liquid-glass-playground
 ```
 
+运行来源算法的最小融合基准：
+
+```bash
+cargo run -p liquid-glass-playground --bin liquid-glass-reference-demo
+```
+
+这个基准只绘制一个玻璃节点，复现来源仓库的 `smin(circle, roundedRect)`
+融合，以及融合边界上的折射、色散、Fresnel、高光、模糊和阴影；它与设置页
+demo 的多节点层级合成分开，用于判断基础液态玻璃光学效果是否正确。
+
 该命令会创建一个原生 `winit` 窗口，配置 `wgpu` Surface，并持续渲染由多个玻璃节点组成的场景。它是查看完整液态玻璃 shader 效果的入口，包含 full-resolution blur、refraction、dispersion、Fresnel 和 glare；窗口支持 Resize、Surface 重建和关闭事件。
 
 运行 Iced custom widget 示例：
