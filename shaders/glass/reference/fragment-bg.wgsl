@@ -22,7 +22,7 @@ struct Uniforms {
   u_bgTextureReady: i32,
   u_showShape1: i32,
   u_blurRadius: i32,
-  u_blurEdge: i32,
+  u_featureFlags: i32,
   u_tint: vec4f,
   u_refThickness: f32,
   u_refFactor: f32,
@@ -35,8 +35,15 @@ struct Uniforms {
   u_glareConvergence: f32,
   u_glareOppositeFactor: f32,
   u_glareFactor: f32,
-  _pad1: f32,
-  _pad2: vec4f,
+  u_refStrength: f32,
+  u_opacity: f32,
+  u_interaction: f32,
+  u_environmentLuminance: f32,
+  u_environmentContrast: f32,
+  u_adaptive: vec4f,
+  u_fusedBounds: array<vec4f, 4>,
+  u_fusedGeometry: array<vec4f, 4>,
+  u_interactionState: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;

@@ -4,6 +4,14 @@ const PI: f32 = 3.14159265359;
 const N_R: f32 = 0.98;
 const N_G: f32 = 1.0;
 const N_B: f32 = 1.02;
+// The SDF is lifted into a shallow, rounded optical profile. A rough
+// dielectric interface evaluates both reflected and transmitted energy.
+const SURFACE_BEVEL_MIN: f32 = 3.0;
+const SURFACE_BEVEL_MAX: f32 = 11.0;
+const SURFACE_MIN_ROUGHNESS: f32 = 0.09;
+const SURFACE_MAX_ROUGHNESS: f32 = 0.20;
+const EXTERNAL_TAIL_STRENGTH: f32 = 0.55;
+const EXTERNAL_TAIL_ONSET: f32 = 3.0;
 
 struct Uniforms {
   u_resolution: vec2f,
@@ -27,7 +35,7 @@ struct Uniforms {
   u_bgTextureReady: i32,
   u_showShape1: i32,
   u_blurRadius: i32,
-  u_blurEdge: i32,
+  u_featureFlags: i32,
   u_tint: vec4f,
   u_refThickness: f32,
   u_refFactor: f32,
@@ -42,13 +50,29 @@ struct Uniforms {
   u_glareFactor: f32,
   u_refStrength: f32,
   u_opacity: f32,
-  _pad2: vec2f,
+  u_interaction: f32,
+  u_environmentLuminance: f32,
+  u_environmentContrast: f32,
+  u_adaptive: vec4f,
+  u_fusedBounds: array<vec4f, 4>,
+  u_fusedGeometry: array<vec4f, 4>,
+  u_interactionState: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var u_blurredBg: texture_2d<f32>;
 @group(0) @binding(2) var u_bg: texture_2d<f32>;
 @group(0) @binding(3) var u_sampler: sampler;
+
+const FEATURE_EDGE_BLUR: i32 = 1;
+const FEATURE_REDUCED_TRANSPARENCY: i32 = 2;
+const FEATURE_INCREASED_CONTRAST: i32 = 4;
+const FEATURE_REDUCED_MOTION: i32 = 8;
+const FEATURE_CLEAR_VARIANT: i32 = 16;
+
+fn featureEnabled(flag: i32) -> bool {
+  return (u.u_featureFlags & flag) != 0;
+}
 
 fn sdCircle(p: vec2f, r: f32) -> f32 {
   return length(p) - r;
@@ -171,7 +195,75 @@ fn mainSDF(p1: vec2f, p2: vec2f, p: vec2f) -> f32 {
       u.u_shapeRoundness,
     );
   }
-  return smin(d1, d2, u.u_mergeRate);
+  var merged = smin(d1, d2, u.u_mergeRate);
+  for (var fusedIndex = 0; fusedIndex < 4; fusedIndex += 1) {
+    if (u.u_fusedGeometry[fusedIndex].z > 0.5) {
+      let fusedCenter = (vec2f(0.0) - u.u_fusedBounds[fusedIndex].xy) / u.u_resolution.y;
+      let fusedP = fusedCenter + p / u.u_resolution.y;
+      let fused = roundedRectSDF(
+        fusedP,
+        vec2f(0.0),
+        u.u_fusedBounds[fusedIndex].z / u.u_resolution.y,
+        u.u_fusedBounds[fusedIndex].w / u.u_resolution.y,
+        u.u_fusedGeometry[fusedIndex].x / u.u_resolution.y,
+        u.u_fusedGeometry[fusedIndex].y,
+      );
+      merged = smin(merged, fused, u.u_mergeRate);
+    }
+  }
+  return merged;
+}
+
+fn shadowSDFAt(pixel: vec2f, shadowPosition: vec2f) -> f32 {
+  let shadowP1 = (vec2f(0.0) - u.u_resolution * 0.5
+    + vec2f(shadowPosition.x * u.u_dpr, shadowPosition.y * u.u_dpr))
+    / u.u_resolution.y;
+  let shadowP2 = (vec2f(0.0) - u.u_mouseSpring
+    + vec2f(shadowPosition.x * u.u_dpr, shadowPosition.y * u.u_dpr))
+    / u.u_resolution.y;
+  return mainSDF(shadowP1, shadowP2, pixel);
+}
+
+fn shadowSDF(pixel: vec2f) -> f32 {
+  return shadowSDFAt(pixel, u.u_shadowPosition);
+}
+
+fn surfaceSDF(pixel: vec2f) -> f32 {
+  // Keep the unshifted surface SDF available to clip the cast shadow to the
+  // real outside half-space. The elevation offset must never darken the
+  // material interior.
+  return shadowSDFAt(pixel, vec2f(0.0));
+}
+
+fn shadowStrength(pixel: vec2f) -> f32 {
+  // A cast shadow belongs strictly to the outside half-space. Its soft tail
+  // follows the elevation offset, but there is deliberately no closed
+  // contact ring at the material boundary: the GGX/Fresnel interface owns
+  // that contour. Nothing here can darken the material interior.
+  let surfaceMerged = surfaceSDF(pixel);
+  if (surfaceMerged <= 0.0) {
+    return 0.0;
+  }
+  let pixelsPerSdfUnit = u.u_resolution.y / u.u_dpr;
+  let surfaceDistance = surfaceMerged * pixelsPerSdfUnit;
+  let castDistance = shadowSDF(pixel) * pixelsPerSdfUnit;
+  let penumbra = max(min(u.u_shadowExpand, 12.0), 1.0);
+  // A blurred cast silhouette is coverage of the shifted signed-distance
+  // field, not an exponential drawn around its outside. The latter creates
+  // a second capsule even when its edge is soft.
+  let castCoverage = 1.0 - smoothstep(-penumbra, penumbra, castDistance);
+  let onset = smoothstep(0.0, EXTERNAL_TAIL_ONSET, surfaceDistance);
+  // The SDF difference identifies the side toward which the silhouette was
+  // shifted. Suppressing zero/negative deltas removes the upper and lateral
+  // halo while preserving the projected shadow beneath the control.
+  let offsetMagnitude = max(length(u.u_shadowPosition), 0.5);
+  let projectedSide = smoothstep(
+    0.0,
+    offsetMagnitude,
+    surfaceDistance - castDistance,
+  );
+  let soft = onset * castCoverage * projectedSide * EXTERNAL_TAIL_STRENGTH;
+  return clamp(soft * u.u_shadowFactor, 0.0, 1.0);
 }
 
 fn safeAsin(x: f32) -> f32 {
@@ -184,7 +276,7 @@ fn getNormal(p1: vec2f, p2: vec2f, p: vec2f) -> vec2f {
     mainSDF(p1, p2, p + vec2f(h.x, 0.0)) - mainSDF(p1, p2, p - vec2f(h.x, 0.0)),
     mainSDF(p1, p2, p + vec2f(0.0, h.y)) - mainSDF(p1, p2, p - vec2f(0.0, h.y)),
   ) / (2.0 * h);
-  return grad * 1.414213562 * 1000.0;
+  return safeNormalize(grad);
 }
 
 fn safeNormalize(v: vec2f) -> vec2f {
@@ -195,6 +287,78 @@ fn safeNormalize(v: vec2f) -> vec2f {
   return v / len;
 }
 
+struct SurfaceProfile {
+  normal: vec3f,
+  rim: f32,
+  highlightRim: f32,
+  fresnel: f32,
+};
+
+fn clearCoatWidth() -> f32 {
+  return clamp(u.u_refFresnelRange * 0.08, 1.25, 2.0);
+}
+
+fn surfaceBevelWidth() -> f32 {
+  return clamp(u.u_refThickness * 0.42, SURFACE_BEVEL_MIN, SURFACE_BEVEL_MAX);
+}
+
+fn refractionBodyWidth() -> f32 {
+  // Refraction belongs to the glass body, not just its clear-coat rim. Span
+  // the short-axis half-width so content under a compact capsule bends
+  // continuously from either edge toward the neutral centre line.
+  let halfShortAxis = min(u.u_shapeWidth, u.u_shapeHeight) * u.u_dpr * 0.5;
+  return max(halfShortAxis, surfaceBevelWidth());
+}
+
+fn smootherStep01(value: f32) -> f32 {
+  let x = clamp(value, 0.0, 1.0);
+  return x * x * x * (x * (x * 6.0 - 15.0) + 10.0);
+}
+
+fn surfaceProfile(merged: f32, p1: vec2f, p2: vec2f, pixel: vec2f) -> SurfaceProfile {
+  let insideDistance = max(-merged * (u.u_resolution.y / u.u_dpr), 0.0);
+  let bevelWidth = surfaceBevelWidth();
+  let bevelPosition = clamp(insideDistance / bevelWidth, 0.0, 1.0);
+  // A quarter-circle section transitions from a steep outer rim to a flat
+  // central pane. Keeping some Z at the rim avoids singular refraction.
+  let lateralSlope = cos(bevelPosition * PI * 0.5) * 0.94;
+  let planarNormal = getNormal(p1, p2, pixel);
+  let surfaceNormal = normalize(vec3f(
+    planarNormal * lateralSlope,
+    sqrt(max(1.0 - lateralSlope * lateralSlope, 0.001)),
+  ));
+  // The refractive body can remain several pixels thick, but the optically
+  // smooth outer coating is much thinner. Using Fresnel range as the coating
+  // width keeps this a single physical interface instead of painting a
+  // second outline over the broad glass bevel.
+  let coatingWidth = clearCoatWidth();
+  let coatingPosition = clamp(insideDistance / coatingWidth, 0.0, 1.0);
+  let coatingFocus = mix(2.2, 1.35, clamp(u.u_refFresnelHardness, 0.0, 1.0));
+  let rim = pow(1.0 - smoothstep(0.0, 1.0, coatingPosition), coatingFocus);
+  // The bright strip is convolved over the broader curved bevel. It creates
+  // a gradual microfacet shoulder toward the interior without widening the
+  // dark lateral clear-coat boundary.
+  let highlightWidth = bevelWidth * 1.50;
+  let highlightRim = 1.0 - smootherStep01(insideDistance / highlightWidth);
+  let f0 = pow((max(u.u_refFactor, 1.0001) - 1.0) / (max(u.u_refFactor, 1.0001) + 1.0), 2.0);
+  let fresnel = f0 + (1.0 - f0) * pow(1.0 - clamp(surfaceNormal.z, 0.0, 1.0), 5.0);
+  return SurfaceProfile(surfaceNormal, rim, highlightRim, fresnel);
+}
+
+fn refractionBodyNormal(merged: f32, p1: vec2f, p2: vec2f, pixel: vec2f) -> vec3f {
+  let insideDistance = max(-merged * (u.u_resolution.y / u.u_dpr), 0.0);
+  let bodyPosition = clamp(insideDistance / refractionBodyWidth(), 0.0, 1.0);
+  // A quarter-circle body keeps meaningful curvature through the middle of
+  // the control. Multiplying the cosine by the outward SDF normal produces a
+  // continuous signed displacement through the capsule centre line.
+  let lateralSlope = cos(bodyPosition * PI * 0.5) * 0.90;
+  let planarNormal = getNormal(p1, p2, pixel);
+  return normalize(vec3f(
+    planarNormal * lateralSlope,
+    sqrt(max(1.0 - lateralSlope * lateralSlope, 0.001)),
+  ));
+}
+
 const D65_WHITE: vec3f = vec3f(0.95045592705, 1.0, 1.08905775076);
 const RGB_TO_XYZ_M_COL0: vec3f = vec3f(0.4124, 0.3576, 0.1805);
 const RGB_TO_XYZ_M_COL1: vec3f = vec3f(0.2126, 0.7152, 0.0722);
@@ -203,20 +367,6 @@ const XYZ_TO_RGB_M_COL0: vec3f = vec3f(3.2406255, -1.537208, -0.4986286);
 const XYZ_TO_RGB_M_COL1: vec3f = vec3f(-0.9689307, 1.8757561, 0.0415175);
 const XYZ_TO_RGB_M_COL2: vec3f = vec3f(0.0557101, -0.2040211, 1.0569959);
 
-fn UNCOMPAND_SRGB(a: f32) -> f32 {
-  if (a > 0.04045) { return pow((a + 0.055) / 1.055, 2.4); }
-  return a / 12.92;
-}
-
-fn COMPAND_RGB(a: f32) -> f32 {
-  if (a <= 0.0031308) { return 12.92 * a; }
-  return 1.055 * pow(a, 0.41666666666) - 0.055;
-}
-
-fn SRGB_TO_RGB(srgb: vec3f) -> vec3f {
-  return vec3f(UNCOMPAND_SRGB(srgb.x), UNCOMPAND_SRGB(srgb.y), UNCOMPAND_SRGB(srgb.z));
-}
-
 fn RGB_TO_XYZ(rgb: vec3f) -> vec3f {
   return vec3f(dot(rgb, RGB_TO_XYZ_M_COL0), dot(rgb, RGB_TO_XYZ_M_COL1), dot(rgb, RGB_TO_XYZ_M_COL2));
 }
@@ -224,9 +374,6 @@ fn RGB_TO_XYZ(rgb: vec3f) -> vec3f {
 fn XYZ_TO_RGB(xyz: vec3f) -> vec3f {
   return vec3f(dot(xyz, XYZ_TO_RGB_M_COL0), dot(xyz, XYZ_TO_RGB_M_COL1), dot(xyz, XYZ_TO_RGB_M_COL2));
 }
-
-fn SRGB_TO_XYZ(srgb: vec3f) -> vec3f { return RGB_TO_XYZ(SRGB_TO_RGB(srgb)); }
-fn XYZ_TO_SRGB(xyz: vec3f) -> vec3f { return vec3f(COMPAND_RGB(XYZ_TO_RGB(xyz).x), COMPAND_RGB(XYZ_TO_RGB(xyz).y), COMPAND_RGB(XYZ_TO_RGB(xyz).z)); }
 
 fn XYZ_TO_LAB_F(x: f32) -> f32 {
   if (x > 0.00885645167) { return pow(x, 0.333333333); }
@@ -238,9 +385,9 @@ fn XYZ_TO_LAB(xyz: vec3f) -> vec3f {
   return vec3f(116.0 * xyz_scaled.y - 16.0, 500.0 * (xyz_scaled.x - xyz_scaled.y), 200.0 * (xyz_scaled.y - xyz_scaled.z));
 }
 
-fn SRGB_TO_LAB(srgb: vec3f) -> vec3f { return XYZ_TO_LAB(SRGB_TO_XYZ(srgb)); }
+fn RGB_TO_LAB(rgb: vec3f) -> vec3f { return XYZ_TO_LAB(RGB_TO_XYZ(rgb)); }
 fn LAB_TO_LCH(Lab: vec3f) -> vec3f { return vec3f(Lab.x, sqrt(dot(Lab.yz, Lab.yz)), atan2(Lab.z, Lab.y) * 57.2957795131); }
-fn SRGB_TO_LCH(srgb: vec3f) -> vec3f { return LAB_TO_LCH(SRGB_TO_LAB(srgb)); }
+fn RGB_TO_LCH(rgb: vec3f) -> vec3f { return LAB_TO_LCH(RGB_TO_LAB(rgb)); }
 
 fn LAB_TO_XYZ_F(x: f32) -> f32 {
   if (x > 0.206897) { return x * x * x; }
@@ -252,16 +399,13 @@ fn LAB_TO_XYZ(Lab: vec3f) -> vec3f {
   return D65_WHITE * vec3f(LAB_TO_XYZ_F(w + Lab.y / 500.0), LAB_TO_XYZ_F(w), LAB_TO_XYZ_F(w - Lab.z / 200.0));
 }
 
-fn LAB_TO_SRGB(lab: vec3f) -> vec3f {
-  let rgb = XYZ_TO_RGB(LAB_TO_XYZ(lab));
-  return vec3f(COMPAND_RGB(rgb.x), COMPAND_RGB(rgb.y), COMPAND_RGB(rgb.z));
-}
+fn LAB_TO_RGB(lab: vec3f) -> vec3f { return XYZ_TO_RGB(LAB_TO_XYZ(lab)); }
 
 fn LCH_TO_LAB(LCh: vec3f) -> vec3f {
   return vec3f(LCh.x, LCh.y * cos(LCh.z * 0.01745329251), LCh.y * sin(LCh.z * 0.01745329251));
 }
 
-fn LCH_TO_SRGB(lch: vec3f) -> vec3f { return LAB_TO_SRGB(LCH_TO_LAB(lch)); }
+fn LCH_TO_RGB(lch: vec3f) -> vec3f { return LAB_TO_RGB(LCH_TO_LAB(lch)); }
 
 fn vec2ToAngle(v: vec2f) -> f32 {
   var angle = atan2(v.y, v.x);
@@ -300,6 +444,191 @@ fn getTextureDispersion(v_uv: vec2f, mixRate: f32, offset: vec2f, factor: f32) -
   return pixel;
 }
 
+fn luminance(color: vec3f) -> f32 {
+  return dot(color, vec3f(0.2126, 0.7152, 0.0722));
+}
+
+fn backdropStats(v_uv: vec2f) -> vec2f {
+  if (u.u_bgType == 12 && u.u_bgTextureReady != 1) {
+    return vec2f(u.u_environmentLuminance, 0.0);
+  }
+  let texel = 1.0 / u.u_resolution;
+  let center = textureSampleLevel(u_bg, u_sampler, v_uv, 0.0).rgb;
+  let north = textureSampleLevel(u_bg, u_sampler, v_uv + vec2f(0.0, texel.y * 2.0), 0.0).rgb;
+  let south = textureSampleLevel(u_bg, u_sampler, v_uv - vec2f(0.0, texel.y * 2.0), 0.0).rgb;
+  let east = textureSampleLevel(u_bg, u_sampler, v_uv + vec2f(texel.x * 2.0, 0.0), 0.0).rgb;
+  let west = textureSampleLevel(u_bg, u_sampler, v_uv - vec2f(texel.x * 2.0, 0.0), 0.0).rgb;
+  let center_luma = luminance(center);
+  let neighbor_luma = vec4f(luminance(north), luminance(south), luminance(east), luminance(west));
+  let local_min = min(center_luma, min(min(neighbor_luma.x, neighbor_luma.y), min(neighbor_luma.z, neighbor_luma.w)));
+  let local_max = max(center_luma, max(max(neighbor_luma.x, neighbor_luma.y), max(neighbor_luma.z, neighbor_luma.w)));
+  return vec2f(center_luma, local_max - local_min);
+}
+
+fn ambientBackdrop(v_uv: vec2f) -> vec3f {
+  if (u.u_bgType == 12 && u.u_bgTextureReady != 1) {
+    return u.u_tint.rgb;
+  }
+  let texel = 1.0 / u.u_resolution;
+  let spread = texel * (6.0 + 4.0 * clamp(u.u_interactionState.z, 0.0, 1.0));
+  let samples = textureSampleLevel(u_bg, u_sampler, v_uv + vec2f(spread.x, 0.0), 0.0).rgb
+    + textureSampleLevel(u_bg, u_sampler, v_uv - vec2f(spread.x, 0.0), 0.0).rgb
+    + textureSampleLevel(u_bg, u_sampler, v_uv + vec2f(0.0, spread.y), 0.0).rgb
+    + textureSampleLevel(u_bg, u_sampler, v_uv - vec2f(0.0, spread.y), 0.0).rgb;
+  // Preserve extended-linear values from lower glass layers. SDR backdrop
+  // captures remain within 0..1, while EDR reflections may legitimately
+  // exceed paper white.
+  return max(samples * 0.25, vec3f(0.0));
+}
+
+fn interactionLight(pixel: vec2f) -> f32 {
+  if (u.u_interaction <= 0.0001 || featureEnabled(FEATURE_REDUCED_MOTION)) {
+    return 0.0;
+  }
+  let radius = max(min(u.u_shapeWidth, u.u_shapeHeight) * u.u_dpr * 0.70, 32.0);
+  let springPointer = mix(u.u_mouse, u.u_interactionState.xy, 0.65);
+  return exp(-length(pixel - springPointer) / radius) * u.u_interaction;
+}
+
+struct InterfaceResponse {
+  radiance: vec3f,
+  reflectance: f32,
+};
+
+fn interfaceResponseForProfile(
+  profile: SurfaceProfile,
+  localEnvironment: vec3f,
+  stats: vec2f,
+) -> InterfaceResponse {
+  let roughnessControl = clamp(u.u_glareConvergence, 0.0, 1.0);
+  let coatingRoughness = mix(0.16, SURFACE_MIN_ROUGHNESS, roughnessControl);
+  let roughness = mix(SURFACE_MAX_ROUGHNESS, coatingRoughness, profile.rim);
+  let view = vec3f(0.0, 0.0, 1.0);
+  let reflectedDirection = reflect(-view, profile.normal);
+  // Approximate the convolution of two wide horizontal strip lights with the
+  // rough GGX lobe. A power lobe made one strip collapse to a dim hairline;
+  // the widened transition keeps both horizontal rims crisp and luminous.
+  // The clear-coat is spatially narrow, so its strip-light lobe must overlap
+  // the steep outer normal. If the angular gate starts too late, the normal
+  // reaches the light only after the coating weight has already vanished.
+  let verticalLobeStart = mix(0.50, 0.40, roughness / SURFACE_MAX_ROUGHNESS);
+  let verticalLobeEnd = mix(0.72, 0.62, roughness / SURFACE_MAX_ROUGHNESS);
+  let verticalAxis = clamp(abs(reflectedDirection.y), 0.0, 1.0);
+  let verticalCore = smoothstep(
+    verticalLobeStart,
+    verticalLobeEnd,
+    verticalAxis,
+  );
+  // A rough microfacet lobe has a low-energy tail rather than a hard angular
+  // cutoff. The quadratic toe is zero on the lateral sides, so it softens the
+  // upper/lower transition without washing out the dark vertical boundary.
+  let verticalEnvironment = mix(verticalAxis * verticalAxis, verticalCore, 0.64);
+  // The analytic environment has bright upper/lower strips and a much dimmer
+  // lateral field. Roughness convolves those strips into a frosted response;
+  // no orientation is explicitly multiplied by black.
+  let lateralEnvironment = localEnvironment * 0.045 + vec3f(0.004);
+  // Give the ceiling strip more energy while retaining a distinct lower
+  // strip. Both remain fixed in screen space rather than following time.
+  let verticalIntensity = select(2.10, 2.55, reflectedDirection.y >= 0.0);
+  let localContrast = clamp(
+    max(stats.y, abs(stats.x - u.u_environmentLuminance) * 0.5),
+    0.0,
+    1.0,
+  );
+  let surfaceGain = u.u_adaptive.y * mix(0.84, 1.16, localContrast);
+  // Treat the broad strips as one prefiltered rough-environment lobe. Glare
+  // changes that lobe's energy instead of adding another specular peak at a
+  // different normal angle, which would read as a second concentric rim.
+  let stripEnergy = 1.0 + 0.24 * u.u_glareFactor * surfaceGain;
+  let verticalRadiance = vec3f(verticalIntensity * stripEnergy);
+  let environmentRadiance = mix(lateralEnvironment, verticalRadiance, verticalEnvironment);
+
+  // A laminated system control has more than the bare-air/glass interface:
+  // its smooth outer coat and dim substrate reinforce grazing reflectance.
+  // Strength represents that layered-interface gain, while Fresnel and the
+  // surface normal still determine where the response can occur.
+  let fresnelGain = mix(1.25, 10.0, clamp(u.u_refFresnelFactor, 0.0, 1.0));
+  let reflectance = clamp(profile.fresnel * profile.rim * fresnelGain, 0.0, 0.55);
+
+  // Lateral directions only see the dim environment, so their Fresnel energy
+  // remains dark and frosted without a separately painted side shadow.
+  // The rough vertical microfacets contribute a low-energy radiance tail over
+  // the curved bevel. Keeping it out of `reflectance` preserves the narrow
+  // dark boundary and prevents the shoulder from saturating into a white band.
+  let highlightTail = verticalRadiance
+    * verticalEnvironment
+    * profile.highlightRim
+    * 0.030;
+  let reflectedRadiance = environmentRadiance * reflectance + highlightTail;
+  return InterfaceResponse(reflectedRadiance, reflectance);
+}
+
+fn materialInterfaceResponse(
+  merged: f32,
+  p1: vec2f,
+  p2: vec2f,
+  pixel: vec2f,
+  v_uv: vec2f,
+  stats: vec2f,
+) -> InterfaceResponse {
+  let pixelsPerSdfUnit = u.u_resolution.y / u.u_dpr;
+  let signedDistancePixels = merged * pixelsPerSdfUnit;
+  if (signedDistancePixels > 1.0) {
+    return InterfaceResponse(vec3f(0.0), 0.0);
+  }
+
+  let localEnvironment = ambientBackdrop(v_uv);
+  if (abs(signedDistancePixels) <= surfaceBevelWidth() * 1.50 + 1.0) {
+    // Integrate the full optical bevel over a 4x4 stratified subpixel grid.
+    // Limiting these extra samples to the bevel keeps the rest of the glass
+    // and the window at one sample per pixel while eliminating stair-steps
+    // from both the narrow clear-coat and its soft highlight shoulder.
+    let sampleOffsets = array<vec2f, 16>(
+      vec2f(-0.375, -0.375),
+      vec2f(-0.125, -0.375),
+      vec2f( 0.125, -0.375),
+      vec2f( 0.375, -0.375),
+      vec2f(-0.375, -0.125),
+      vec2f(-0.125, -0.125),
+      vec2f( 0.125, -0.125),
+      vec2f( 0.375, -0.125),
+      vec2f(-0.375,  0.125),
+      vec2f(-0.125,  0.125),
+      vec2f( 0.125,  0.125),
+      vec2f( 0.375,  0.125),
+      vec2f(-0.375,  0.375),
+      vec2f(-0.125,  0.375),
+      vec2f( 0.125,  0.375),
+      vec2f( 0.375,  0.375),
+    );
+    var integratedRadiance = vec3f(0.0);
+    var integratedReflectance = 0.0;
+    for (var sampleIndex = 0; sampleIndex < 16; sampleIndex += 1) {
+      let samplePixel = pixel + sampleOffsets[sampleIndex] * u.u_dpr;
+      let sampleMerged = mainSDF(p1, p2, samplePixel);
+      if (sampleMerged < 0.0) {
+        let response = interfaceResponseForProfile(
+          surfaceProfile(sampleMerged, p1, p2, samplePixel),
+          localEnvironment,
+          stats,
+        );
+        integratedRadiance += response.radiance;
+        integratedReflectance += response.reflectance;
+      }
+    }
+    return InterfaceResponse(integratedRadiance * 0.0625, integratedReflectance * 0.0625);
+  }
+
+  if (merged >= 0.0) {
+    return InterfaceResponse(vec3f(0.0), 0.0);
+  }
+  return interfaceResponseForProfile(
+    surfaceProfile(merged, p1, p2, pixel),
+    localEnvironment,
+    stats,
+  );
+}
+
 @fragment
 fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @location(0) vec4f {
   let u_resolution1x = u.u_resolution / u.u_dpr;
@@ -307,66 +636,102 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
   let p1 = (vec2f(0.0) - u.u_resolution * 0.5) / u.u_resolution.y;
   let p2 = (vec2f(0.0) - u.u_mouseSpring) / u.u_resolution.y;
   let merged = mainSDF(p1, p2, pixel);
-  let shadowP1 = (vec2f(0.0) - u.u_resolution * 0.5 + vec2f(u.u_shadowPosition.x * u.u_dpr, u.u_shadowPosition.y * u.u_dpr)) / u.u_resolution.y;
-  let shadowP2 = (vec2f(0.0) - u.u_mouseSpring + vec2f(u.u_shadowPosition.x * u.u_dpr, u.u_shadowPosition.y * u.u_dpr)) / u.u_resolution.y;
-  let shadowMerged = mainSDF(shadowP1, shadowP2, pixel);
+  let antialiasWidth = max(fwidth(merged) * 1.80, 0.90 / u.u_resolution.y);
+  let shapeAlpha = 1.0 - smoothstep(-antialiasWidth, antialiasWidth, merged);
+  let stats = backdropStats(v_uv);
+  let contentContrast = clamp(max(stats.y, abs(stats.x - u.u_environmentLuminance) * 0.35), 0.0, 1.0);
+  let variantTintFactor = select(1.0, 0.78, featureEnabled(FEATURE_CLEAR_VARIANT));
+  let adaptiveTintAlpha = clamp(
+    u.u_tint.a * mix(0.86, 1.14, contentContrast) * u.u_adaptive.x * variantTintFactor,
+    0.0,
+    1.0,
+  );
   var outColor: vec4f;
+  var surfaceReflection = vec3f(0.0);
+  var surfaceReflectance = 0.0;
 
   if (merged < 0.005) {
     if (u.u_refStrength <= 0.0001) {
       outColor = sampleBlurred(v_uv, vec2f(0.0));
-      outColor = mix(outColor, vec4f(u.u_tint.r, u.u_tint.g, u.u_tint.b, 1.0), u.u_tint.a * 0.8);
+      outColor = mix(outColor, vec4f(u.u_tint.r, u.u_tint.g, u.u_tint.b, 1.0), adaptiveTintAlpha * 0.8);
     } else {
-      let nmerged = -1.0 * (merged * u_resolution1x.y);
-      let x_R_ratio = 1.0 - nmerged / u.u_refThickness;
-      let thetaI = safeAsin(pow(x_R_ratio, 2.0));
-      let thetaT = safeAsin(1.0 / u.u_refFactor * sin(thetaI));
-      var edgeFactor = -1.0 * tan(thetaT - thetaI);
-      if (nmerged >= u.u_refThickness) { edgeFactor = 0.0; }
-
-      if (edgeFactor <= 0.0) {
-        outColor = sampleBlurred(v_uv, vec2f(0.0));
-        outColor = mix(outColor, vec4f(u.u_tint.r, u.u_tint.g, u.u_tint.b, 1.0), u.u_tint.a * 0.8);
-      } else {
-        let edgeH = nmerged / u.u_refThickness;
-        let normal = getNormal(p1, p2, pixel);
-        let normalStrength = clamp(length(normal), 0.0, 1.0);
-        var blurMixRate: f32;
-        if (u.u_blurEdge > 0) { blurMixRate = 1.0; } else { blurMixRate = edgeH; }
-        let refOffset = -normal * edgeFactor * 0.05 * u.u_refStrength * u.u_dpr * vec2f(u.u_resolution.y / (u_resolution1x.x * u.u_dpr), 1.0);
-        let blurredPixel = getTextureDispersion(v_uv, blurMixRate, vec2f(refOffset.x, -refOffset.y), u.u_refDispersion);
-        outColor = mix(blurredPixel, vec4f(u.u_tint.r, u.u_tint.g, u.u_tint.b, 1.0), u.u_tint.a * 0.8);
-
-        let fresnelFactor = clamp(pow(1.0 + merged * u_resolution1x.y / 1500.0 * pow(500.0 / u.u_refFresnelRange, 2.0) + u.u_refFresnelHardness, 5.0), 0.0, 1.0);
-        var fresnelTintLCH = SRGB_TO_LCH(mix(vec3f(1.0), vec3f(u.u_tint.r, u.u_tint.g, u.u_tint.b), u.u_tint.a * 0.5));
-        fresnelTintLCH.x += 20.0 * fresnelFactor * u.u_refFresnelFactor;
-        fresnelTintLCH.x = clamp(fresnelTintLCH.x, 0.0, 100.0);
-        outColor = mix(outColor, vec4f(LCH_TO_SRGB(fresnelTintLCH), 1.0), clamp(fresnelFactor * u.u_refFresnelFactor * 0.7 * normalStrength, 0.0, 1.0));
-
-        let glareGeoFactor = clamp(pow(1.0 + merged * u_resolution1x.y / 1500.0 * pow(500.0 / u.u_glareRange, 2.0) + u.u_glareHardness, 5.0), 0.0, 1.0);
-        let glareAngle = (vec2ToAngle(safeNormalize(normal)) - PI / 4.0 + u.u_glareAngle) * 2.0;
-        var glareFarside: i32 = 0;
-        if ((glareAngle > PI * (2.0 - 0.5) && glareAngle < PI * (4.0 - 0.5)) || glareAngle < PI * (0.0 - 0.5)) { glareFarside = 1; }
-        var glareSideFactor: f32;
-        if (glareFarside == 1) { glareSideFactor = 1.2 * u.u_glareOppositeFactor; } else { glareSideFactor = 1.2; }
-        var glareAngleFactor = (0.5 + sin(glareAngle) * 0.5) * glareSideFactor * u.u_glareFactor;
-        glareAngleFactor = clamp(pow(glareAngleFactor, 0.1 + u.u_glareConvergence * 2.0), 0.0, 1.0);
-        var glareTintLCH = SRGB_TO_LCH(mix(blurredPixel.rgb, vec3f(u.u_tint.r, u.u_tint.g, u.u_tint.b), u.u_tint.a * 0.5));
-        glareTintLCH.x += 150.0 * glareAngleFactor * glareGeoFactor;
-        glareTintLCH.y += 30.0 * glareAngleFactor * glareGeoFactor;
-        glareTintLCH.x = clamp(glareTintLCH.x, 0.0, 120.0);
-        outColor = mix(outColor, vec4f(LCH_TO_SRGB(glareTintLCH), 1.0), clamp(glareAngleFactor * glareGeoFactor * normalStrength, 0.0, 1.0));
-      }
+      let profile = surfaceProfile(merged, p1, p2, pixel);
+      let bodyNormal = refractionBodyNormal(merged, p1, p2, pixel);
+      let refractiveScale = (1.0 - 1.0 / max(u.u_refFactor, 1.0001))
+        * u.u_refThickness * u.u_refStrength * 0.68 * u.u_dpr;
+      let refractionPixels = -bodyNormal.xy / max(bodyNormal.z, 0.28) * refractiveScale;
+      let refOffset = vec2f(
+        refractionPixels.x / u.u_resolution.x,
+        -refractionPixels.y / u.u_resolution.y,
+      );
+      // Keep the secondary material blur on the narrow coating only. The
+      // broad body normal must preserve enough glyph/icon structure for its
+      // displacement to remain visible over an already-frosted sidebar.
+      var blurMixRate = profile.rim;
+      if (featureEnabled(FEATURE_EDGE_BLUR)) { blurMixRate = 1.0; }
+      let refracted = getTextureDispersion(v_uv, blurMixRate, refOffset, u.u_refDispersion);
+      outColor = mix(refracted, vec4f(u.u_tint.rgb, 1.0), adaptiveTintAlpha * 0.8);
     }
   } else {
     outColor = textureSampleLevel(u_bg, u_sampler, v_uv, 0.0);
   }
 
-  let shapeAlpha = 1.0 - smoothstep(-0.001, 0.001, merged);
-  outColor = mix(outColor, textureSampleLevel(u_bg, u_sampler, v_uv, 0.0), 1.0 - shapeAlpha);
-  let shadowVisible = (1.0 - shapeAlpha) * step(0.0, shadowMerged);
-  let shadowAlpha = exp(-1.0 / u.u_shadowExpand * max(shadowMerged, 0.0) * u_resolution1x.y)
-    * 0.6 * u.u_shadowFactor * shadowVisible;
-  outColor = mix(outColor, vec4f(0.0, 0.0, 0.0, 1.0), shadowAlpha);
-  return vec4f(outColor.rgb, max(shapeAlpha * clamp(u.u_opacity, 0.0, 1.0), shadowAlpha));
+  if (merged < 0.0) {
+    let edgeProximity = exp(-abs(merged) * u_resolution1x.y / 10.0);
+    let ambientStrength = clamp(
+      u.u_adaptive.y * (0.010 + contentContrast * 0.030) * edgeProximity,
+      0.0,
+      0.08,
+    );
+    outColor = vec4f(mix(outColor.rgb, ambientBackdrop(v_uv), ambientStrength), outColor.a);
+    let interaction = interactionLight(pixel);
+    outColor = vec4f(mix(outColor.rgb, vec3f(1.0), clamp(interaction * 0.12, 0.0, 0.12)), outColor.a);
+
+  }
+
+  if (shapeAlpha > 0.0) {
+    let surfaceInterface = materialInterfaceResponse(merged, p1, p2, pixel, v_uv, stats);
+    surfaceReflection = surfaceInterface.radiance;
+    surfaceReflectance = surfaceInterface.reflectance;
+  }
+
+  if (featureEnabled(FEATURE_INCREASED_CONTRAST)) {
+    let border = 1.0 - smoothstep(0.15, 1.35, abs(merged) * u_resolution1x.y);
+    var borderColor = vec3f(0.0);
+    if (stats.x < 0.5) { borderColor = vec3f(1.0); }
+    outColor = vec4f(mix(outColor.rgb, borderColor, border * 0.38), outColor.a);
+  }
+
+  // Keep the contour approximately one physical pixel wide at every surface
+  // scale and DPR. A fixed SDF threshold made compact controls look blurry.
+  let backdrop = textureSampleLevel(u_bg, u_sampler, v_uv, 0.0);
+  let opacity = shapeAlpha * clamp(u.u_opacity, 0.0, 1.0);
+  let transmitted = mix(backdrop.rgb, outColor.rgb, opacity);
+  // Fresnel partitions the interface energy: reflected energy replaces the
+  // corresponding transmitted backdrop energy. The rough environment strips
+  // can add radiance above that term, but no manual side-darkening remains in
+  // the composition.
+  // The interface response already contains subpixel coverage, so applying
+  // shapeAlpha again would darken partially covered edge pixels twice.
+  let interfaceReflectance = clamp(surfaceReflectance, 0.0, 0.55);
+  let reflected = max(
+    transmitted * (1.0 - interfaceReflectance) + surfaceReflection,
+    vec3f(0.0),
+  );
+  return vec4f(reflected, mix(backdrop.a, 1.0, opacity));
+}
+
+// Composites the current node's SDF shadow onto the finished layer. The
+// caller renders this after the glass pass over the node's expanded effect
+// region, so the shadow never becomes an input to the material blur.
+@fragment
+fn fs_shadow(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @location(0) vec4f {
+  let backdrop = textureSampleLevel(u_bg, u_sampler, v_uv, 0.0);
+  let pixel = vec2f(frag_coord.x, u.u_resolution.y - frag_coord.y);
+  let stats = backdropStats(v_uv);
+  let lightBackground = smoothstep(0.58, 0.96, stats.x);
+  let contentContrast = clamp(max(stats.y, abs(stats.x - u.u_environmentLuminance) * 0.5), 0.0, 1.0);
+  let backgroundAdaptation = mix(1.24, 0.68, lightBackground) * mix(0.86, 1.20, contentContrast);
+  let shadow = clamp(shadowStrength(pixel) * backgroundAdaptation * u.u_adaptive.z, 0.0, 1.0);
+  return vec4f(backdrop.rgb * (1.0 - shadow), max(backdrop.a, shadow));
 }

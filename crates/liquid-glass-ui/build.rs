@@ -16,9 +16,8 @@ fn main() {
     if let Ok(entries) = fs::read_dir(fonts_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            let is_font = path
-                .extension()
-                .is_some_and(|ext| ext == "otf" || ext == "ttf" || ext == "ttc");
+            let is_font =
+                path.extension().is_some_and(|ext| ext == "otf" || ext == "ttf" || ext == "ttc");
             if !is_font {
                 continue;
             }
@@ -26,7 +25,10 @@ fn main() {
             let family = family_name(&bytes).unwrap_or_else(|| {
                 path.file_stem().expect("font file name").to_string_lossy().into_owned()
             });
-            fonts.push((path.file_name().expect("font file name").to_string_lossy().into_owned(), family));
+            fonts.push((
+                path.file_name().expect("font file name").to_string_lossy().into_owned(),
+                family,
+            ));
         }
     }
     fonts.sort();

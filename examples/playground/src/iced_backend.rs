@@ -1,11 +1,18 @@
 use std::{
+    collections::HashMap,
     fmt,
-    sync::atomic::{AtomicU8, Ordering},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU8, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
-use liquid_glass::{GlassId, GlassNode, GlassRole, GlassScene, GpuRenderer, GpuSize, Rect, UiColorScheme, UiTheme};
+use liquid_glass::{
+    GlassAccessibility, GlassId, GlassInteraction, GlassNode, GlassRole, GlassScene, GpuRenderer,
+    GpuSize, Rect, UiColorScheme, UiTheme,
+};
 
 #[path = "background.rs"]
 mod background;
@@ -16,6 +23,7 @@ pub const CONTENT_TOP_INSET: f32 = 32.0;
 pub const CONTENT_TOP_INSET: f32 = 0.0;
 
 static ACTIVE_COLOR_SCHEME: AtomicU8 = AtomicU8::new(1);
+static ACTIVE_ACCESSIBILITY: AtomicU8 = AtomicU8::new(0);
 
 pub fn set_color_scheme(scheme: UiColorScheme) {
     ACTIVE_COLOR_SCHEME.store(
@@ -34,11 +42,35 @@ fn active_color_scheme() -> UiColorScheme {
     }
 }
 
+pub fn set_accessibility(accessibility: GlassAccessibility) {
+    let mut value = 0;
+    if accessibility.reduced_transparency {
+        value |= 1;
+    }
+    if accessibility.increased_contrast {
+        value |= 1 << 1;
+    }
+    if accessibility.reduced_motion {
+        value |= 1 << 2;
+    }
+    ACTIVE_ACCESSIBILITY.store(value, Ordering::Relaxed);
+}
+
+fn active_accessibility() -> GlassAccessibility {
+    let value = ACTIVE_ACCESSIBILITY.load(Ordering::Relaxed);
+    GlassAccessibility {
+        reduced_transparency: value & 1 != 0,
+        increased_contrast: value & (1 << 1) != 0,
+        reduced_motion: value & (1 << 2) != 0,
+    }
+}
+
 pub struct Renderer {
     inner: IcedRenderer,
     foreground: Option<IcedRenderer>,
     overlay: Option<IcedRenderer>,
     active_layer: RenderLayer,
+    interactions: Arc<Mutex<HashMap<GlassId, GlassInteraction>>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -60,13 +92,18 @@ impl Renderer {
         Self {
             inner: IcedRenderer::new(engine.clone(), default_font, default_text_size),
             foreground: Some(IcedRenderer::new(engine.clone(), default_font, default_text_size)),
-            overlay: Some(IcedRenderer::new(
-                engine,
-                default_font,
-                default_text_size,
-            )),
+            overlay: Some(IcedRenderer::new(engine, default_font, default_text_size)),
             active_layer: RenderLayer::Source,
+            interactions: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn glass_interaction(&self, id: GlassId) -> GlassInteraction {
+        self.interactions
+            .lock()
+            .ok()
+            .and_then(|interactions| interactions.get(&id).copied())
+            .unwrap_or_else(GlassInteraction::inactive)
     }
 
     fn active_mut(&mut self) -> &mut IcedRenderer {
@@ -102,6 +139,12 @@ impl liquid_glass::GlassForegroundRenderer for Renderer {
 
     fn end_glass_overlay(&mut self) {
         self.active_layer = RenderLayer::Source;
+    }
+
+    fn update_glass_interaction(&self, id: GlassId, interaction: GlassInteraction) {
+        if let Ok(mut interactions) = self.interactions.lock() {
+            interactions.insert(id, interaction);
+        }
     }
 }
 
@@ -346,6 +389,7 @@ impl iced::advanced::renderer::Headless for Renderer {
             foreground: None,
             overlay: None,
             active_layer: RenderLayer::Source,
+            interactions: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -449,16 +493,12 @@ impl graphics::Compositor for Compositor {
                 reason: graphics::error::Reason::RequestFailed(error.to_string()),
             })?;
         let capabilities = surface.get_capabilities(&adapter);
-        let format = capabilities
-            .formats
-            .iter()
-            .copied()
-            .find(wgpu::TextureFormat::is_srgb)
-            .or_else(|| capabilities.formats.first().copied())
-            .ok_or_else(|| graphics::Error::GraphicsAdapterNotFound {
+        let format = preferred_surface_format(&capabilities.formats).ok_or_else(|| {
+            graphics::Error::GraphicsAdapterNotFound {
                 backend: "wgpu",
                 reason: graphics::error::Reason::RequestFailed("surface has no formats".to_owned()),
-            })?;
+            }
+        })?;
         let alpha_mode = preferred_transparent_alpha_mode(&capabilities);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -558,6 +598,12 @@ impl graphics::Compositor for Compositor {
                 desired_maximum_frame_latency: 1,
             },
         );
+        if let Some(target) = self.native_backdrop {
+            liquid_glass_native::configure_extended_dynamic_range(
+                target,
+                self.format == wgpu::TextureFormat::Rgba16Float,
+            );
+        }
     }
 
     fn information(&self) -> graphics::compositor::Information {
@@ -589,6 +635,7 @@ impl graphics::Compositor for Compositor {
         if self.liquid.size() != size {
             self.liquid.resize(size).map_err(|_| graphics::compositor::SurfaceError::Other)?;
         }
+        self.liquid.set_accessibility(active_accessibility());
         // CGWindowListCreateImage is synchronous on macOS. Sampling it every
         // 50 ms made an otherwise GPU-smooth scroll periodically block the UI
         // thread. The desktop is visually stable enough for a 120 ms source
@@ -615,8 +662,7 @@ impl graphics::Compositor for Compositor {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: self.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::COPY_SRC,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             }));
             self.iced_source_size = size;
@@ -661,28 +707,38 @@ impl graphics::Compositor for Compositor {
         let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let color_scheme = active_color_scheme();
         let sidebar_medium = match color_scheme {
-            UiColorScheme::Light => [0.89, 0.90, 0.91, 1.0],
+            // Fallback only: the normal path blurs the captured desktop
+            // directly, while this neutral medium prevents a transparent
+            // startup frame from turning the gradient black.
+            UiColorScheme::Light => [0.84, 0.855, 0.87, 1.0],
             UiColorScheme::Dark => [0.21, 0.23, 0.27, 1.0],
+        };
+        let sidebar_tint = match color_scheme {
+            // These are linear-light values. In the sRGB screenshot they land
+            // near the Settings sidebar's 225–240 RGB range while retaining
+            // a small amount of the blurred desktop's cool variation.
+            UiColorScheme::Light => [0.90, 0.91, 0.92, 0.84],
+            UiColorScheme::Dark => [0.21, 0.23, 0.27, 0.76],
         };
         self.liquid.render_background_to_view(&source_view);
         let scale = viewport.scale_factor().max(1.0);
         let right_x = (232.0 * scale).round() as u32;
+        let sidebar_background = liquid_glass::SidebarBackgroundConfig::window_edges(
+            (64.0 * scale).round() as u32,
+            sidebar_tint,
+        );
+        let sidebar_region = sidebar_background.region(size.width, size.height, right_x, 0);
         // Above the search field the sidebar uses one fixed, strong blur.
         // Only the search field's own height is the fade band: it starts at
         // the field's top edge and reaches zero at its bottom edge. The
         // search field is composited afterward, above this entire treatment.
-        let sidebar_gradient_y = 0;
+        let sidebar_gradient_y = sidebar_region.1;
         let search_top_y = ((CONTENT_TOP_INSET + 10.0) * scale).round() as u32;
         let search_bottom_y = ((CONTENT_TOP_INSET + 46.0) * scale).round() as u32;
-        let sidebar_gradient_height = search_bottom_y.saturating_sub(sidebar_gradient_y);
-        // The sidebar is a flat, opaque medium. Seed it before Iced draws its
-        // transparent rows so every later blur sample has a real background
-        // instead of transparent black RGB from the window compositor.
-        self.liquid.render_solid_region_to_view(
-            &source_view,
-            (0, 0, right_x, size.height),
-            sidebar_medium,
-        );
+        let sidebar_gradient_height =
+            search_bottom_y.saturating_sub(sidebar_gradient_y).min(sidebar_region.3);
+        // Keep the content pane an opaque white surface. Only the sidebar is
+        // allowed to reveal the captured desktop through its frosted medium.
         self.liquid.render_solid_region_to_view(
             &source_view,
             (right_x, 0, size.width.saturating_sub(right_x), size.height),
@@ -697,17 +753,9 @@ impl graphics::Compositor for Compositor {
             .render_scene_to_view_with_source_and_blur_region(
                 &view,
                 source_texture,
-                (
-                    0,
-                    0,
-                    right_x,
-                    size.height,
-                ),
-                (64.0 * scale).round() as u32,
-                match color_scheme {
-                    UiColorScheme::Light => [0.89, 0.90, 0.91, 0.78],
-                    UiColorScheme::Dark => [0.21, 0.23, 0.27, 0.76],
-                },
+                sidebar_region,
+                sidebar_background.blur_radius,
+                sidebar_background.tint,
                 &scene,
                 self.started_at.elapsed().as_secs_f32(),
             )
@@ -727,20 +775,37 @@ impl graphics::Compositor for Compositor {
             // Keep the top region at a fixed radius of 128. Within the
             // search field bounds only the overlay opacity changes, ending
             // fully transparent at the field's lower edge.
-            self.liquid.render_vertical_blur_with_flat_top_to_output(
+            self.liquid.render_scroll_edge_to_output(
                 (0, sidebar_gradient_y, right_x, sidebar_gradient_height.max(1)),
                 search_top_y,
                 (128.0 * scale).round() as u32,
                 sidebar_medium,
+                liquid_glass::ScrollEdgeStyle::Soft,
             );
         }
-        let search_scene = search_scene_for_viewport(size, viewport.scale_factor(), color_scheme);
+        // Toolbar text is now in the foreground layer. Render the navigation
+        // material after that text and before the final overlay so it can
+        // actually refract the pixels below it while its chevrons stay sharp.
+        let navigation_scene = navigation_scene_for_viewport(
+            viewport.scale_factor(),
+            color_scheme,
+            renderer.glass_interaction(GlassId(12)),
+        );
         self.liquid
             .render_scene_over_output(
                 &view,
-                &search_scene,
+                &navigation_scene,
                 self.started_at.elapsed().as_secs_f32(),
             )
+            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        let search_scene = search_scene_for_viewport(
+            size,
+            viewport.scale_factor(),
+            color_scheme,
+            renderer.glass_interaction(GlassId(11)),
+        );
+        self.liquid
+            .render_scene_over_output(&view, &search_scene, self.started_at.elapsed().as_secs_f32())
             .map_err(|_| graphics::compositor::SurfaceError::Other)?;
         if let Some(overlay_texture) = self.iced_overlay.as_ref()
             && let Some(overlay) = renderer.overlay.as_mut()
@@ -784,6 +849,19 @@ fn map_surface_error(error: &wgpu::SurfaceError) -> graphics::compositor::Surfac
     }
 }
 
+fn preferred_surface_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu::TextureFormat> {
+    // A floating-point Surface maps to scRGB/EDR on Metal. Iced packs its
+    // colors in linear light, so ordinary UI stays at SDR paper white while
+    // glass highlights may exceed 1.0. Other backends keep the established
+    // sRGB path until their native HDR color-space negotiation is implemented.
+    #[cfg(target_os = "macos")]
+    if formats.contains(&wgpu::TextureFormat::Rgba16Float) {
+        return Some(wgpu::TextureFormat::Rgba16Float);
+    }
+
+    formats.iter().copied().find(wgpu::TextureFormat::is_srgb).or_else(|| formats.first().copied())
+}
+
 fn preferred_transparent_alpha_mode(
     capabilities: &wgpu::SurfaceCapabilities,
 ) -> wgpu::CompositeAlphaMode {
@@ -822,25 +900,37 @@ fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorSch
     let sidebar_width = 232.0;
     let content_x = sidebar_width;
     let content_width = (logical_width - content_x).max(1.0);
-    let content_y = CONTENT_TOP_INSET;
+    // The right-side toolbar is fused with the native titlebar, so its glass
+    // surface and controls start at the physical window top as well.
+    let content_y = 0.0;
     let theme = UiTheme::new(color_scheme);
     let mut scene = GlassScene::default();
 
-    let mut toolbar = GlassNode::new(
-        GlassId(10),
-        Rect::new(content_x, content_y, content_width, 56.0),
-    )
-    .shape(theme.glass_shape(GlassRole::Toolbar))
-    .material(theme.glass_material(GlassRole::Toolbar));
+    let mut toolbar =
+        GlassNode::new(GlassId(10), Rect::new(content_x, content_y, content_width, 56.0))
+            .shape(theme.glass_shape(GlassRole::Toolbar))
+            .material(theme.glass_material(GlassRole::Toolbar));
     toolbar.z_index = 10;
     scene.push(toolbar);
 
-    let mut navigation = GlassNode::new(
-        GlassId(12),
-        Rect::new(content_x + 8.0, content_y + 10.0, 72.0, 36.0),
-    )
-    .shape(theme.glass_shape(GlassRole::FloatingControl))
-    .material(theme.glass_material(GlassRole::FloatingControl));
+    scale_scene(&mut scene, scale_factor);
+    scene
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn navigation_scene_for_viewport(
+    scale_factor: f32,
+    color_scheme: UiColorScheme,
+    interaction: GlassInteraction,
+) -> GlassScene {
+    let scale_factor = scale_factor.max(1.0);
+    let content_x = 232.0;
+    let theme = UiTheme::new(color_scheme);
+    let mut scene = GlassScene::default();
+    let mut navigation = GlassNode::new(GlassId(12), Rect::new(content_x + 8.0, 10.0, 72.0, 36.0))
+        .shape(theme.glass_shape(GlassRole::FloatingControl))
+        .material(theme.glass_material(GlassRole::FloatingControl))
+        .interaction(interaction);
     navigation.z_index = 20;
     scene.push(navigation);
     scale_scene(&mut scene, scale_factor);
@@ -851,17 +941,16 @@ fn search_scene_for_viewport(
     size: GpuSize,
     scale_factor: f32,
     color_scheme: UiColorScheme,
+    interaction: GlassInteraction,
 ) -> GlassScene {
     let scale_factor = scale_factor.max(1.0);
     let content_y = CONTENT_TOP_INSET;
     let theme = UiTheme::new(color_scheme);
     let mut scene = GlassScene::default();
-    let mut search = GlassNode::new(
-        GlassId(11),
-        Rect::new(10.0, content_y + 10.0, 212.0, 36.0),
-    )
-    .shape(theme.glass_shape(GlassRole::InputField))
-    .material(theme.glass_material(GlassRole::InputField));
+    let mut search = GlassNode::new(GlassId(11), Rect::new(10.0, content_y + 10.0, 212.0, 36.0))
+        .shape(theme.glass_shape(GlassRole::SearchField))
+        .material(theme.glass_material(GlassRole::SearchField))
+        .interaction(interaction);
     search.z_index = 30;
     scene.push(search);
     scale_scene(&mut scene, scale_factor);
@@ -875,9 +964,47 @@ fn scale_scene(scene: &mut GlassScene, scale_factor: f32) {
         node.bounds.y *= scale_factor;
         node.bounds.width *= scale_factor;
         node.bounds.height *= scale_factor;
-        node.backdrop.bounds = node.bounds;
+        for fused_shape in &mut node.fused_shapes {
+            fused_shape.bounds.x *= scale_factor;
+            fused_shape.bounds.y *= scale_factor;
+            fused_shape.bounds.width *= scale_factor;
+            fused_shape.bounds.height *= scale_factor;
+        }
+        node.backdrop.bounds = node.visual_bounds();
         node.backdrop.padding *= scale_factor;
         node.backdrop.blur_radius *= scale_factor;
         node.material.blur.radius *= scale_factor;
+        node.material.shadow.expand *= scale_factor;
+        node.material.shadow.offset[0] *= scale_factor;
+        node.material.shadow.offset[1] *= scale_factor;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn surface_format_has_a_safe_fallback() {
+        assert_eq!(
+            preferred_surface_format(&[
+                wgpu::TextureFormat::Bgra8Unorm,
+                wgpu::TextureFormat::Bgra8UnormSrgb,
+            ]),
+            Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+        );
+        assert_eq!(preferred_surface_format(&[]), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_prefers_float_surface_for_edr() {
+        assert_eq!(
+            preferred_surface_format(&[
+                wgpu::TextureFormat::Bgra8UnormSrgb,
+                wgpu::TextureFormat::Rgba16Float,
+            ]),
+            Some(wgpu::TextureFormat::Rgba16Float),
+        );
     }
 }

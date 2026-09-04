@@ -20,16 +20,25 @@ use iced::{
     Background, Border, Color as IcedColor, Event, Length, Pixels, Rectangle, Shadow, Size, Vector,
     advanced::{self, Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget::Tree},
 };
-use liquid_glass_scene::{CornerCurve, GlassId, GlassMaterial, GlassNode, GlassShape, Rect};
+use liquid_glass_scene::{
+    CornerCurve, GlassId, GlassInteraction, GlassMaterial, GlassNode, GlassShape, GlassShapeLayer,
+    Rect,
+};
 
 /// Allows a compositor to route the visual contents of a glass surface into
 /// a separate foreground renderer.
 pub trait GlassForegroundRenderer {
-    fn begin_glass_foreground(&mut self);
-    fn end_glass_foreground(&mut self);
-    fn begin_glass_overlay(&mut self);
-    fn end_glass_overlay(&mut self);
+    fn begin_glass_foreground(&mut self) {}
+    fn end_glass_foreground(&mut self) {}
+    fn begin_glass_overlay(&mut self) {}
+    fn end_glass_overlay(&mut self) {}
+
+    /// Publishes interaction state for the compositor-owned node with `id`.
+    /// Renderers that do not own a Liquid Glass compositor may ignore it.
+    fn update_glass_interaction(&self, _id: GlassId, _interaction: GlassInteraction) {}
 }
+
+impl GlassForegroundRenderer for () {}
 
 /// Wraps a widget whose pixels belong above the glass composition pass.
 pub struct GlassForeground<'a, Message, Theme, Renderer> {
@@ -109,12 +118,7 @@ where
         renderer: &Renderer,
         operation: &mut dyn advanced::widget::Operation,
     ) {
-        self.content.as_widget_mut().operate(
-            &mut tree.children[0],
-            layout,
-            renderer,
-            operation,
-        );
+        self.content.as_widget_mut().operate(&mut tree.children[0], layout, renderer, operation);
     }
 
     fn update(
@@ -254,12 +258,7 @@ where
         renderer: &Renderer,
         operation: &mut dyn advanced::widget::Operation,
     ) {
-        self.content.as_widget_mut().operate(
-            &mut tree.children[0],
-            layout,
-            renderer,
-            operation,
-        );
+        self.content.as_widget_mut().operate(&mut tree.children[0], layout, renderer, operation);
     }
 
     fn update(
@@ -359,6 +358,12 @@ impl GlassContainer {
     }
 
     #[must_use]
+    pub fn fuse_shape(mut self, shape: GlassShapeLayer) -> Self {
+        self.node = self.node.fuse_shape(shape);
+        self
+    }
+
+    #[must_use]
     pub const fn chrome(mut self, chrome: GlassChrome) -> Self {
         self.chrome = chrome;
         self
@@ -383,26 +388,33 @@ impl GlassContainer {
     /// Returns a scene node using the final bounds computed by Iced layout.
     #[must_use]
     pub fn scene_node_for(&self, bounds: Rectangle) -> GlassNode {
-        GlassNode::new(self.node.id, Rect::new(bounds.x, bounds.y, bounds.width, bounds.height))
-            .shape(self.node.shape.clone())
-            .corner_curve(self.node.corner_curve)
-            .material(self.node.material)
+        let mut node = GlassNode::new(
+            self.node.id,
+            Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
+        )
+        .shape(self.node.shape.clone())
+        .corner_curve(self.node.corner_curve)
+        .material(self.node.material)
+        .interaction(self.node.interaction);
+        for fused_shape in &self.node.fused_shapes {
+            node = node.fuse_shape(fused_shape.clone());
+        }
+        node
     }
 
-    /// Runs the widget's Iced layout contract and converts the result into a
-    /// renderer-independent scene node.
+    /// Resolves this fixed-size widget into a renderer-independent scene node.
+    ///
+    /// `GlassContainer` exposes fixed bounds, so no concrete Iced renderer is
+    /// needed to resolve its layout. Keeping this bridge renderer-independent
+    /// also makes release builds work with Iced configurations that omit the
+    /// debug-only null renderer.
     #[must_use]
-    pub fn layout_scene_node(&mut self, viewport: Size) -> GlassNode {
-        let widget: &dyn Widget<(), (), ()> = self;
-        let mut tree = Tree::new(widget);
-        let limits = layout::Limits::new(Size::ZERO, viewport);
-        let layout = <Self as Widget<(), (), ()>>::layout(self, &mut tree, &(), &limits);
-        let size = layout.size();
+    pub fn layout_scene_node(&mut self, _viewport: Size) -> GlassNode {
         self.scene_node_for(Rectangle {
             x: self.node.bounds.x,
             y: self.node.bounds.y,
-            width: size.width,
-            height: size.height,
+            width: self.node.bounds.width,
+            height: self.node.bounds.height,
         })
     }
 
@@ -414,7 +426,7 @@ impl GlassContainer {
     where
         Message: 'static,
         Theme: 'static,
-        Renderer: advanced::Renderer + 'static,
+        Renderer: advanced::Renderer + GlassForegroundRenderer + 'static,
     {
         iced::Element::new(self)
     }
@@ -422,7 +434,7 @@ impl GlassContainer {
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for GlassContainer
 where
-    Renderer: advanced::Renderer,
+    Renderer: advanced::Renderer + GlassForegroundRenderer,
 {
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fixed(self.node.bounds.width), Length::Fixed(self.node.bounds.height))
@@ -456,9 +468,14 @@ where
             return;
         }
 
-        let tint = self.node.material.tint;
-        let fill =
-            if self.hovered { iced_color(self.chrome.hover_overlay) } else { iced_color(tint) };
+        // The compositor owns the material fill. Keeping the Iced-side base
+        // transparent prevents a tinted rectangle from being composited a
+        // second time on top of the shader result.
+        let fill = if self.hovered {
+            iced_color(self.chrome.hover_overlay)
+        } else {
+            IcedColor::TRANSPARENT
+        };
         let border_color =
             iced_color(if self.hovered { self.chrome.hover_border } else { self.chrome.border });
         let radius = shape_radius(&self.node);
@@ -484,12 +501,16 @@ where
         _event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _renderer: &Renderer,
+        renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
         let hovered = cursor.is_over(layout.bounds());
+        renderer.update_glass_interaction(
+            self.node.id,
+            interaction_for_cursor(layout.bounds(), cursor, hovered, false),
+        );
         if hovered != self.hovered {
             self.hovered = hovered;
             shell.request_redraw();
@@ -520,6 +541,26 @@ fn shape_radius(node: &GlassNode) -> f32 {
         GlassShape::Circle => node.bounds.width.min(node.bounds.height) * 0.5,
         GlassShape::Ellipse => node.bounds.width.min(node.bounds.height) * 0.25,
     }
+}
+
+fn interaction_for_cursor(
+    bounds: Rectangle,
+    cursor: mouse::Cursor,
+    hovered: bool,
+    pressed: bool,
+) -> GlassInteraction {
+    let pointer = cursor.position_over(bounds).map_or([0.5, 0.5], |position| {
+        [
+            ((position.x - bounds.x) / bounds.width.max(1.0)).clamp(0.0, 1.0),
+            ((position.y - bounds.y) / bounds.height.max(1.0)).clamp(0.0, 1.0),
+        ]
+    });
+    GlassInteraction::normalized(
+        pointer,
+        f32::from(u8::from(hovered)),
+        f32::from(u8::from(pressed)),
+        0.0,
+    )
 }
 
 /// Optional icon content for compact glass buttons.
@@ -603,7 +644,7 @@ impl GlassButton {
     where
         Message: Clone + 'static,
         Theme: 'static,
-        Renderer: advanced::Renderer + TextRenderer + 'static,
+        Renderer: advanced::Renderer + TextRenderer + GlassForegroundRenderer + 'static,
     {
         iced::Element::new(GlassButtonWidget {
             button: self,
@@ -624,7 +665,7 @@ struct GlassButtonWidget<Message> {
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for GlassButtonWidget<Message>
 where
     Message: Clone,
-    Renderer: advanced::Renderer + TextRenderer,
+    Renderer: advanced::Renderer + TextRenderer + GlassForegroundRenderer,
 {
     fn size(&self) -> Size<Length> {
         Size::new(
@@ -661,13 +702,12 @@ where
             return;
         }
 
-        let tint = self.button.node.material.tint;
         let fill = if self.pressed {
             iced_color(self.button.chrome.pressed_overlay)
         } else if self.hovered {
             iced_color(self.button.chrome.hover_overlay)
         } else {
-            iced_color(tint)
+            IcedColor::TRANSPARENT
         };
         renderer.fill_quad(
             renderer::Quad {
@@ -722,7 +762,7 @@ where
         event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _renderer: &Renderer,
+        renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
@@ -746,6 +786,11 @@ where
             }
             _ => {}
         }
+
+        renderer.update_glass_interaction(
+            self.button.node.id,
+            interaction_for_cursor(layout.bounds(), cursor, self.hovered, self.pressed),
+        );
 
         if was_hovered != self.hovered || was_pressed != self.pressed {
             shell.request_redraw();
@@ -876,8 +921,11 @@ impl<Message> GlassSegmentedControl<Message> {
     where
         Message: Clone + 'static,
         Theme: 'static,
-        Renderer:
-            advanced::Renderer + advanced::graphics::geometry::Renderer + TextRenderer + 'static,
+        Renderer: advanced::Renderer
+            + advanced::graphics::geometry::Renderer
+            + TextRenderer
+            + GlassForegroundRenderer
+            + 'static,
     {
         iced::Element::new(GlassSegmentedWidget { control: self, hovered: None, pressed: None })
     }
@@ -943,8 +991,11 @@ impl GlassNavigationControl {
     where
         Message: Clone + 'static,
         Theme: 'static,
-        Renderer:
-            advanced::Renderer + advanced::graphics::geometry::Renderer + TextRenderer + 'static,
+        Renderer: advanced::Renderer
+            + advanced::graphics::geometry::Renderer
+            + TextRenderer
+            + GlassForegroundRenderer
+            + 'static,
     {
         GlassSegmentedControl {
             node: self.node,
@@ -969,7 +1020,10 @@ struct GlassSegmentedWidget<Message> {
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for GlassSegmentedWidget<Message>
 where
     Message: Clone,
-    Renderer: advanced::Renderer + advanced::graphics::geometry::Renderer + TextRenderer,
+    Renderer: advanced::Renderer
+        + advanced::graphics::geometry::Renderer
+        + TextRenderer
+        + GlassForegroundRenderer,
 {
     fn size(&self) -> Size<Length> {
         Size::new(
@@ -1020,7 +1074,10 @@ where
                 },
                 snap: true,
             },
-            Background::Color(iced_color(self.control.node.material.tint)),
+            // The segmented control's material is rendered by the GPU
+            // compositor; the Iced widget only contributes interaction
+            // overlays and sharp foreground glyphs.
+            Background::Color(IcedColor::TRANSPARENT),
         );
 
         let segment_count = self.control.segments.len();
@@ -1078,7 +1135,7 @@ where
         event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _renderer: &Renderer,
+        renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
@@ -1106,6 +1163,16 @@ where
             }
             _ => {}
         }
+
+        renderer.update_glass_interaction(
+            self.control.node.id,
+            interaction_for_cursor(
+                layout.bounds(),
+                cursor,
+                self.hovered.is_some(),
+                self.pressed.is_some(),
+            ),
+        );
 
         if previous_hovered != self.hovered || previous_pressed != self.pressed {
             shell.request_redraw();

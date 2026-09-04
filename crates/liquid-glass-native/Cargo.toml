@@ -25,6 +25,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSWindow",
     "NSWorkspace",
     "objc2-core-graphics",
+    "objc2-quartz-core",
 ] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
     "CFCGTypes",
@@ -32,6 +33,7 @@ objc2-core-foundation = { version = "0.3.2", default-features = false, features 
     "CFURL",
 ] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "CGColorSpace",
     "CGContext",
     "CGImage",
     "CGPDFContext",
@@ -44,6 +46,11 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSString",
     "NSURL",
     "block2",
+] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+    "CALayer",
+    "CAMetalLayer",
+    "objc2-core-graphics",
 ] }
 
 # This crate is the intentionally isolated native FFI boundary. The rest of

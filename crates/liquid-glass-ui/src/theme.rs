@@ -1,7 +1,9 @@
 //! Semantic colors and glass materials shared by Iced integrations.
 
 use iced::{Color as IcedColor, Theme};
-use liquid_glass_scene::{Color as GlassColor, GlassMaterial, GlassShape, ShadowStyle};
+use liquid_glass_scene::{
+    Color as GlassColor, GlareStyle, GlassMaterial, GlassShape, GlassVariant, ShadowStyle,
+};
 
 /// The resolved light or dark tone used to render an application window.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -162,13 +164,18 @@ impl UiTheme {
     pub fn glass_material(self, role: GlassRole) -> GlassMaterial {
         let (blur_radius, tint, whiteness) = match (self.scheme, role) {
             (UiColorScheme::Light, GlassRole::Sidebar) => {
-                (32.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.18), 0.55)
+                // Settings uses a very broad, neutral frosted medium here:
+                // desktop color survives only as a soft low-frequency tint.
+                (48.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.22), 0.68)
             }
             (UiColorScheme::Light, GlassRole::Toolbar) => {
                 (8.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.04), 0.04)
             }
-            (UiColorScheme::Light, GlassRole::InputField | GlassRole::SearchField) => {
+            (UiColorScheme::Light, GlassRole::InputField) => {
                 (7.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.06), 0.14)
+            }
+            (UiColorScheme::Light, GlassRole::SearchField) => {
+                (5.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.12), 0.24)
             }
             (UiColorScheme::Light, GlassRole::FloatingControl) => {
                 // Navigation content is drawn inside this capsule. Keep its
@@ -181,8 +188,11 @@ impl UiTheme {
             (UiColorScheme::Dark, GlassRole::Toolbar) => {
                 (8.0, GlassColor::rgba(0.10, 0.13, 0.20, 0.08), 0.025)
             }
-            (UiColorScheme::Dark, GlassRole::InputField | GlassRole::SearchField) => {
+            (UiColorScheme::Dark, GlassRole::InputField) => {
                 (7.0, GlassColor::rgba(0.14, 0.18, 0.27, 0.09), 0.10)
+            }
+            (UiColorScheme::Dark, GlassRole::SearchField) => {
+                (5.0, GlassColor::rgba(0.14, 0.18, 0.27, 0.15), 0.18)
             }
             (UiColorScheme::Dark, GlassRole::FloatingControl) => {
                 (2.0, GlassColor::rgba(0.17, 0.22, 0.34, 0.10), 0.05)
@@ -190,6 +200,7 @@ impl UiTheme {
         };
 
         let mut material = GlassMaterial::clear();
+        material.variant = GlassVariant::Regular;
         material.blur.radius = blur_radius;
         material.tint = tint;
         material.whiteness = whiteness;
@@ -200,6 +211,37 @@ impl UiTheme {
         material.fresnel.range = 0.75;
         material.fresnel.hardness = 0.20;
         material.fresnel.strength = 0.20;
+        if role == GlassRole::SearchField {
+            // Give the floating search field the pronounced system-control
+            // treatment: brighter vertical specular rims from the material
+            // response, backed by the renderer's analytic SDF shadow pass.
+            material.refraction.strength = 0.82;
+            material.fresnel.range = 0.60;
+            material.fresnel.hardness = 0.20;
+            material.fresnel.strength = 0.50;
+            material.glare = GlareStyle {
+                range: 22.0,
+                hardness: 0.14,
+                convergence: 0.42,
+                opposite_factor: 0.84,
+                factor: 0.64,
+            };
+        }
+        if role == GlassRole::FloatingControl {
+            // Compact floating chrome uses the same thin clear-coat as the
+            // search field, but with slightly less contrast so icon strokes
+            // remain dominant over the material edge.
+            material.fresnel.range = 0.56;
+            material.fresnel.hardness = 0.22;
+            material.fresnel.strength = 0.46;
+            material.glare = GlareStyle {
+                range: 20.0,
+                hardness: 0.16,
+                convergence: 0.46,
+                opposite_factor: 0.84,
+                factor: 0.59,
+            };
+        }
         if role == GlassRole::Sidebar {
             // The sidebar is a broad system surface, not a floating optical
             // object. Keep only the Gaussian backdrop blur and neutral wash;
@@ -212,7 +254,7 @@ impl UiTheme {
         }
         material.opacity = match role {
             GlassRole::Sidebar => match self.scheme {
-                UiColorScheme::Light => 0.84,
+                UiColorScheme::Light => 0.88,
                 UiColorScheme::Dark => 0.76,
             },
             // Keep the neutral layer present, but leave enough of the
@@ -220,15 +262,16 @@ impl UiTheme {
             // desktop surface. The input remains the whitest control; the
             // navigation capsule is lighter and more transparent.
             GlassRole::Toolbar => 0.54,
-            GlassRole::InputField | GlassRole::SearchField => 0.64,
+            GlassRole::InputField => 0.64,
+            GlassRole::SearchField => 0.72,
             GlassRole::FloatingControl => 0.72,
         };
         material.shadow = match role {
             GlassRole::FloatingControl => ShadowStyle::elevated(),
-            GlassRole::Sidebar
-            | GlassRole::Toolbar
-            | GlassRole::InputField
-            | GlassRole::SearchField => ShadowStyle::subtle(),
+            GlassRole::SearchField => ShadowStyle::control(),
+            GlassRole::Sidebar | GlassRole::Toolbar | GlassRole::InputField => {
+                ShadowStyle::subtle()
+            }
         };
         material
     }
@@ -281,7 +324,8 @@ impl UiTheme {
         let (shadow_offset_y, shadow_blur) = match role {
             GlassRole::Sidebar => (1.0, 14.0),
             GlassRole::Toolbar => (2.0, 10.0),
-            GlassRole::InputField | GlassRole::SearchField => (3.0, 9.0),
+            GlassRole::InputField => (3.0, 9.0),
+            GlassRole::SearchField => (3.0, 12.0),
             GlassRole::FloatingControl => (4.0, 10.0),
         };
         GlassChrome {
@@ -369,6 +413,17 @@ mod tests {
         let theme = UiTheme::light();
 
         assert_eq!(theme.glass_shape(GlassRole::InputField), GlassShape::Capsule);
+    }
+
+    #[test]
+    fn search_field_uses_material_edge_light_and_sdf_shadow() {
+        let theme = UiTheme::light();
+        let search = theme.glass_material(GlassRole::SearchField);
+        let input = theme.glass_material(GlassRole::InputField);
+
+        assert!(search.shadow.factor > 0.0);
+        assert!(search.fresnel.strength > input.fresnel.strength);
+        assert!(search.glare.factor > input.glare.factor);
     }
 
     #[test]

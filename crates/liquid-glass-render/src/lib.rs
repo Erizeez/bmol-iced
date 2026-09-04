@@ -19,10 +19,21 @@ pub enum RenderPass {
     Downsample,
     BlurHorizontal,
     BlurVertical,
+    Shadow,
     Glass,
+    ScrollEdge,
     Foreground,
     Overlay,
     Present,
+}
+
+/// How a scroll edge transitions from blurred content to the sharp list.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScrollEdgeStyle {
+    /// Interpolates the blur over the edge region.
+    Soft,
+    /// Keeps the edge region fully blurred and ends it at a defined boundary.
+    Hard,
 }
 
 /// A declarative render graph for one frame.
@@ -41,7 +52,9 @@ impl RenderGraph {
                 RenderPass::Downsample,
                 RenderPass::BlurHorizontal,
                 RenderPass::BlurVertical,
+                RenderPass::Shadow,
                 RenderPass::Glass,
+                RenderPass::ScrollEdge,
                 RenderPass::Foreground,
                 RenderPass::Overlay,
                 RenderPass::Present,
@@ -131,5 +144,7 @@ mod tests {
         assert_eq!(graph.passes().last(), Some(&RenderPass::Present));
         assert!(graph.passes().contains(&RenderPass::BlurHorizontal));
         assert!(graph.passes().contains(&RenderPass::Glass));
+        assert!(graph.passes().contains(&RenderPass::Shadow));
+        assert!(graph.passes().contains(&RenderPass::ScrollEdge));
     }
 }

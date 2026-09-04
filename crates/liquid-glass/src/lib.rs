@@ -19,14 +19,17 @@ pub use geometry::{
 };
 pub use platform::{
     BackdropError, BackdropFrame, BackdropFrameError, BackdropRequest, BackdropSize,
-    BackdropSource, DesktopBackdropProvider, DisplayScale, WindowConfig,
+    BackdropSource, DesktopBackdropProvider, DisplayScale, SidebarBackgroundConfig,
+    SidebarBackgroundExtension, WindowConfig,
 };
 pub use render::{
-    GpuError, GpuRenderer, GpuSize, LiquidRenderer, RenderGraph, RenderPass, TexturePool,
+    GpuError, GpuRenderer, GpuSize, LiquidRenderer, RenderGraph, RenderPass, ScrollEdgeStyle,
+    TexturePool,
 };
 pub use scene::{
-    BackdropRegion, Color, CornerCurve, GlassId, GlassMaterial, GlassNode, GlassScene, GlassShape,
-    Rect, ShadowStyle,
+    AdaptiveStyle, BackdropRegion, Color, CornerCurve, GlareStyle, GlassAccessibility,
+    GlassEffectContainer, GlassEnvironment, GlassId, GlassInteraction, GlassMaterial, GlassNode,
+    GlassRenderOptions, GlassScene, GlassShape, GlassShapeLayer, GlassVariant, Rect, ShadowStyle,
 };
 pub use ui::{
     GlassButton, GlassButtonIcon, GlassChrome, GlassContainer, GlassForeground,

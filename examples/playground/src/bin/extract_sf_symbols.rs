@@ -162,19 +162,14 @@ fn extract(symbol: &str) -> Result<String, String> {
 /// Caps a PNG's larger dimension at `max_px` via `sips` (no upscaling).
 #[cfg(target_os = "macos")]
 fn limit_png_size(path: &std::path::Path, max_px: u32) {
-    let Ok(output) = std::process::Command::new("sips")
-        .args(["-g", "pixelWidth"])
-        .arg(path)
-        .output()
+    let Ok(output) =
+        std::process::Command::new("sips").args(["-g", "pixelWidth"]).arg(path).output()
     else {
         return;
     };
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let width: u32 = stdout
-        .split_whitespace()
-        .next_back()
-        .and_then(|token| token.parse().ok())
-        .unwrap_or(0);
+    let width: u32 =
+        stdout.split_whitespace().next_back().and_then(|token| token.parse().ok()).unwrap_or(0);
     if width > max_px {
         std::process::Command::new("sips")
             .args(["-Z", &max_px.to_string()])
@@ -421,8 +416,7 @@ mod svg {
                 }
             }
             // Fill/stroke/clip operators consume the operand stack.
-            if matches!(token, "f" | "f*" | "F" | "W" | "W*" | "n" | "m" | "l" | "c" | "h" | "re")
-            {
+            if matches!(token, "f" | "f*" | "F" | "W" | "W*" | "n" | "m" | "l" | "c" | "h" | "re") {
                 operands.clear();
             }
         }

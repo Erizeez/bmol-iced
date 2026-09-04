@@ -25,9 +25,7 @@ use liquid_glass_scene::{Color as GlassColor, GlassId, GlassMaterial, Rect};
 
 use crate::{
     GlassContainer, GlassForeground, GlassForegroundRenderer, GlassOverlay, GlassRole,
-    UiColorScheme, UiPalette,
-    UiTheme,
-    font,
+    UiColorScheme, UiPalette, UiTheme, font,
     icon::{UiIcon, UiIconAsset, icon as ui_icon},
 };
 
@@ -226,11 +224,7 @@ pub fn menu_style(theme: &Theme) -> iced::overlay::menu::Style {
         text_color: palette.text_primary,
         selected_text_color: Color::WHITE,
         selected_background: Background::Color(palette.accent),
-        shadow: Shadow {
-            color: palette.shadow,
-            offset: Vector::new(0.0, 4.0),
-            blur_radius: 16.0,
-        },
+        shadow: Shadow { color: palette.shadow, offset: Vector::new(0.0, 4.0), blur_radius: 16.0 },
     }
 }
 
@@ -243,16 +237,8 @@ pub fn scrollable_style(theme: &Theme, _status: scrollable::Status) -> scrollabl
     };
     scrollable::Style {
         container: container::Style::default(),
-        vertical_rail: scrollable::Rail {
-            background: None,
-            border: Border::default(),
-            scroller,
-        },
-        horizontal_rail: scrollable::Rail {
-            background: None,
-            border: Border::default(),
-            scroller,
-        },
+        vertical_rail: scrollable::Rail { background: None, border: Border::default(), scroller },
+        horizontal_rail: scrollable::Rail { background: None, border: Border::default(), scroller },
         gap: None,
         auto_scroll: scrollable::AutoScroll {
             background: Background::Color(palette.content_background),
@@ -273,16 +259,8 @@ pub fn sidebar_scrollable_style(theme: &Theme, _status: scrollable::Status) -> s
     };
     scrollable::Style {
         container: container::Style::default(),
-        vertical_rail: scrollable::Rail {
-            background: None,
-            border: Border::default(),
-            scroller,
-        },
-        horizontal_rail: scrollable::Rail {
-            background: None,
-            border: Border::default(),
-            scroller,
-        },
+        vertical_rail: scrollable::Rail { background: None, border: Border::default(), scroller },
+        horizontal_rail: scrollable::Rail { background: None, border: Border::default(), scroller },
         gap: None,
         auto_scroll: scrollable::AutoScroll {
             background: Background::Color(Color::TRANSPARENT),
@@ -309,9 +287,7 @@ pub fn progress_style(theme: &Theme) -> container::Style {
 pub fn icon<'a, Message, R>(icon: UiIcon, size: f32, color: Color) -> Element<'a, Message, Theme, R>
 where
     Message: 'a,
-    R: advanced_svg::Renderer
-        + advanced_image::Renderer<Handle = advanced_image::Handle>
-        + 'a,
+    R: advanced_svg::Renderer + advanced_image::Renderer<Handle = advanced_image::Handle> + 'a,
 {
     ui_icon(icon, size, color)
 }
@@ -352,9 +328,7 @@ pub fn icon_chip<'a, Message, R>(
 ) -> Element<'a, Message, Theme, R>
 where
     Message: 'a,
-    R: advanced_svg::Renderer
-        + advanced_image::Renderer<Handle = advanced_image::Handle>
-        + 'a,
+    R: advanced_svg::Renderer + advanced_image::Renderer<Handle = advanced_image::Handle> + 'a,
 {
     if matches!(icon.asset(), UiIconAsset::Png(_)) {
         return ui_icon(icon, size, Color::WHITE);
@@ -409,10 +383,7 @@ where
         }
         entries.push(entry);
     }
-    container(column(entries).width(Length::Fill))
-        .width(Length::Fill)
-        .style(group_surface)
-        .into()
+    container(column(entries).width(Length::Fill)).width(Length::Fill).style(group_surface).into()
 }
 
 /// A settings row: label (and optional detail text) on the left, any control
@@ -476,11 +447,9 @@ where
     if let Some(detail) = detail {
         texts = texts.push(text(detail).size(font::size::CAPTION).style(secondary_text));
     }
-    let row_content = container(
-        row![chip, texts, chevron].spacing(12).align_y(Alignment::Center),
-    )
-    .width(Length::Fill)
-    .padding([12, 14]);
+    let row_content = container(row![chip, texts, chevron].spacing(12).align_y(Alignment::Center))
+        .width(Length::Fill)
+        .padding([12, 14]);
     button(row_content)
         .on_press(on_press)
         .width(Length::Fill)
@@ -538,9 +507,8 @@ where
     Message: Clone + 'a,
     R: TextRenderer<Font = Font> + 'a,
 {
-    let picker = pick_list(options, selected, on_selected)
-        .style(pick_list_style)
-        .menu_style(menu_style);
+    let picker =
+        pick_list(options, selected, on_selected).style(pick_list_style).menu_style(menu_style);
     setting_row(label, detail, picker)
 }
 
@@ -599,7 +567,7 @@ where
     glass_surface(
         id,
         bounds,
-        GlassRole::InputField,
+        GlassRole::SearchField,
         scheme,
         Padding::new(2.0).left(10.0).right(10.0),
         None,
@@ -625,21 +593,20 @@ where
     R: CoreRenderer + GlassForegroundRenderer + 'static,
 {
     let theme = UiTheme::new(scheme);
+    // This node is a compositor surface. Its material fill must not be
+    // painted again by the Iced overlay, otherwise the shader's refracted
+    // result is covered by a visible white/color-tinted block.
     let mut overlay_material = GlassMaterial::clear();
-    overlay_material.tint = if role == GlassRole::FloatingControl {
-        GlassColor::rgba(1.0, 1.0, 1.0, 0.10)
-    } else {
-        GlassColor::transparent()
-    };
+    overlay_material.tint = GlassColor::transparent();
     let background = GlassContainer::new(id, bounds)
         .shape(theme.glass_shape(role))
         .material(overlay_material)
-        // Keep the Iced-side chrome visible for small interactive controls.
-        // Their fill remains transparent; the compositor still supplies the
-        // optical layer underneath it.
-        .chrome(theme.glass_chrome(role))
+        // The compositor owns the full visual surface, including its edge
+        // light and shadow. Keep the Iced fallback chrome transparent so it
+        // cannot duplicate or clip the expanded GPU effect region.
+        .chrome(theme.compositor_chrome(role))
         .into_element::<Message, Theme, R>();
-    let foreground: Element<'a, Message, Theme, R> = glass_overlay(container(content.into())
+    let content = container(content.into())
         .width(Length::Fixed(bounds.width))
         .height(Length::Fixed(bounds.height))
         .padding(padding)
@@ -649,7 +616,13 @@ where
                 Background::Color(palette(iced_theme).content_background.scale_alpha(alpha))
             });
             container::Style { background, ..container::Style::default() }
-        }));
+        });
+    // Toolbar copy belongs between the toolbar material and any controls
+    // whose material is explicitly rendered above it. Other controls remain
+    // in the final overlay so their labels cannot accidentally be sampled by
+    // unrelated glass surfaces.
+    let foreground: Element<'a, Message, Theme, R> =
+        if role == GlassRole::Toolbar { glass_foreground(content) } else { glass_overlay(content) };
     iced::widget::stack![background, foreground].into()
 }
 
@@ -703,11 +676,7 @@ pub fn link_row_style(theme: &Theme, status: button::Status) -> button::Style {
 }
 
 /// The sidebar selection pill: accent fill with white label, matching macOS.
-pub fn sidebar_item_style(
-    theme: &Theme,
-    status: button::Status,
-    selected: bool,
-) -> button::Style {
+pub fn sidebar_item_style(theme: &Theme, status: button::Status, selected: bool) -> button::Style {
     let palette = palette(theme);
     let accent_pressed = Color { a: 1.0, ..palette.accent };
     let (background, text_color) = match (selected, status) {

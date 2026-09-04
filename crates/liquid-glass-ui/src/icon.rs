@@ -106,9 +106,7 @@ impl UiIcon {
             Self::Bell => UiIconAsset::Svg(include_str!("../assets/icons/bell.svg")),
             Self::Privacy => UiIconAsset::Svg(include_str!("../assets/icons/privacy.svg")),
             Self::Search => UiIconAsset::Svg(include_str!("../assets/icons/search.svg")),
-            Self::ChevronLeft => {
-                UiIconAsset::Svg(include_str!("../assets/icons/chevron_left.svg"))
-            }
+            Self::ChevronLeft => UiIconAsset::Svg(include_str!("../assets/icons/chevron_left.svg")),
             Self::ChevronRight => {
                 UiIconAsset::Svg(include_str!("../assets/icons/chevron_right.svg"))
             }
@@ -193,18 +191,18 @@ impl UiIcon {
             Self::SystemLockScreen => {
                 UiIconAsset::Svg(include_str!("../assets/system-settings/21-lock-screen.svg"))
             }
-            Self::SystemPrivacySecurity => {
-                UiIconAsset::Png(include_bytes!("../assets/system-settings/22-privacy-security.png"))
-            }
+            Self::SystemPrivacySecurity => UiIconAsset::Png(include_bytes!(
+                "../assets/system-settings/22-privacy-security.png"
+            )),
             Self::SystemTouchId => {
                 UiIconAsset::Png(include_bytes!("../assets/system-settings/23-touch-id.png"))
             }
             Self::SystemUsersGroups => {
                 UiIconAsset::Svg(include_str!("../assets/system-settings/24-users-groups.svg"))
             }
-            Self::SystemInternetAccounts => {
-                UiIconAsset::Png(include_bytes!("../assets/system-settings/25-internet-accounts.png"))
-            }
+            Self::SystemInternetAccounts => UiIconAsset::Png(include_bytes!(
+                "../assets/system-settings/25-internet-accounts.png"
+            )),
             Self::SystemWallet => {
                 UiIconAsset::Png(include_bytes!("../assets/system-settings/26-wallet.png"))
             }

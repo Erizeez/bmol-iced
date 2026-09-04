@@ -243,6 +243,78 @@ impl WindowConfig {
     }
 }
 
+/// Controls how a sidebar's frosted background extends relative to the
+/// window. This is a semantic platform boundary so each backend can keep the
+/// sidebar background behind window chrome while sharing the same renderer
+/// contract.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SidebarBackgroundExtension {
+    /// Extend from the window edges, including the area behind window chrome.
+    #[default]
+    WindowEdges,
+    /// Keep the background inside the application's content bounds.
+    ContentBounds,
+}
+
+impl SidebarBackgroundExtension {
+    /// Resolves the physical-pixel region for a sidebar background.
+    #[must_use]
+    pub const fn region(
+        self,
+        window_width: u32,
+        window_height: u32,
+        sidebar_width: u32,
+        content_start_y: u32,
+    ) -> (u32, u32, u32, u32) {
+        let sidebar_width = if sidebar_width < window_width { sidebar_width } else { window_width };
+        match self {
+            Self::WindowEdges => (0, 0, sidebar_width, window_height),
+            Self::ContentBounds => (
+                0,
+                if content_start_y < window_height { content_start_y } else { window_height },
+                sidebar_width,
+                window_height.saturating_sub(content_start_y),
+            ),
+        }
+    }
+}
+
+/// Shared style contract for a frosted sidebar background.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SidebarBackgroundConfig {
+    pub extension: SidebarBackgroundExtension,
+    /// Blur radius in physical pixels.
+    pub blur_radius: u32,
+    /// Linear-light RGBA tint applied over the blurred backdrop.
+    pub tint: [f32; 4],
+}
+
+impl SidebarBackgroundConfig {
+    /// Creates a sidebar that extends behind the window's top chrome.
+    #[must_use]
+    pub const fn window_edges(blur_radius: u32, tint: [f32; 4]) -> Self {
+        Self { extension: SidebarBackgroundExtension::WindowEdges, blur_radius, tint }
+    }
+
+    /// Resolves the configured physical-pixel region.
+    #[must_use]
+    pub const fn region(
+        self,
+        window_width: u32,
+        window_height: u32,
+        sidebar_width: u32,
+        content_start_y: u32,
+    ) -> (u32, u32, u32, u32) {
+        self.extension.region(window_width, window_height, sidebar_width, content_start_y)
+    }
+}
+
+impl Default for SidebarBackgroundConfig {
+    fn default() -> Self {
+        Self::window_edges(64, [0.90, 0.91, 0.92, 0.84])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,5 +344,25 @@ mod tests {
             .expect_err("incomplete frames must be rejected");
 
         assert_eq!(error, BackdropFrameError::BufferLength { expected: 16, actual: 15 });
+    }
+
+    #[test]
+    fn sidebar_background_defaults_to_window_edges() {
+        let config = SidebarBackgroundConfig::default();
+
+        assert_eq!(config.extension, SidebarBackgroundExtension::WindowEdges);
+        assert_eq!(config.blur_radius, 64);
+        assert_eq!(config.region(1_000, 700, 232, 48), (0, 0, 232, 700));
+    }
+
+    #[test]
+    fn sidebar_background_region_is_clamped_to_the_window() {
+        let config = SidebarBackgroundConfig {
+            extension: SidebarBackgroundExtension::ContentBounds,
+            blur_radius: 32,
+            tint: [1.0; 4],
+        };
+
+        assert_eq!(config.region(100, 80, 140, 12), (0, 12, 100, 68));
     }
 }

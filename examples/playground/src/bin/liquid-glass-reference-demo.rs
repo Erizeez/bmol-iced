@@ -7,7 +7,8 @@
 use std::{sync::Arc, time::Instant};
 
 use liquid_glass::{
-    Color, GlassId, GlassMaterial, GlassNode, GlassScene, GlassShape, GpuRenderer, GpuSize, Rect,
+    Color, GlassId, GlassInteraction, GlassMaterial, GlassNode, GlassScene, GlassShape,
+    GpuRenderer, GpuSize, Rect,
 };
 use winit::{
     application::ApplicationHandler,
@@ -176,7 +177,18 @@ fn reference_scene(width: u32, height: u32, cursor: Option<(f32, f32)>) -> Glass
         ),
     )
     .shape(GlassShape::Superellipse { exponent: 5.0 })
-    .material(material);
+    .material(material)
+    .interaction(cursor.map_or(GlassInteraction::inactive(), |(x, y)| {
+        GlassInteraction::normalized(
+            [
+                (x - (shape_center_x - shape_width * 0.5)) / shape_width,
+                (height as f32 - y - (shape_center_y - shape_height * 0.5)) / shape_height,
+            ],
+            1.0,
+            0.0,
+            0.0,
+        )
+    }));
 
     let mut scene = GlassScene::default();
     scene.push(node);

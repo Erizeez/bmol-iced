@@ -41,6 +41,20 @@ pub fn refresh_desktop_blur(target: DesktopBlurTarget) {
     let _ = target;
 }
 
+/// Configures the native presentation layer for linear extended dynamic range.
+///
+/// WGPU selects a floating-point Metal drawable when the surface uses
+/// `Rgba16Float`. This hook supplies the matching extended-linear sRGB color
+/// space so values above SDR white remain EDR highlights instead of being
+/// interpreted through an unspecified display color space.
+pub fn configure_extended_dynamic_range(target: DesktopBlurTarget, enabled: bool) {
+    #[cfg(target_os = "macos")]
+    macos::configure_extended_dynamic_range(target, enabled);
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = (target, enabled);
+}
+
 /// Captures the pixels below a transparent application window for shader use.
 ///
 /// The native window compositor can blur the desktop behind transparent
@@ -183,17 +197,20 @@ mod macos {
     };
     use objc2_app_kit::{
         NSApplication, NSApplicationDidBecomeActiveNotification, NSBitmapImageFileType,
-        NSBitmapImageRep, NSImage, NSView, NSWindowDidChangeOcclusionStateNotification, NSWorkspace,
-        NSWorkspaceActiveSpaceDidChangeNotification, NSWorkspaceSessionDidBecomeActiveNotification,
+        NSBitmapImageRep, NSImage, NSView, NSWindowDidChangeOcclusionStateNotification,
+        NSWorkspace, NSWorkspaceActiveSpaceDidChangeNotification,
+        NSWorkspaceSessionDidBecomeActiveNotification,
     };
     use objc2_core_foundation::{
-        CGPoint, CGRect, CGSize, CFRetained, CFString, CFURL, CFURLPathStyle,
+        CFRetained, CFString, CFURL, CFURLPathStyle, CGPoint, CGRect, CGSize,
     };
     use objc2_core_graphics::{
-        CGContext, CGImage, CGPDFContextBeginPage, CGPDFContextClose, CGPDFContextCreateWithURL,
-        CGPDFContextEndPage,
+        CGColorSpace as NativeCGColorSpace, CGContext, CGImage, CGPDFContextBeginPage,
+        CGPDFContextClose, CGPDFContextCreateWithURL, CGPDFContextEndPage,
+        kCGColorSpaceExtendedLinearSRGB,
     };
     use objc2_foundation::{NSDictionary, NSNotification, NSNotificationCenter, NSString, NSURL};
+    use objc2_quartz_core::{CALayer, CAMetalLayer};
     use raw_window_handle::{AppKitWindowHandle, RawWindowHandle};
 
     use super::DesktopBlurTarget;
@@ -204,8 +221,7 @@ mod macos {
         display::CGDisplay,
         geometry::{CGPoint as LegacyCGPoint, CGRect as LegacyCGRect, CGSize as LegacyCGSize},
         window::{
-            create_image, kCGWindowImageBestResolution,
-            kCGWindowListOptionOnScreenBelowWindow,
+            create_image, kCGWindowImageBestResolution, kCGWindowListOptionOnScreenBelowWindow,
         },
     };
 
@@ -282,6 +298,47 @@ mod macos {
         // being a live NSWindow. `view.window()` supplies that live object.
         let window_number = window.windowNumber();
         reapply_window_blur(window_number);
+    }
+
+    pub fn configure_extended_dynamic_range(target: DesktopBlurTarget, enabled: bool) {
+        let Some(ns_view) = std::ptr::NonNull::new(target.0 as *mut c_void) else {
+            return;
+        };
+        // The target is the live winit NSView and this function is called by
+        // the compositor on AppKit's main thread immediately after Surface
+        // configuration.
+        let view: &NSView = unsafe { ns_view.cast().as_ref() };
+        let Some(root_layer) = view.layer() else {
+            return;
+        };
+        let color_space = if enabled {
+            unsafe { NativeCGColorSpace::with_name(Some(kCGColorSpaceExtendedLinearSRGB)) }
+        } else {
+            None
+        };
+        configure_metal_layer(&root_layer, enabled, color_space.as_deref());
+    }
+
+    fn configure_metal_layer(
+        layer: &CALayer,
+        enabled: bool,
+        color_space: Option<&NativeCGColorSpace>,
+    ) -> bool {
+        if let Some(metal_layer) = layer.downcast_ref::<CAMetalLayer>() {
+            metal_layer.setWantsExtendedDynamicRangeContent(enabled);
+            metal_layer.setColorspace(color_space);
+            return true;
+        }
+        let Some(sublayers) = (unsafe { layer.sublayers() }) else {
+            return false;
+        };
+        for index in 0..sublayers.count() {
+            let sublayer = sublayers.objectAtIndex(index);
+            if configure_metal_layer(&sublayer, enabled, color_space) {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn capture_desktop_backdrop(target: DesktopBlurTarget) -> Option<(u32, u32, Vec<u8>)> {
@@ -459,10 +516,8 @@ mod macos {
             return None;
         }
 
-        let path = std::env::temp_dir().join(format!(
-            "liquid-glass-glyph-{}.pdf",
-            std::process::id(),
-        ));
+        let path =
+            std::env::temp_dir().join(format!("liquid-glass-glyph-{}.pdf", std::process::id(),));
         let path_string = CFString::from_str(path.to_str()?);
         let url = CFURL::with_file_system_path(
             None,
@@ -499,10 +554,8 @@ mod macos {
         let _app = NSApplication::sharedApplication(main_thread);
 
         let symbol_name = NSString::from_str(name);
-        let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(
-            &symbol_name,
-            None,
-        )?;
+        let image =
+            NSImage::imageWithSystemSymbolName_accessibilityDescription(&symbol_name, None)?;
         let representations = image.representations();
         let rep = representations.firstObject()?;
 
@@ -511,8 +564,7 @@ mod macos {
         // PDF context emits pure path operators. This is the same entry point
         // the MIT-licensed `sfsym` tool uses, stable on macOS 13+.
         let key = NSString::from_str("_vectorGlyph");
-        let glyph: Option<Retained<AnyObject>> =
-            unsafe { msg_send![&*rep, valueForKey: &*key] };
+        let glyph: Option<Retained<AnyObject>> = unsafe { msg_send![&*rep, valueForKey: &*key] };
         let glyph = glyph?;
 
         render_glyph_pdf(&glyph, rep.size())
@@ -630,10 +682,8 @@ mod macos {
         if cg_image.is_null() {
             return None;
         }
-        let bitmap = NSBitmapImageRep::initWithCGImage(
-            NSBitmapImageRep::alloc(),
-            unsafe { &*cg_image },
-        );
+        let bitmap =
+            NSBitmapImageRep::initWithCGImage(NSBitmapImageRep::alloc(), unsafe { &*cg_image });
         let properties = NSDictionary::<NSString>::new();
         let data = unsafe {
             bitmap.representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
