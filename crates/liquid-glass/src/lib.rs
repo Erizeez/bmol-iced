@@ -23,8 +23,8 @@ pub use platform::{
     SidebarBackgroundExtension, WindowConfig,
 };
 pub use render::{
-    GpuError, GpuRenderer, GpuSize, LiquidRenderer, RenderGraph, RenderPass, ScrollEdgeStyle,
-    TexturePool,
+    GpuError, GpuFrameBatch, GpuRenderer, GpuSize, LiquidRenderer, RenderGraph, RenderPass,
+    ScrollEdgeStyle, TexturePool,
 };
 pub use scene::{
     AdaptiveStyle, BackdropRegion, Color, CornerCurve, GlareStyle, GlassAccessibility,

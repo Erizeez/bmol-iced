@@ -593,6 +593,10 @@ impl graphics::Compositor for Compositor {
                 height,
                 alpha_mode: self.alpha_mode,
                 view_formats: vec![],
+                // Keep interaction latency low. The compositor submits one
+                // complete frame at a time and avoids the earlier per-control
+                // command-buffer chain, so a second queued drawable is not
+                // needed to hide CPU submission bubbles.
                 desired_maximum_frame_latency: 1,
             },
         );
@@ -601,6 +605,9 @@ impl graphics::Compositor for Compositor {
                 target,
                 self.format == wgpu::TextureFormat::Rgba16Float,
             );
+            // Surface recreation can replace WindowServer state. Refresh once
+            // here; workspace notifications handle later compositor changes.
+            liquid_glass_native::refresh_desktop_blur(target);
         }
     }
 
@@ -620,12 +627,6 @@ impl graphics::Compositor for Compositor {
         background_color: iced::Color,
         on_pre_present: impl FnOnce(),
     ) -> Result<(), graphics::compositor::SurfaceError> {
-        // Stage Manager can rebuild the native window compositor between two
-        // redraws. Reapply the blur immediately around the transparent
-        // surface submission so no sharp desktop frame can slip through.
-        if let Some(target) = self.native_backdrop {
-            liquid_glass_native::refresh_desktop_blur(target);
-        }
         let frame = surface.get_current_texture().map_err(|error| map_surface_error(&error))?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let physical = viewport.physical_size();
@@ -702,7 +703,6 @@ impl graphics::Compositor for Compositor {
             UiColorScheme::Light => [0.90, 0.91, 0.92, 0.84],
             UiColorScheme::Dark => [0.21, 0.23, 0.27, 0.76],
         };
-        self.liquid.render_background_to_view(&source_view);
         let scale = viewport.scale_factor().max(1.0);
         let right_x = (232.0 * scale).round() as u32;
         let sidebar_region = (0, 0, right_x.min(size.width), size.height);
@@ -719,25 +719,27 @@ impl graphics::Compositor for Compositor {
             search_bottom_y.saturating_sub(sidebar_gradient_y).min(sidebar_region.3);
         // The sidebar remains translucent so the native compositor blur is
         // visible. The content pane stays an opaque white application surface.
-        self.liquid.render_solid_region_to_view(&source_view, sidebar_region, sidebar_tint);
-        self.liquid.render_solid_region_to_view(
-            &source_view,
-            (right_x, 0, size.width.saturating_sub(right_x), size.height),
-            [0.97, 0.97, 0.98, 1.0],
-        );
+        let mut source_batch =
+            self.liquid.begin_frame_batch(Some("liquid-glass Iced source preparation"));
+        source_batch
+            .render_background_to_view(&source_view)
+            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        source_batch
+            .render_solid_region_to_view(&source_view, sidebar_region, sidebar_tint)
+            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        source_batch
+            .render_solid_region_to_view(
+                &source_view,
+                (right_x, 0, size.width.saturating_sub(right_x), size.height),
+                [0.97, 0.97, 0.98, 1.0],
+            )
+            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        source_batch.submit();
         renderer.inner.present(None, frame.texture.format(), &source_view, viewport);
         if self.color_scheme != color_scheme {
             self.color_scheme = color_scheme;
         }
         let scene = scene_for_viewport(size, viewport.scale_factor(), color_scheme);
-        self.liquid
-            .render_scene_to_view_with_source(
-                &view,
-                source_texture,
-                &scene,
-                self.started_at.elapsed().as_secs_f32(),
-            )
-            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
         if let Some(foreground_texture) = self.iced_foreground.as_ref()
             && let Some(foreground) = renderer.foreground.as_mut()
         {
@@ -749,17 +751,6 @@ impl graphics::Compositor for Compositor {
                 &foreground_view,
                 viewport,
             );
-            self.liquid.composite_texture_to_output(foreground_texture);
-            // Keep the top region at a fixed radius of 128. Within the
-            // search field bounds only the overlay opacity changes, ending
-            // fully transparent at the field's lower edge.
-            self.liquid.render_scroll_edge_to_output(
-                (0, sidebar_gradient_y, right_x, sidebar_gradient_height.max(1)),
-                search_top_y,
-                (128.0 * scale).round() as u32,
-                sidebar_medium,
-                liquid_glass::ScrollEdgeStyle::Soft,
-            );
         }
         // Toolbar text is now in the foreground layer. Render the navigation
         // material after that text and before the final overlay so it can
@@ -769,22 +760,12 @@ impl graphics::Compositor for Compositor {
             color_scheme,
             renderer.glass_interaction(GlassId(12)),
         );
-        self.liquid
-            .render_scene_over_output(
-                &view,
-                &navigation_scene,
-                self.started_at.elapsed().as_secs_f32(),
-            )
-            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
         let search_scene = search_scene_for_viewport(
             size,
             viewport.scale_factor(),
             color_scheme,
             renderer.glass_interaction(GlassId(11)),
         );
-        self.liquid
-            .render_scene_over_output(&view, &search_scene, self.started_at.elapsed().as_secs_f32())
-            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
         if let Some(overlay_texture) = self.iced_overlay.as_ref()
             && let Some(overlay) = renderer.overlay.as_mut()
         {
@@ -795,13 +776,39 @@ impl graphics::Compositor for Compositor {
                 &overlay_view,
                 viewport,
             );
-            self.liquid.composite_texture_to_output(overlay_texture);
         }
-        self.liquid.copy_output_to_view(&view);
+        let time_seconds = self.started_at.elapsed().as_secs_f32();
+        let mut glass_batch = self.liquid.begin_frame_batch(Some("liquid-glass Iced composition"));
+        glass_batch
+            .render_scene_with_source(source_texture, &scene, time_seconds)
+            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        if let Some(foreground_texture) = self.iced_foreground.as_ref() {
+            glass_batch.composite_texture_to_output(foreground_texture);
+            // Keep the top region at a fixed radius of 128. Within the
+            // search field bounds only the overlay opacity changes, ending
+            // fully transparent at the field's lower edge.
+            glass_batch
+                .render_scroll_edge_to_output(
+                    (0, sidebar_gradient_y, right_x, sidebar_gradient_height.max(1)),
+                    search_top_y,
+                    (128.0 * scale).round() as u32,
+                    sidebar_medium,
+                    liquid_glass::ScrollEdgeStyle::Soft,
+                )
+                .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        }
+        glass_batch
+            .render_scene_over_output(&navigation_scene, time_seconds)
+            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        glass_batch
+            .render_scene_over_output(&search_scene, time_seconds)
+            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        if let Some(overlay_texture) = self.iced_overlay.as_ref() {
+            glass_batch.composite_texture_to_output(overlay_texture);
+        }
+        glass_batch.copy_output_to_view(&view);
+        glass_batch.submit();
         on_pre_present();
-        if let Some(target) = self.native_backdrop {
-            liquid_glass_native::refresh_desktop_blur(target);
-        }
         frame.present();
         let _ = background_color;
         Ok(())

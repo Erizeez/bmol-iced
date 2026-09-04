@@ -54,6 +54,7 @@ pub enum GpuError {
     AdapterUnavailable(String),
     DeviceUnavailable(String),
     SceneNodeLimitExceeded { limit: usize },
+    MultipleScrollEdgesInFrameBatch,
 }
 
 impl fmt::Display for GpuError {
@@ -72,6 +73,9 @@ impl fmt::Display for GpuError {
             }
             Self::SceneNodeLimitExceeded { limit } => {
                 write!(formatter, "scene contains more than {limit} glass nodes")
+            }
+            Self::MultipleScrollEdgesInFrameBatch => {
+                write!(formatter, "a GPU frame batch supports one scroll-edge blur")
             }
         }
     }
@@ -254,6 +258,175 @@ pub struct GpuRenderer {
     gradient_composite_pipeline: wgpu::RenderPipeline,
     transparent_background: bool,
     options: GlassRenderOptions,
+}
+
+/// A group of Liquid Glass operations encoded into one GPU command buffer.
+///
+/// The batch owns a monotonically increasing uniform slot cursor so separate
+/// glass groups can safely share one command buffer. Call [`Self::submit`] only
+/// after all operations for the phase have been encoded.
+#[derive(Debug)]
+pub struct GpuFrameBatch<'a> {
+    renderer: &'a GpuRenderer,
+    encoder: wgpu::CommandEncoder,
+    next_uniform_slot: usize,
+    scroll_edge_encoded: bool,
+}
+
+impl GpuFrameBatch<'_> {
+    fn reserve_uniform_slots(&mut self, count: usize) -> Result<usize, GpuError> {
+        let Some(next) = self.next_uniform_slot.checked_add(count) else {
+            return Err(GpuError::SceneNodeLimitExceeded { limit: MAX_GLASS_NODES });
+        };
+        if next > MAX_GLASS_NODES {
+            return Err(GpuError::SceneNodeLimitExceeded { limit: MAX_GLASS_NODES });
+        }
+        let first = self.next_uniform_slot;
+        self.next_uniform_slot = next;
+        Ok(first)
+    }
+
+    /// Encodes the renderer's current backdrop into an external target.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuError::SceneNodeLimitExceeded`] when the batch has no
+    /// dynamic-uniform slots left.
+    pub fn render_background_to_view(
+        &mut self,
+        output_view: &wgpu::TextureView,
+    ) -> Result<(), GpuError> {
+        let slot = self.reserve_uniform_slots(1)?;
+        self.renderer.encode_background_to_view(&mut self.encoder, output_view, slot);
+        Ok(())
+    }
+
+    /// Encodes one flat-color region without submitting the command buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuError::SceneNodeLimitExceeded`] when the batch has no
+    /// dynamic-uniform slots left.
+    pub fn render_solid_region_to_view(
+        &mut self,
+        output_view: &wgpu::TextureView,
+        region: (u32, u32, u32, u32),
+        color: [f32; 4],
+    ) -> Result<(), GpuError> {
+        let slot = self.reserve_uniform_slots(1)?;
+        self.renderer.encode_solid_region_to_view(
+            &mut self.encoder,
+            output_view,
+            region,
+            color,
+            slot,
+        );
+        Ok(())
+    }
+
+    /// Seeds the internal compositor from application content and evaluates a
+    /// glass scene. The result remains internal for subsequent batch stages.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuError::SceneNodeLimitExceeded`] when all scenes in the
+    /// batch exceed the renderer's dynamic-uniform capacity.
+    pub fn render_scene_with_source(
+        &mut self,
+        source_texture: &wgpu::Texture,
+        scene: &GlassScene,
+        time_seconds: f32,
+    ) -> Result<(), GpuError> {
+        let nodes = scene.nodes_in_render_order();
+        let first_slot = self.reserve_uniform_slots(nodes.len())?;
+        self.renderer.encode_nodes_to_view(
+            &mut self.encoder,
+            &self.renderer.targets.output_view,
+            &nodes,
+            time_seconds,
+            false,
+            Some(source_texture),
+            None,
+            scene.render_options().unwrap_or(self.renderer.options),
+            first_slot,
+        )
+    }
+
+    /// Evaluates a glass scene over the batch's current internal output.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuError::SceneNodeLimitExceeded`] when all scenes in the
+    /// batch exceed the renderer's dynamic-uniform capacity.
+    pub fn render_scene_over_output(
+        &mut self,
+        scene: &GlassScene,
+        time_seconds: f32,
+    ) -> Result<(), GpuError> {
+        let nodes = scene.nodes_in_render_order();
+        let first_slot = self.reserve_uniform_slots(nodes.len())?;
+        self.renderer.encode_nodes_to_view(
+            &mut self.encoder,
+            &self.renderer.targets.output_view,
+            &nodes,
+            time_seconds,
+            false,
+            Some(&self.renderer.targets.output),
+            None,
+            scene.render_options().unwrap_or(self.renderer.options),
+            first_slot,
+        )
+    }
+
+    /// Alpha-composites an application-owned foreground into the current
+    /// internal output.
+    pub fn composite_texture_to_output(&mut self, source_texture: &wgpu::Texture) {
+        self.renderer.encode_composite_texture_to_output(&mut self.encoder, source_texture);
+    }
+
+    /// Encodes a scroll-edge blur over the current internal output.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuError::MultipleScrollEdgesInFrameBatch`] if another
+    /// scroll-edge blur was already encoded in this batch.
+    pub fn render_scroll_edge_to_output(
+        &mut self,
+        region: (u32, u32, u32, u32),
+        fade_start_y: u32,
+        maximum_radius: u32,
+        fallback_color: [f32; 4],
+        style: ScrollEdgeStyle,
+    ) -> Result<(), GpuError> {
+        if self.scroll_edge_encoded {
+            return Err(GpuError::MultipleScrollEdgesInFrameBatch);
+        }
+        self.scroll_edge_encoded = true;
+        let fade_start_y = match style {
+            ScrollEdgeStyle::Soft => fade_start_y,
+            ScrollEdgeStyle::Hard => region.1.saturating_add(region.3),
+        };
+        self.renderer.encode_vertical_gradient_blur_to_output_with_source(
+            &mut self.encoder,
+            &self.renderer.targets.output,
+            region,
+            fade_start_y,
+            0,
+            maximum_radius,
+            fallback_color,
+        );
+        Ok(())
+    }
+
+    /// Encodes the current internal output into an external target.
+    pub fn copy_output_to_view(&mut self, output_view: &wgpu::TextureView) {
+        self.renderer.encode_copy_output_to_view(&mut self.encoder, output_view);
+    }
+
+    /// Submits every operation in this batch as one command buffer.
+    pub fn submit(self) {
+        self.renderer.queue.submit([self.encoder.finish()]);
+    }
 }
 
 impl fmt::Debug for GpuRenderer {
@@ -715,6 +888,21 @@ impl GpuRenderer {
         self.options
     }
 
+    /// Starts a command-buffer batch for one composition phase.
+    ///
+    /// A platform integration can keep framework-owned rendering submissions
+    /// between batches while collapsing all adjacent Liquid Glass operations
+    /// into a single queue submission.
+    #[must_use]
+    pub fn begin_frame_batch(&self, label: Option<&str>) -> GpuFrameBatch<'_> {
+        GpuFrameBatch {
+            renderer: self,
+            encoder: self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label }),
+            next_uniform_slot: 0,
+            scroll_edge_encoded: false,
+        }
+    }
+
     /// Uploads a platform-captured RGBA8 backdrop frame.
     ///
     /// The frame can contain padded rows (`stride > width * 4`). Padding is
@@ -1017,6 +1205,17 @@ impl GpuRenderer {
     /// the UI renderer draws its content over it. The resulting texture can
     /// then be passed to [`Self::render_scene_to_view_with_source`].
     pub fn render_background_to_view(&self, output_view: &wgpu::TextureView) {
+        let mut batch = self.begin_frame_batch(Some("liquid-glass source background batch"));
+        self.encode_background_to_view(&mut batch.encoder, output_view, 0);
+        batch.submit();
+    }
+
+    fn encode_background_to_view(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output_view: &wgpu::TextureView,
+        uniform_slot: usize,
+    ) {
         let node = GlassNode::new(
             liquid_glass_scene::GlassId(0),
             liquid_glass_scene::Rect::new(
@@ -1037,21 +1236,23 @@ impl GpuRenderer {
             self.options,
         );
         uniform.bg_type = if self.background_texture.is_some() { 11 } else { 12 };
-        self.queue.write_buffer(&self.glass_uniform, 0, bytemuck::bytes_of(&uniform));
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("liquid-glass external source background encoder"),
-        });
+        let uniform_offset = self.glass_uniform_stride
+            * u32::try_from(uniform_slot).expect("uniform slot fits in u32");
+        self.queue.write_buffer(
+            &self.glass_uniform,
+            u64::from(uniform_offset),
+            bytemuck::bytes_of(&uniform),
+        );
         encode_fullscreen_pass(
-            &mut encoder,
+            encoder,
             "liquid-glass external source background pass",
             output_view,
             &self.background_pipeline,
             &self.fullscreen_vertex_buffer,
             Some(&self.background_bind_group),
-            Some(0),
+            Some(uniform_offset),
             wgpu::Color::BLACK,
         );
-        self.queue.submit([encoder.finish()]);
     }
 
     /// Fills a physical-pixel region of an external view with a flat color.
@@ -1068,6 +1269,19 @@ impl GpuRenderer {
         region: (u32, u32, u32, u32),
         color: [f32; 4],
     ) {
+        let mut batch = self.begin_frame_batch(Some("liquid-glass solid region batch"));
+        self.encode_solid_region_to_view(&mut batch.encoder, output_view, region, color, 0);
+        batch.submit();
+    }
+
+    fn encode_solid_region_to_view(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output_view: &wgpu::TextureView,
+        region: (u32, u32, u32, u32),
+        color: [f32; 4],
+        uniform_slot: usize,
+    ) {
         let node = GlassNode::new(
             liquid_glass_scene::GlassId(0),
             liquid_glass_scene::Rect::new(
@@ -1081,22 +1295,24 @@ impl GpuRenderer {
             uniform_for_node(self.size, &node, 0.0, false, 1.0, false, false, self.options);
         uniform.bg_type = 3;
         uniform.tint = srgb_to_linear_rgba(color);
-        self.queue.write_buffer(&self.glass_uniform, 0, bytemuck::bytes_of(&uniform));
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("liquid-glass external solid region encoder"),
-        });
+        let uniform_offset = self.glass_uniform_stride
+            * u32::try_from(uniform_slot).expect("uniform slot fits in u32");
+        self.queue.write_buffer(
+            &self.glass_uniform,
+            u64::from(uniform_offset),
+            bytemuck::bytes_of(&uniform),
+        );
         encode_scissored_fullscreen_pass(
-            &mut encoder,
+            encoder,
             "liquid-glass external solid region pass",
             output_view,
             &self.background_pipeline,
             &self.fullscreen_vertex_buffer,
             Some(&self.background_bind_group),
-            Some(0),
+            Some(uniform_offset),
             wgpu::Color::TRANSPARENT,
             region,
         );
-        self.queue.submit([encoder.finish()]);
     }
 
     /// Alpha-composites an application-owned transparent layer over an
@@ -1134,6 +1350,16 @@ impl GpuRenderer {
     /// Alpha-composites an application-owned transparent layer into the
     /// renderer's ping-pong output before a later post-composition pass.
     pub fn composite_texture_to_output(&self, source_texture: &wgpu::Texture) {
+        let mut batch = self.begin_frame_batch(Some("liquid-glass foreground composite batch"));
+        batch.composite_texture_to_output(source_texture);
+        batch.submit();
+    }
+
+    fn encode_composite_texture_to_output(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        source_texture: &wgpu::Texture,
+    ) {
         let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = create_copy_bind_group(
             &self.device,
@@ -1141,22 +1367,28 @@ impl GpuRenderer {
             &source_view,
             &self.sampler,
         );
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("liquid-glass internal foreground composite encoder"),
-        });
         encode_fullscreen_load_pass(
-            &mut encoder,
+            encoder,
             "liquid-glass internal foreground composite pass",
             &self.targets.output_view,
             &self.foreground_copy_pipeline,
             &self.fullscreen_vertex_buffer,
             &bind_group,
         );
-        self.queue.submit([encoder.finish()]);
     }
 
     /// Copies the renderer's final internal output into an external target.
     pub fn copy_output_to_view(&self, output_view: &wgpu::TextureView) {
+        let mut batch = self.begin_frame_batch(Some("liquid-glass output copy batch"));
+        batch.copy_output_to_view(output_view);
+        batch.submit();
+    }
+
+    fn encode_copy_output_to_view(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output_view: &wgpu::TextureView,
+    ) {
         let source_view = self.targets.output.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = create_copy_bind_group(
             &self.device,
@@ -1164,18 +1396,14 @@ impl GpuRenderer {
             &source_view,
             &self.sampler,
         );
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("liquid-glass final output copy encoder"),
-        });
         encode_fullscreen_load_pass(
-            &mut encoder,
+            encoder,
             "liquid-glass final output copy pass",
             output_view,
             &self.copy_pipeline,
             &self.fullscreen_vertex_buffer,
             &bind_group,
         );
-        self.queue.submit([encoder.finish()]);
     }
 
     /// Applies a uniformly blurred overlay whose opacity fades from top to
@@ -1252,6 +1480,30 @@ impl GpuRenderer {
         source_texture: &wgpu::Texture,
         region: (u32, u32, u32, u32),
         fade_start_y: u32,
+        minimum_radius: u32,
+        maximum_radius: u32,
+        fallback_color: [f32; 4],
+    ) {
+        let mut batch = self.begin_frame_batch(Some("liquid-glass scroll edge batch"));
+        self.encode_vertical_gradient_blur_to_output_with_source(
+            &mut batch.encoder,
+            source_texture,
+            region,
+            fade_start_y,
+            minimum_radius,
+            maximum_radius,
+            fallback_color,
+        );
+        batch.submit();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn encode_vertical_gradient_blur_to_output_with_source(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        source_texture: &wgpu::Texture,
+        region: (u32, u32, u32, u32),
+        fade_start_y: u32,
         _minimum_radius: u32,
         maximum_radius: u32,
         fallback_color: [f32; 4],
@@ -1307,9 +1559,6 @@ impl GpuRenderer {
             &self.region_blur_uniform,
             &self.blur_weights,
         );
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("liquid-glass vertical gradient blur encoder"),
-        });
         let scissor = (x, y, width, height);
         // Preserve the unblurred output for the final mix. This prevents
         // transparent or not-yet-captured desktop pixels from turning into a
@@ -1318,23 +1567,19 @@ impl GpuRenderer {
             wgpu::TexelCopyTextureInfo {
                 texture: &self.targets.output,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
+                origin: wgpu::Origin3d { x, y, z: 0 },
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::TexelCopyTextureInfo {
                 texture: &self.targets.scene,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
+                origin: wgpu::Origin3d { x, y, z: 0 },
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::Extent3d {
-                width: self.size.width,
-                height: self.size.height,
-                depth_or_array_layers: 1,
-            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         );
         encode_scissored_fullscreen_pass(
-            &mut encoder,
+            encoder,
             "liquid-glass vertical gradient horizontal pass",
             &self.targets.blur_horizontal_view,
             &self.region_blur_horizontal_pipeline,
@@ -1345,7 +1590,7 @@ impl GpuRenderer {
             scissor,
         );
         encode_scissored_fullscreen_pass(
-            &mut encoder,
+            encoder,
             "liquid-glass vertical gradient vertical pass",
             &self.targets.blur_vertical_view,
             &self.region_blur_vertical_pipeline,
@@ -1356,7 +1601,7 @@ impl GpuRenderer {
             scissor,
         );
         encode_scissored_fullscreen_pass(
-            &mut encoder,
+            encoder,
             "liquid-glass vertical gradient composite pass",
             &self.targets.output_view,
             &self.gradient_composite_pipeline,
@@ -1366,7 +1611,6 @@ impl GpuRenderer {
             wgpu::Color::TRANSPARENT,
             scissor,
         );
-        self.queue.submit([encoder.finish()]);
     }
 
     /// Renders a scene directly to a configured `wgpu` `SurfaceTexture`.
@@ -1400,13 +1644,48 @@ impl GpuRenderer {
         simple_blur: Option<SimpleBlurRegion>,
         options: GlassRenderOptions,
     ) -> Result<(), GpuError> {
-        if nodes.len() > MAX_GLASS_NODES {
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("liquid-glass frame encoder"),
+        });
+        self.encode_nodes_to_view(
+            &mut encoder,
+            output_view,
+            nodes,
+            time_seconds,
+            copy_to_external_view,
+            source_texture,
+            simple_blur,
+            options,
+            0,
+        )?;
+        self.queue.submit([encoder.finish()]);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    fn encode_nodes_to_view(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output_view: &wgpu::TextureView,
+        nodes: &[&GlassNode],
+        time_seconds: f32,
+        copy_to_external_view: bool,
+        source_texture: Option<&wgpu::Texture>,
+        simple_blur: Option<SimpleBlurRegion>,
+        options: GlassRenderOptions,
+        first_uniform_slot: usize,
+    ) -> Result<(), GpuError> {
+        let Some(uniform_slot_end) = first_uniform_slot.checked_add(nodes.len()) else {
+            return Err(GpuError::SceneNodeLimitExceeded { limit: MAX_GLASS_NODES });
+        };
+        if uniform_slot_end > MAX_GLASS_NODES {
             return Err(GpuError::SceneNodeLimitExceeded { limit: MAX_GLASS_NODES });
         }
 
         for (index, node) in nodes.iter().enumerate() {
+            let uniform_slot = first_uniform_slot + index;
             let offset = u64::from(self.glass_uniform_stride)
-                * u64::try_from(index).expect("scene node index fits in u64");
+                * u64::try_from(uniform_slot).expect("scene node index fits in u64");
             let uniform = uniform_for_node(
                 self.size,
                 node,
@@ -1419,9 +1698,6 @@ impl GpuRenderer {
             );
             self.queue.write_buffer(&self.glass_uniform, offset, bytemuck::bytes_of(&uniform));
         }
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("liquid-glass frame encoder"),
-        });
         if let Some(source_texture) = source_texture {
             encoder.copy_texture_to_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -1444,7 +1720,7 @@ impl GpuRenderer {
             );
         } else {
             encode_fullscreen_pass(
-                &mut encoder,
+                encoder,
                 "liquid-glass scene pass",
                 &self.targets.scene_view,
                 &self.background_pipeline,
@@ -1513,7 +1789,7 @@ impl GpuRenderer {
                     },
                 );
                 encode_scissored_fullscreen_pass(
-                    &mut encoder,
+                    encoder,
                     "liquid-glass bounded blur horizontal pass",
                     &self.targets.blur_horizontal_view,
                     &self.region_blur_horizontal_pipeline,
@@ -1524,7 +1800,7 @@ impl GpuRenderer {
                     (x, y, width, height),
                 );
                 encode_scissored_fullscreen_pass(
-                    &mut encoder,
+                    encoder,
                     "liquid-glass bounded blur vertical pass",
                     &self.targets.blur_vertical_view,
                     &self.region_blur_vertical_pipeline,
@@ -1535,7 +1811,7 @@ impl GpuRenderer {
                     (x, y, width, height),
                 );
                 encode_scissored_fullscreen_pass(
-                    &mut encoder,
+                    encoder,
                     "liquid-glass flat blur tint pass",
                     &self.targets.output_view,
                     &self.flat_blur_pipeline,
@@ -1549,6 +1825,7 @@ impl GpuRenderer {
             }
         }
         for (index, _) in nodes.iter().enumerate() {
+            let uniform_slot = first_uniform_slot + index;
             let blur_radius = blur_radius_for_node(nodes[index], options);
             // The shape remains bounded by the node's SDF, but the draw pass
             // must extend beyond it so cast shadows and edge light are not
@@ -1559,9 +1836,9 @@ impl GpuRenderer {
             let Some(blur_region) = node_render_region(nodes[index], self.size, blur_radius) else {
                 continue;
             };
-            let uniform_offset =
-                self.glass_uniform_stride * u32::try_from(index).expect("node index fits in u32");
-            let weight_offset = (MAX_BLUR_RADIUS + 1) * index * std::mem::size_of::<f32>();
+            let uniform_offset = self.glass_uniform_stride
+                * u32::try_from(uniform_slot).expect("node index fits in u32");
+            let weight_offset = (MAX_BLUR_RADIUS + 1) * uniform_slot * std::mem::size_of::<f32>();
             let blur_uniform = BlurUniform {
                 resolution: gpu_size_as_f32(self.size),
                 radius: blur_radius,
@@ -1628,7 +1905,7 @@ impl GpuRenderer {
                 },
             );
             encode_scissored_fullscreen_pass(
-                &mut encoder,
+                encoder,
                 "liquid-glass hierarchical horizontal blur pass",
                 &self.targets.blur_horizontal_view,
                 &self.blur_horizontal_pipeline,
@@ -1639,7 +1916,7 @@ impl GpuRenderer {
                 blur_region,
             );
             encode_scissored_fullscreen_pass(
-                &mut encoder,
+                encoder,
                 "liquid-glass hierarchical vertical blur pass",
                 &self.targets.blur_vertical_view,
                 &self.blur_vertical_pipeline,
@@ -1654,7 +1931,7 @@ impl GpuRenderer {
             // and bleed it back into the material as an artificial inner
             // dark band.
             encode_glass_node_pass(
-                &mut encoder,
+                encoder,
                 source_view,
                 &self.glass_pipeline,
                 glass_bind_group,
@@ -1667,7 +1944,7 @@ impl GpuRenderer {
             // backdrop blur and refraction inputs, so it cannot look like a
             // second translucent surface inside the control.
             encode_glass_node_pass(
-                &mut encoder,
+                encoder,
                 destination_view,
                 &self.shadow_pipeline,
                 shadow_bind_group,
@@ -1704,7 +1981,7 @@ impl GpuRenderer {
         }
         if copy_to_external_view {
             encode_fullscreen_pass(
-                &mut encoder,
+                encoder,
                 "liquid-glass present copy pass",
                 output_view,
                 &self.copy_pipeline,
@@ -1714,7 +1991,6 @@ impl GpuRenderer {
                 wgpu::Color::BLACK,
             );
         }
-        self.queue.submit([encoder.finish()]);
         Ok(())
     }
 
@@ -3001,6 +3277,66 @@ mod tests {
         renderer.resize(GpuSize::new(65, 33)).expect("resize blur targets");
         renderer.render_scene(&scene, 0.0).expect("render multiple glass nodes after resize");
         assert_eq!(renderer.size(), GpuSize::new(65, 33));
+    }
+
+    #[test]
+    fn frame_batch_encodes_multiple_glass_groups_with_one_submission() {
+        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let renderer = GpuRenderer::from_device(device, queue, GpuSize::new(96, 64));
+        let source = renderer.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("batched renderer test source"),
+            size: wgpu::Extent3d { width: 96, height: 64, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEFAULT_OUTPUT_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let source_view = source.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut source_batch = renderer.begin_frame_batch(Some("batched source test"));
+        source_batch.render_background_to_view(&source_view).expect("background slot fits");
+        source_batch
+            .render_solid_region_to_view(&source_view, (0, 0, 48, 64), [0.8, 0.8, 0.8, 0.8])
+            .expect("solid slot fits");
+        source_batch.submit();
+
+        let mut back = GlassScene::default();
+        back.push(
+            GlassNode::new(GlassId(20), Rect::new(8.0, 8.0, 40.0, 28.0))
+                .material(GlassMaterial::regular()),
+        );
+        let mut front = GlassScene::default();
+        front.push(
+            GlassNode::new(GlassId(21), Rect::new(48.0, 24.0, 40.0, 28.0))
+                .material(GlassMaterial::interactive()),
+        );
+        let mut glass_batch = renderer.begin_frame_batch(Some("batched glass test"));
+        glass_batch.render_scene_with_source(&source, &back, 0.0).expect("first glass group fits");
+        glass_batch.render_scene_over_output(&front, 0.0).expect("second glass group fits");
+        glass_batch
+            .render_scroll_edge_to_output(
+                (0, 0, 48, 16),
+                8,
+                4,
+                [0.8, 0.8, 0.8, 0.8],
+                ScrollEdgeStyle::Soft,
+            )
+            .expect("one scroll edge fits");
+        assert_eq!(
+            glass_batch.render_scroll_edge_to_output(
+                (0, 16, 48, 16),
+                24,
+                4,
+                [0.8, 0.8, 0.8, 0.8],
+                ScrollEdgeStyle::Soft,
+            ),
+            Err(GpuError::MultipleScrollEdgesInFrameBatch)
+        );
+        glass_batch.copy_output_to_view(&source_view);
+        glass_batch.submit();
     }
 
     #[test]

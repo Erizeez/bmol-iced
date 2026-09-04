@@ -9,7 +9,7 @@ use liquid_glass_scene::{GlassScene, Rect};
 
 mod gpu;
 
-pub use gpu::{GpuError, GpuRenderer, GpuSize};
+pub use gpu::{GpuError, GpuFrameBatch, GpuRenderer, GpuSize};
 
 /// Passes in the Liquid Glass composition pipeline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

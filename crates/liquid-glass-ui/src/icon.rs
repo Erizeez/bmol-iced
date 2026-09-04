@@ -6,6 +6,8 @@
 //! are monochrome paths recolored through iced's svg style color filter;
 //! raster assets keep their baked-in colors.
 
+use std::{cell::RefCell, collections::HashMap};
+
 use iced::{
     Color, Element, Length, Theme,
     advanced::{image as advanced_image, svg as advanced_svg},
@@ -13,6 +15,14 @@ use iced::{
 };
 
 use iced::advanced::image::Handle as ImageHandle;
+
+thread_local! {
+    /// `iced::image::Handle::from_bytes` deliberately assigns a fresh ID.
+    /// Recreating it from an embedded PNG during every declarative `view()`
+    /// update defeats the GPU atlas cache and eventually blocks its worker
+    /// queue. Retain one handle per icon on the UI thread instead.
+    static RASTER_HANDLES: RefCell<HashMap<UiIcon, ImageHandle>> = RefCell::new(HashMap::new());
+}
 
 /// A system icon available to UI components.
 ///
@@ -231,6 +241,12 @@ impl UiIcon {
     }
 }
 
+fn raster_handle(icon: UiIcon, bytes: &'static [u8]) -> ImageHandle {
+    RASTER_HANDLES.with_borrow_mut(|handles| {
+        handles.entry(icon).or_insert_with(|| ImageHandle::from_bytes(bytes)).clone()
+    })
+}
+
 /// Renders a [`UiIcon`] as an `Element` laid out at `size` points square.
 ///
 /// Vector icons are tinted to `color`; raster assets keep their baked-in
@@ -271,7 +287,7 @@ where
             .height(Length::Fixed(size))
             .style(move |_theme, _status| svg::Style { color: Some(color) })
             .into(),
-        UiIconAsset::Png(bytes) => image(ImageHandle::from_bytes(bytes))
+        UiIconAsset::Png(bytes) => image(raster_handle(icon, bytes))
             .width(Length::Fixed(size))
             .height(Length::Fixed(size))
             .into(),
@@ -330,5 +346,17 @@ mod tests {
             };
             assert!(bytes.starts_with(b"\x89PNG"), "{icon:?} is not a PNG");
         }
+    }
+
+    #[test]
+    fn raster_icons_reuse_a_stable_iced_handle() {
+        let UiIconAsset::Png(bytes) = UiIcon::SystemGeneral.asset() else {
+            panic!("SystemGeneral should be a raster icon");
+        };
+
+        let first = raster_handle(UiIcon::SystemGeneral, bytes);
+        let second = raster_handle(UiIcon::SystemGeneral, bytes);
+
+        assert_eq!(first.id(), second.id());
     }
 }
