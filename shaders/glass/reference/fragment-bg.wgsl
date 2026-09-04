@@ -242,6 +242,10 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
   // Cast shadows are composited per node in fragment-main. Keeping this
   // pass unshadowed prevents the first node's uniform from affecting every
   // other node in a multi-surface scene.
-  let backgroundAlpha = select(1.0, 0.0, u.u_bgType == 12);
+  // Solid-color regions may also be translucent native-backdrop materials.
+  // Preserve their requested alpha so WindowServer can composite its live
+  // blur underneath instead of receiving an opaque grey rectangle.
+  let opaqueOrTintAlpha = select(1.0, clamp(u.u_tint.a, 0.0, 1.0), u.u_bgType == 3);
+  let backgroundAlpha = select(opaqueOrTintAlpha, 0.0, u.u_bgType == 12);
   return vec4f(bgColor, backgroundAlpha);
 }

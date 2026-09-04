@@ -5,7 +5,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU8, Ordering},
     },
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
@@ -21,6 +21,10 @@ mod background;
 pub const CONTENT_TOP_INSET: f32 = 32.0;
 #[cfg(not(target_os = "macos"))]
 pub const CONTENT_TOP_INSET: f32 = 0.0;
+
+/// Native System Settings uses AppKit's large search-field control size.
+pub const SIDEBAR_SEARCH_TOP_MARGIN: f32 = 10.0;
+pub const SIDEBAR_SEARCH_HEIGHT: f32 = 28.0;
 
 static ACTIVE_COLOR_SCHEME: AtomicU8 = AtomicU8::new(1);
 static ACTIVE_ACCESSIBILITY: AtomicU8 = AtomicU8::new(0);
@@ -424,7 +428,6 @@ pub struct Compositor {
     iced_overlay: Option<wgpu::Texture>,
     iced_overlay_size: GpuSize,
     native_backdrop: Option<liquid_glass_native::DesktopBlurTarget>,
-    last_backdrop_capture: Instant,
     color_scheme: UiColorScheme,
     started_at: Instant,
 }
@@ -516,16 +519,12 @@ impl graphics::Compositor for Compositor {
             GpuSize::new(1, 1),
             format,
         );
-        // The window owns the real desktop backdrop. The renderer writes
-        // transparent pixels outside glass surfaces. Non-macOS builds may add
-        // a deterministic wallpaper source below; macOS waits for a real
-        // desktop capture instead of inventing a misaligned backdrop.
+        // The window owns the real desktop backdrop. On macOS, WindowServer
+        // continuously updates and blurs it behind transparent pixels; it is
+        // deliberately not copied into the custom glass renderer.
         liquid.set_transparent_background(true);
-        // On macOS the native compositor already owns the real desktop
-        // backdrop. Do not put a bundled wallpaper into the shader when
-        // Screen Recording permission is unavailable: that creates a second,
-        // visibly misaligned desktop behind the glass. Other platforms keep
-        // the deterministic wallpaper source for the demo.
+        // Other platforms keep the deterministic wallpaper source for the
+        // demo because they do not have the macOS compositor backdrop.
         #[cfg(not(target_os = "macos"))]
         {
             let (fallback, fallback_ratio) =
@@ -557,7 +556,6 @@ impl graphics::Compositor for Compositor {
             iced_overlay: None,
             iced_overlay_size: GpuSize::new(0, 0),
             native_backdrop,
-            last_backdrop_capture: Instant::now() - Duration::from_secs(1),
             color_scheme: active_color_scheme(),
             started_at: Instant::now(),
         })
@@ -636,20 +634,6 @@ impl graphics::Compositor for Compositor {
             self.liquid.resize(size).map_err(|_| graphics::compositor::SurfaceError::Other)?;
         }
         self.liquid.set_accessibility(active_accessibility());
-        // CGWindowListCreateImage is synchronous on macOS. Sampling it every
-        // 50 ms made an otherwise GPU-smooth scroll periodically block the UI
-        // thread. The desktop is visually stable enough for a 120 ms source
-        // cadence while the UI itself can continue presenting at display rate.
-        if self.last_backdrop_capture.elapsed() >= Duration::from_millis(120) {
-            if let Some(target) = self.native_backdrop
-                && let Some((width, height, rgba8)) =
-                    liquid_glass_native::capture_desktop_backdrop(target)
-            {
-                let stride = width.saturating_mul(4);
-                let _ = self.liquid.set_background_rgba8(width, height, stride, &rgba8);
-            }
-            self.last_backdrop_capture = Instant::now();
-        }
         if self.iced_source_size != size {
             self.iced_source = Some(self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("liquid-glass Iced source texture"),
@@ -707,38 +691,35 @@ impl graphics::Compositor for Compositor {
         let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let color_scheme = active_color_scheme();
         let sidebar_medium = match color_scheme {
-            // Fallback only: the normal path blurs the captured desktop
-            // directly, while this neutral medium prevents a transparent
-            // startup frame from turning the gradient black.
-            UiColorScheme::Light => [0.84, 0.855, 0.87, 1.0],
-            UiColorScheme::Dark => [0.21, 0.23, 0.27, 1.0],
+            // This neutral medium is also the fallback for sparse transparent
+            // pixels while the top scroll-edge blur is filtering list content.
+            UiColorScheme::Light => [0.84, 0.855, 0.87, 0.84],
+            UiColorScheme::Dark => [0.21, 0.23, 0.27, 0.76],
         };
         let sidebar_tint = match color_scheme {
-            // These are linear-light values. In the sRGB screenshot they land
-            // near the Settings sidebar's 225–240 RGB range while retaining
-            // a small amount of the blurred desktop's cool variation.
+            // WindowServer supplies the continuously updated blur underneath;
+            // this is only the translucent grey material laid over it.
             UiColorScheme::Light => [0.90, 0.91, 0.92, 0.84],
             UiColorScheme::Dark => [0.21, 0.23, 0.27, 0.76],
         };
         self.liquid.render_background_to_view(&source_view);
         let scale = viewport.scale_factor().max(1.0);
         let right_x = (232.0 * scale).round() as u32;
-        let sidebar_background = liquid_glass::SidebarBackgroundConfig::window_edges(
-            (64.0 * scale).round() as u32,
-            sidebar_tint,
-        );
-        let sidebar_region = sidebar_background.region(size.width, size.height, right_x, 0);
+        let sidebar_region = (0, 0, right_x.min(size.width), size.height);
         // Above the search field the sidebar uses one fixed, strong blur.
         // Only the search field's own height is the fade band: it starts at
         // the field's top edge and reaches zero at its bottom edge. The
         // search field is composited afterward, above this entire treatment.
         let sidebar_gradient_y = sidebar_region.1;
-        let search_top_y = ((CONTENT_TOP_INSET + 10.0) * scale).round() as u32;
-        let search_bottom_y = ((CONTENT_TOP_INSET + 46.0) * scale).round() as u32;
+        let search_top_y = ((CONTENT_TOP_INSET + SIDEBAR_SEARCH_TOP_MARGIN) * scale).round() as u32;
+        let search_bottom_y =
+            ((CONTENT_TOP_INSET + SIDEBAR_SEARCH_TOP_MARGIN + SIDEBAR_SEARCH_HEIGHT) * scale)
+                .round() as u32;
         let sidebar_gradient_height =
             search_bottom_y.saturating_sub(sidebar_gradient_y).min(sidebar_region.3);
-        // Keep the content pane an opaque white surface. Only the sidebar is
-        // allowed to reveal the captured desktop through its frosted medium.
+        // The sidebar remains translucent so the native compositor blur is
+        // visible. The content pane stays an opaque white application surface.
+        self.liquid.render_solid_region_to_view(&source_view, sidebar_region, sidebar_tint);
         self.liquid.render_solid_region_to_view(
             &source_view,
             (right_x, 0, size.width.saturating_sub(right_x), size.height),
@@ -750,12 +731,9 @@ impl graphics::Compositor for Compositor {
         }
         let scene = scene_for_viewport(size, viewport.scale_factor(), color_scheme);
         self.liquid
-            .render_scene_to_view_with_source_and_blur_region(
+            .render_scene_to_view_with_source(
                 &view,
                 source_texture,
-                sidebar_region,
-                sidebar_background.blur_radius,
-                sidebar_background.tint,
                 &scene,
                 self.started_at.elapsed().as_secs_f32(),
             )
@@ -947,10 +925,13 @@ fn search_scene_for_viewport(
     let content_y = CONTENT_TOP_INSET;
     let theme = UiTheme::new(color_scheme);
     let mut scene = GlassScene::default();
-    let mut search = GlassNode::new(GlassId(11), Rect::new(10.0, content_y + 10.0, 212.0, 36.0))
-        .shape(theme.glass_shape(GlassRole::SearchField))
-        .material(theme.glass_material(GlassRole::SearchField))
-        .interaction(interaction);
+    let mut search = GlassNode::new(
+        GlassId(11),
+        Rect::new(10.0, content_y + SIDEBAR_SEARCH_TOP_MARGIN, 212.0, SIDEBAR_SEARCH_HEIGHT),
+    )
+    .shape(theme.glass_shape(GlassRole::SearchField))
+    .material(theme.glass_material(GlassRole::SearchField))
+    .interaction(interaction);
     search.z_index = 30;
     scene.push(search);
     scale_scene(&mut scene, scale_factor);

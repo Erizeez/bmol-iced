@@ -1,22 +1,28 @@
-//! Minimal visual port of the liquid-glass-studio reference composition.
+//! Unmodified liquid-glass-studio rendering baseline.
 //!
-//! The reference effect is intentionally one glass node: its shader combines
-//! a circle and a rounded rectangle with smooth-min, then applies refraction,
-//! dispersion, Fresnel, glare, blur, and shadow to the merged SDF boundary.
+//! This executable runs the shaders and four-pass graph from source revision
+//! d13c3e5 directly. Project-specific enhancements belong in the separate
+//! comparison demo and must not enter this baseline.
 
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
-use liquid_glass::{
-    Color, GlassId, GlassInteraction, GlassMaterial, GlassNode, GlassScene, GlassShape,
-    GpuRenderer, GpuSize, Rect,
-};
+use liquid_glass::GpuSize;
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalSize, Size},
     event::WindowEvent,
     event_loop::{ActiveEventLoop, EventLoop},
-    window::{Window, WindowAttributes, WindowId},
+    window::{Window, WindowId},
 };
+
+#[path = "../upstream_renderer.rs"]
+#[allow(dead_code)]
+mod upstream_renderer;
+
+use upstream_renderer::UpstreamRenderer;
+
+const WIDTH: u32 = 640;
+const HEIGHT: u32 = 640;
 
 struct Playground {
     window: Option<Arc<Window>>,
@@ -26,9 +32,8 @@ struct Playground {
 struct WindowState {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
-    renderer: GpuRenderer,
-    scene: GlassScene,
-    started_at: Instant,
+    renderer: UpstreamRenderer,
+    pointer: [f32; 2],
 }
 
 impl Playground {
@@ -41,9 +46,9 @@ impl Playground {
             return;
         }
 
-        let attributes: WindowAttributes = Window::default_attributes()
-            .with_title("Liquid Glass Reference Fusion")
-            .with_inner_size(Size::Physical(PhysicalSize::new(960, 640)));
+        let attributes = Window::default_attributes()
+            .with_title("Liquid Glass Studio d13c3e5 — Unmodified Baseline")
+            .with_inner_size(Size::Physical(PhysicalSize::new(WIDTH, HEIGHT)));
         let window = Arc::new(event_loop.create_window(attributes).expect("create window"));
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window.clone()).expect("create wgpu surface");
@@ -54,8 +59,8 @@ impl Playground {
         }))
         .expect("find a compatible GPU adapter");
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("liquid-glass reference demo device"),
-            ..Default::default()
+            label: Some("upstream liquid-glass baseline device"),
+            ..wgpu::DeviceDescriptor::default()
         }))
         .expect("create GPU device");
 
@@ -66,19 +71,11 @@ impl Playground {
         config.format = preferred_surface_format(&surface.get_capabilities(&adapter));
         surface.configure(&device, &config);
 
-        let background = background::reference_grid_texture(&device, &queue);
-        let mut renderer = GpuRenderer::from_device_with_format(
-            device,
-            queue,
-            GpuSize::new(config.width, config.height),
-            config.format,
-        );
-        renderer.set_background_texture(background.0, background.1);
-        let scene = reference_scene(config.width, config.height, None);
-
+        let render_size = GpuSize::new(config.width, config.height);
+        let renderer = UpstreamRenderer::new(device, queue, render_size, config.format);
+        let pointer = default_pointer(render_size);
         self.window = Some(window);
-        self.state =
-            Some(WindowState { surface, config, renderer, scene, started_at: Instant::now() });
+        self.state = Some(WindowState { surface, config, renderer, pointer });
     }
 }
 
@@ -103,9 +100,13 @@ impl ApplicationHandler for Playground {
             WindowEvent::Resized(size) => state.resize(size),
             WindowEvent::CursorMoved { position, .. } => {
                 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-                let cursor = (position.x as f32, state.config.height as f32 - position.y as f32);
-                state.scene =
-                    reference_scene(state.config.width, state.config.height, Some(cursor));
+                let x = position.x as f32;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+                let y = state.config.height as f32 - position.y as f32;
+                state.pointer = [
+                    x.clamp(0.0, state.config.width as f32),
+                    y.clamp(0.0, state.config.height as f32),
+                ];
             }
             WindowEvent::RedrawRequested => state.render(),
             _ => {}
@@ -126,73 +127,23 @@ impl WindowState {
         }
         self.config.width = size.width;
         self.config.height = size.height;
-        self.renderer.resize(GpuSize::new(size.width, size.height)).expect("resize GPU targets");
         self.surface.configure(self.renderer.device(), &self.config);
-        self.scene = reference_scene(size.width, size.height, None);
+        let render_size = GpuSize::new(size.width, size.height);
+        self.renderer.resize(render_size);
+        self.pointer = default_pointer(render_size);
     }
 
     fn render(&mut self) {
         let Ok(frame) = self.surface.get_current_texture() else { return };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.renderer
-            .render_scene_to_view(&view, &self.scene, self.started_at.elapsed().as_secs_f32())
-            .expect("render reference fusion");
+        self.renderer.render_to_view(self.pointer, &view);
         frame.present();
     }
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn reference_scene(width: u32, height: u32, cursor: Option<(f32, f32)>) -> GlassScene {
-    // The source demo places its 100px-radius circle at the canvas center and
-    // moves the rounded rectangle with the pointer. The initial overlap keeps
-    // the comparison deterministic, while pointer movement exposes the same
-    // fused / separated states as the source.
-    let circle_x = width as f32 * 0.5;
-    let circle_y = height as f32 * 0.5;
-    let shape_width = 220.0;
-    let shape_height = 220.0;
-    let (shape_center_x, shape_center_y) = cursor.unwrap_or((circle_x + 185.0, circle_y));
-
-    let mut material = GlassMaterial::clear();
-    material.blur.radius = 1.0;
-    material.tint = Color::transparent();
-    material.merge_rate = 0.05;
-    material.show_shape1 = true;
-    material.refraction.thickness = 0.20;
-    material.refraction.index = 1.40;
-    material.dispersion.strength = 0.07;
-    material.fresnel.range = 0.75;
-    material.fresnel.hardness = 0.20;
-    material.fresnel.strength = 0.20;
-    material.opacity = 1.0;
-    material.shadow.factor = 0.25;
-
-    let node = GlassNode::new(
-        GlassId(1),
-        Rect::new(
-            shape_center_x - shape_width * 0.5,
-            height as f32 - shape_center_y - shape_height * 0.5,
-            shape_width,
-            shape_height,
-        ),
-    )
-    .shape(GlassShape::Superellipse { exponent: 5.0 })
-    .material(material)
-    .interaction(cursor.map_or(GlassInteraction::inactive(), |(x, y)| {
-        GlassInteraction::normalized(
-            [
-                (x - (shape_center_x - shape_width * 0.5)) / shape_width,
-                (height as f32 - y - (shape_center_y - shape_height * 0.5)) / shape_height,
-            ],
-            1.0,
-            0.0,
-            0.0,
-        )
-    }));
-
-    let mut scene = GlassScene::default();
-    scene.push(node);
-    scene
+fn default_pointer(size: GpuSize) -> [f32; 2] {
+    [size.width as f32 * 0.5 + 170.0, size.height as f32 * 0.5]
 }
 
 fn preferred_surface_format(capabilities: &wgpu::SurfaceCapabilities) -> wgpu::TextureFormat {
@@ -203,9 +154,6 @@ fn preferred_surface_format(capabilities: &wgpu::SurfaceCapabilities) -> wgpu::T
         .find(wgpu::TextureFormat::is_srgb)
         .unwrap_or(capabilities.formats[0])
 }
-
-#[path = "../background.rs"]
-mod background;
 
 fn main() {
     let event_loop = EventLoop::new().expect("create event loop");

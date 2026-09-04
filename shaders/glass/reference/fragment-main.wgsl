@@ -279,6 +279,20 @@ fn getNormal(p1: vec2f, p2: vec2f, p: vec2f) -> vec2f {
   return safeNormalize(grad);
 }
 
+// Preserve the source renderer's optical normal scale for its Snell-law
+// displacement. The normalized surface normal above is appropriate for the
+// physical interface lighting, but replacing this tuned gradient with a unit
+// vector reduced edge displacement from tens of pixels to only a few pixels
+// and removed the characteristic liquid-lens response.
+fn sourceOpticalNormal(p1: vec2f, p2: vec2f, p: vec2f) -> vec2f {
+  let h = vec2f(1.0, 1.0);
+  let grad = vec2f(
+    mainSDF(p1, p2, p + vec2f(h.x, 0.0)) - mainSDF(p1, p2, p - vec2f(h.x, 0.0)),
+    mainSDF(p1, p2, p + vec2f(0.0, h.y)) - mainSDF(p1, p2, p - vec2f(0.0, h.y)),
+  ) / (2.0 * h);
+  return grad * 1.414213562 * 1000.0;
+}
+
 fn safeNormalize(v: vec2f) -> vec2f {
   let len = length(v);
   if (len < 1e-8) {
@@ -655,22 +669,70 @@ fn fs_main(@builtin(position) frag_coord: vec4f, @location(0) v_uv: vec2f) -> @l
       outColor = sampleBlurred(v_uv, vec2f(0.0));
       outColor = mix(outColor, vec4f(u.u_tint.r, u.u_tint.g, u.u_tint.b, 1.0), adaptiveTintAlpha * 0.8);
     } else {
-      let profile = surfaceProfile(merged, p1, p2, pixel);
-      let bodyNormal = refractionBodyNormal(merged, p1, p2, pixel);
-      let refractiveScale = (1.0 - 1.0 / max(u.u_refFactor, 1.0001))
-        * u.u_refThickness * u.u_refStrength * 0.68 * u.u_dpr;
-      let refractionPixels = -bodyNormal.xy / max(bodyNormal.z, 0.28) * refractiveScale;
-      let refOffset = vec2f(
-        refractionPixels.x / u.u_resolution.x,
-        -refractionPixels.y / u.u_resolution.y,
+      // Start from the source repository's liquid optical base. Its nonlinear
+      // Snell profile creates the strong magnifying fold at the contour; the
+      // enhanced environment interface is layered on only after transmission.
+      let insideDistance = -merged * u_resolution1x.y;
+      let incidenceRatio = 1.0 - insideDistance / u.u_refThickness;
+      let thetaI = safeAsin(pow(incidenceRatio, 2.0));
+      let thetaT = safeAsin(1.0 / max(u.u_refFactor, 1.0001) * sin(thetaI));
+      var edgeFactor = -tan(thetaT - thetaI);
+      if (insideDistance >= u.u_refThickness) {
+        edgeFactor = 0.0;
+      }
+
+      let opticalNormal = sourceOpticalNormal(p1, p2, pixel);
+      let refOffset = -opticalNormal
+        * edgeFactor
+        * 0.05
+        * u.u_refStrength
+        * u.u_dpr
+        * vec2f(
+          u.u_resolution.y / (u_resolution1x.x * u.u_dpr),
+          -1.0,
+        );
+      var blurMixRate = clamp(insideDistance / u.u_refThickness, 0.0, 1.0);
+      if (featureEnabled(FEATURE_EDGE_BLUR)) {
+        blurMixRate = 1.0;
+      }
+      let refracted = getTextureDispersion(
+        v_uv,
+        blurMixRate,
+        refOffset,
+        u.u_refDispersion,
       );
-      // Keep the secondary material blur on the narrow coating only. The
-      // broad body normal must preserve enough glyph/icon structure for its
-      // displacement to remain visible over an already-frosted sidebar.
-      var blurMixRate = profile.rim;
-      if (featureEnabled(FEATURE_EDGE_BLUR)) { blurMixRate = 1.0; }
-      let refracted = getTextureDispersion(v_uv, blurMixRate, refOffset, u.u_refDispersion);
       outColor = mix(refracted, vec4f(u.u_tint.rgb, 1.0), adaptiveTintAlpha * 0.8);
+
+      // Retain the source Fresnel shoulder underneath the new fixed-light
+      // coating. This is the soft luminous transition that visually connects
+      // the refracted body to the outer material edge.
+      let fresnelFactor = clamp(
+        pow(
+          1.0
+            + merged * u_resolution1x.y / 1500.0
+              * pow(500.0 / u.u_refFresnelRange, 2.0)
+            + u.u_refFresnelHardness,
+          5.0,
+        ),
+        0.0,
+        1.0,
+      );
+      var fresnelTintLCH = RGB_TO_LCH(
+        mix(vec3f(1.0), u.u_tint.rgb, adaptiveTintAlpha * 0.5),
+      );
+      fresnelTintLCH.x = clamp(
+        fresnelTintLCH.x + 20.0 * fresnelFactor * u.u_refFresnelFactor,
+        0.0,
+        100.0,
+      );
+      outColor = mix(
+        outColor,
+        vec4f(LCH_TO_RGB(fresnelTintLCH), 1.0),
+        fresnelFactor
+          * u.u_refFresnelFactor
+          * 0.7
+          * length(opticalNormal),
+      );
     }
   } else {
     outColor = textureSampleLevel(u_bg, u_sampler, v_uv, 0.0);

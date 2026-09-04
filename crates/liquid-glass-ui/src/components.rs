@@ -530,7 +530,10 @@ where
     button(
         row![
             icon_chip(icon, chip_color, 22.0),
-            text(label).size(font::size::BODY).style(label_style),
+            text(label)
+                .size(font::size::BODY)
+                .font(font::ui_font(iced::font::Weight::Semibold))
+                .style(label_style),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -559,6 +562,7 @@ where
         text_input("Search", value)
             .on_input(on_input)
             .width(Length::Fill)
+            .size(font::size::BODY)
             .padding([4, 0])
             .style(search_input_style),
     ]

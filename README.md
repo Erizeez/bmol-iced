@@ -21,15 +21,30 @@ Iced UI → Liquid Scene → Liquid Compositor → wgpu → Metal / Vulkan / DX1
 
 `liquid-glass-render` 已包含真实 `wgpu` compositor：参考项目的背景 Pass、full-resolution horizontal/vertical Gaussian blur、连续超椭圆角 SDF、折射、色散、Fresnel、glare、tint/whiteness 合成，以及按 `z_index` 绘制多个玻璃节点。圆角矩形默认使用 exponent 5 的 continuous curve，也可显式切换为 circular 或自定义 exponent；胶囊则使用 `liquid-glass-geometry` 从 Kyant0/Capsule 移植的 G2 profile，只保留两端外侧圆弧，并以曲率连续的三次 Bézier 肩部接入水平边。算法会随宽高比在正圆和完整胶囊之间渐进。`whiteness` 独立表达中性白覆盖量，使输入框可以在保留主题 tint 的同时比按钮更白；`ShadowStyle` 则将玻璃的边缘光学效果与有意的层级投影分开控制。`liquid-glass-ui` 提供 Iced layout 到 `GlassNode` 的桥接；原生 playground 会使用这份布局结果驱动 compositor。透明窗口现在可以通过 `BackdropFrame` / `DesktopBackdropProvider` 描述和注入真实桌面帧，`set_background_rgba8` 会把它接入完整 shader 链路；具体的 macOS、Windows、Wayland 采集实现仍需按平台权限和窗口排除策略接入。
 
-运行来源算法的最小融合基准：
+运行锁定在来源仓库 `d13c3e5` 的原始融合基准：
 
 ```bash
 cargo run -p liquid-glass-playground --bin liquid-glass-reference-demo
 ```
 
-这个基准只绘制一个玻璃节点，复现来源仓库的 `smin(circle, roundedRect)`
-融合，以及融合边界上的折射、色散、Fresnel、高光、模糊和阴影；它与设置页
-demo 的多节点层级合成分开，用于判断基础液态玻璃光学效果是否正确。
+这个入口直接编译 `liquid-glass-studio/` 中的原始 WGSL，并保持其 uniform
+默认值与背景、横向模糊、纵向模糊、玻璃四 Pass 顺序；项目增强不得进入这条
+基准渲染路径。
+
+并排比较原始算法与当前增强渲染器：
+
+```bash
+cargo run -p liquid-glass-playground --bin liquid-glass-comparison-demo
+```
+
+比较窗口左侧固定为原始 `d13c3e5`，右侧为当前增强版。两侧接收相同的画布
+尺寸、形状、指针位置和共同材质参数，用于直接识别算法差异；任意一侧移动
+鼠标都以所在半屏的局部坐标同步驱动两侧。
+
+增强版采用分层光学：来源算法的 Snell 边缘折射、RGB 色散和 Fresnel 过渡
+作为透射基底；固定上下方向的粗糙界面反射作为表面层；投射阴影最后独立合成，
+不再进入玻璃自身的模糊与折射采样。这样保留液态透镜感，同时增加系统控件所需
+的稳定上下高光、较暗侧边和悬浮层级。
 
 运行 Iced custom widget 示例：
 

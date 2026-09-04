@@ -4,7 +4,7 @@ use crate::ScrollEdgeStyle;
 use bytemuck::{Pod, Zeroable};
 use liquid_glass_scene::{
     GlassAccessibility, GlassEnvironment, GlassNode, GlassRenderOptions, GlassScene, GlassShape,
-    GlassVariant,
+    GlassVariant, Rect,
 };
 
 const DEFAULT_OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -1054,12 +1054,14 @@ impl GpuRenderer {
         self.queue.submit([encoder.finish()]);
     }
 
-    /// Fills a physical-pixel region of an external view with a solid color.
+    /// Fills a physical-pixel region of an external view with a flat color.
     ///
     /// This is useful for transparent-window demos that have an opaque app
-    /// surface beside a native desktop-glass surface. The fill happens before
-    /// the caller draws its source UI, so that source pixels remain available
-    /// to the glass compositor while the final foreground pass stays clear.
+    /// surface beside a translucent native desktop-glass surface. The color's
+    /// alpha is preserved so the platform compositor can remain visible. The
+    /// fill happens before the caller draws its source UI, so that source
+    /// pixels remain available to the glass compositor while the final
+    /// foreground pass stays clear.
     pub fn render_solid_region_to_view(
         &self,
         output_view: &wgpu::TextureView,
@@ -1908,7 +1910,7 @@ fn encode_glass_node_pass(
 fn node_effect_region(node: &GlassNode, size: GpuSize) -> Option<(u32, u32, u32, u32)> {
     let shadow = node.material.shadow;
     let padding = shadow.expand.max(0.0) + shadow.offset[0].abs().max(shadow.offset[1].abs()) + 4.0;
-    let bounds = node.visual_bounds();
+    let bounds = node_optical_bounds(node, size);
     let left = (bounds.x - padding).max(0.0).floor() as u32;
     let top = (bounds.y - padding).max(0.0).floor() as u32;
     let right = (bounds.x + bounds.width + padding).max(0.0).ceil() as u32;
@@ -1929,7 +1931,7 @@ fn node_render_region(
     blur_radius: i32,
 ) -> Option<(u32, u32, u32, u32)> {
     let padding = blur_radius.max(0) as f32 + node.backdrop.padding.max(0.0) + 4.0;
-    let bounds = node.visual_bounds();
+    let bounds = node_optical_bounds(node, size);
     let left = (bounds.x - padding).max(0.0).floor() as u32;
     let top = (bounds.y - padding).max(0.0).floor() as u32;
     let right = (bounds.x + bounds.width + padding).max(0.0).ceil() as u32;
@@ -1941,6 +1943,26 @@ fn node_render_region(
     let width = right.saturating_sub(left);
     let height = bottom.saturating_sub(top);
     (width > 0 && height > 0).then_some((left, top, width, height))
+}
+
+/// Bounds every shape evaluated by `mainSDF`, including the fixed 200px
+/// reference circle used by the source fusion demo. Scissoring only to the
+/// primary node used to clip most of that circle and leave a dark sliver at
+/// the merge neck, which made the enhanced path appear to have lost fusion.
+#[allow(clippy::cast_precision_loss)]
+fn node_optical_bounds(node: &GlassNode, size: GpuSize) -> Rect {
+    let bounds = node.visual_bounds();
+    if !node.material.show_shape1 {
+        return bounds;
+    }
+
+    let reference_circle =
+        Rect::new(size.width as f32 * 0.5 - 100.0, size.height as f32 * 0.5 - 100.0, 200.0, 200.0);
+    let left = bounds.x.min(reference_circle.x);
+    let top = bounds.y.min(reference_circle.y);
+    let right = (bounds.x + bounds.width).max(reference_circle.x + reference_circle.width);
+    let bottom = (bounds.y + bounds.height).max(reference_circle.y + reference_circle.height);
+    Rect::new(left, top, right - left, bottom - top)
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
@@ -3004,6 +3026,18 @@ mod tests {
         assert!((bezier_x[0] - custom_bezier_x[0]).abs() > f32::EPSILON);
         assert!((shape_roundness(&circle) - 2.0).abs() < f32::EPSILON);
         assert_eq!(std::mem::size_of::<GlassUniform>(), 368);
+    }
+
+    #[test]
+    fn reference_fusion_circle_is_included_in_scissor_bounds() {
+        let mut material = GlassMaterial::clear();
+        material.show_shape1 = true;
+        let node =
+            GlassNode::new(GlassId(4), Rect::new(390.0, 220.0, 200.0, 200.0)).material(material);
+
+        let bounds = node_optical_bounds(&node, GpuSize::new(640, 640));
+
+        assert_eq!(bounds, Rect::new(220.0, 220.0, 370.0, 200.0));
     }
 
     #[test]
