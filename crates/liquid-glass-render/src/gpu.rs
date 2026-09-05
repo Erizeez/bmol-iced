@@ -11,6 +11,13 @@ const DEFAULT_OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Uno
 #[allow(clippy::cast_possible_truncation)]
 const GLASS_UNIFORM_SIZE: u32 = std::mem::size_of::<GlassUniform>() as u32;
 const MAX_BLUR_RADIUS: usize = 200;
+// The sidebar's scroll-edge treatment uses a deliberately broad blur. Keeping
+// that path at half resolution preserves the soft visual result while cutting
+// the number of filtered pixels and taps substantially. Small radii stay on
+// the full-resolution path so controls and general-purpose callers retain the
+// existing sharpness.
+const SCROLL_EDGE_DOWNSAMPLE_FACTOR: u32 = 2;
+const SCROLL_EDGE_DOWNSAMPLE_THRESHOLD: u32 = 48;
 
 const FEATURE_EDGE_BLUR: i32 = 1;
 const FEATURE_REDUCED_TRANSPARENCY: i32 = 1 << 1;
@@ -154,6 +161,13 @@ struct FrameTargets {
     blur_horizontal_view: wgpu::TextureView,
     _blur_vertical: wgpu::Texture,
     blur_vertical_view: wgpu::TextureView,
+    _scroll_downsample: wgpu::Texture,
+    scroll_downsample_view: wgpu::TextureView,
+    _scroll_blur_horizontal: wgpu::Texture,
+    scroll_blur_horizontal_view: wgpu::TextureView,
+    _scroll_blur_vertical: wgpu::Texture,
+    scroll_blur_vertical_view: wgpu::TextureView,
+    scroll_size: GpuSize,
     output: wgpu::Texture,
     output_view: wgpu::TextureView,
 }
@@ -182,11 +196,28 @@ impl FrameTargets {
             device.create_texture(&descriptor("liquid-glass horizontal blur texture", size));
         let blur_vertical =
             device.create_texture(&descriptor("liquid-glass vertical blur texture", size));
+        let scroll_size = downsampled_size(size, SCROLL_EDGE_DOWNSAMPLE_FACTOR);
+        let scroll_downsample = device.create_texture(&descriptor(
+            "liquid-glass scroll blur downsample texture",
+            scroll_size,
+        ));
+        let scroll_blur_horizontal = device.create_texture(&descriptor(
+            "liquid-glass scroll blur horizontal texture",
+            scroll_size,
+        ));
+        let scroll_blur_vertical = device
+            .create_texture(&descriptor("liquid-glass scroll blur vertical texture", scroll_size));
         let output = device.create_texture(&descriptor("liquid-glass output texture", size));
         let scene_view = scene.create_view(&wgpu::TextureViewDescriptor::default());
         let blur_horizontal_view =
             blur_horizontal.create_view(&wgpu::TextureViewDescriptor::default());
         let blur_vertical_view = blur_vertical.create_view(&wgpu::TextureViewDescriptor::default());
+        let scroll_downsample_view =
+            scroll_downsample.create_view(&wgpu::TextureViewDescriptor::default());
+        let scroll_blur_horizontal_view =
+            scroll_blur_horizontal.create_view(&wgpu::TextureViewDescriptor::default());
+        let scroll_blur_vertical_view =
+            scroll_blur_vertical.create_view(&wgpu::TextureViewDescriptor::default());
         let output_view = output.create_view(&wgpu::TextureViewDescriptor::default());
 
         Self {
@@ -196,6 +227,13 @@ impl FrameTargets {
             blur_horizontal_view,
             _blur_vertical: blur_vertical,
             blur_vertical_view,
+            _scroll_downsample: scroll_downsample,
+            scroll_downsample_view,
+            _scroll_blur_horizontal: scroll_blur_horizontal,
+            scroll_blur_horizontal_view,
+            _scroll_blur_vertical: scroll_blur_vertical,
+            scroll_blur_vertical_view,
+            scroll_size,
             output,
             output_view,
         }
@@ -249,11 +287,14 @@ pub struct GpuRenderer {
     region_blur_horizontal_bind_group: wgpu::BindGroup,
     region_blur_horizontal_from_output_bind_group: wgpu::BindGroup,
     region_blur_vertical_bind_group: wgpu::BindGroup,
+    scroll_region_blur_horizontal_bind_group: wgpu::BindGroup,
+    scroll_region_blur_vertical_bind_group: wgpu::BindGroup,
     region_blur_uniform: wgpu::Buffer,
     region_blur_horizontal_pipeline: wgpu::RenderPipeline,
     region_blur_vertical_pipeline: wgpu::RenderPipeline,
     gradient_composite_bind_group_layout: wgpu::BindGroupLayout,
     gradient_composite_bind_group: wgpu::BindGroup,
+    scroll_gradient_composite_bind_group: wgpu::BindGroup,
     gradient_composite_uniform: wgpu::Buffer,
     gradient_composite_pipeline: wgpu::RenderPipeline,
     transparent_background: bool,
@@ -654,6 +695,22 @@ impl GpuRenderer {
             &region_blur_uniform,
             &blur_weights,
         );
+        let scroll_region_blur_horizontal_bind_group = create_region_blur_bind_group(
+            &device,
+            &region_blur_bind_group_layout,
+            &targets.scroll_downsample_view,
+            &sampler,
+            &region_blur_uniform,
+            &blur_weights,
+        );
+        let scroll_region_blur_vertical_bind_group = create_region_blur_bind_group(
+            &device,
+            &region_blur_bind_group_layout,
+            &targets.scroll_blur_horizontal_view,
+            &sampler,
+            &region_blur_uniform,
+            &blur_weights,
+        );
         let region_blur_horizontal_pipeline = create_region_blur_pipeline(
             &device,
             &region_blur_bind_group_layout,
@@ -679,6 +736,14 @@ impl GpuRenderer {
             &device,
             &gradient_composite_bind_group_layout,
             &targets.blur_vertical_view,
+            &targets.scene_view,
+            &sampler,
+            &gradient_composite_uniform,
+        );
+        let scroll_gradient_composite_bind_group = create_gradient_composite_bind_group(
+            &device,
+            &gradient_composite_bind_group_layout,
+            &targets.scroll_blur_vertical_view,
             &targets.scene_view,
             &sampler,
             &gradient_composite_uniform,
@@ -728,11 +793,14 @@ impl GpuRenderer {
             region_blur_horizontal_bind_group,
             region_blur_horizontal_from_output_bind_group,
             region_blur_vertical_bind_group,
+            scroll_region_blur_horizontal_bind_group,
+            scroll_region_blur_vertical_bind_group,
             region_blur_uniform,
             region_blur_horizontal_pipeline,
             region_blur_vertical_pipeline,
             gradient_composite_bind_group_layout,
             gradient_composite_bind_group,
+            scroll_gradient_composite_bind_group,
             gradient_composite_uniform,
             gradient_composite_pipeline,
             transparent_background: false,
@@ -830,10 +898,34 @@ impl GpuRenderer {
             &self.region_blur_uniform,
             &self.blur_weights,
         );
+        self.scroll_region_blur_horizontal_bind_group = create_region_blur_bind_group(
+            &self.device,
+            &self.region_blur_bind_group_layout,
+            &self.targets.scroll_downsample_view,
+            &self.sampler,
+            &self.region_blur_uniform,
+            &self.blur_weights,
+        );
+        self.scroll_region_blur_vertical_bind_group = create_region_blur_bind_group(
+            &self.device,
+            &self.region_blur_bind_group_layout,
+            &self.targets.scroll_blur_horizontal_view,
+            &self.sampler,
+            &self.region_blur_uniform,
+            &self.blur_weights,
+        );
         self.gradient_composite_bind_group = create_gradient_composite_bind_group(
             &self.device,
             &self.gradient_composite_bind_group_layout,
             &self.targets.blur_vertical_view,
+            &self.targets.scene_view,
+            &self.sampler,
+            &self.gradient_composite_uniform,
+        );
+        self.scroll_gradient_composite_bind_group = create_gradient_composite_bind_group(
+            &self.device,
+            &self.gradient_composite_bind_group_layout,
+            &self.targets.scroll_blur_vertical_view,
             &self.targets.scene_view,
             &self.sampler,
             &self.gradient_composite_uniform,
@@ -1518,6 +1610,17 @@ impl GpuRenderer {
 
         let maximum_radius = maximum_radius.min(MAX_BLUR_RADIUS as u32);
         let fade_start_y = fade_start_y.clamp(y, y + height);
+        if maximum_radius >= SCROLL_EDGE_DOWNSAMPLE_THRESHOLD {
+            self.encode_downsampled_vertical_gradient_blur_to_output_with_source(
+                encoder,
+                source_texture,
+                (x, y, width, height),
+                fade_start_y,
+                maximum_radius,
+                fallback_color,
+            );
+            return;
+        }
         let gradient_weight_offset =
             (MAX_GLASS_NODES + 1) * (MAX_BLUR_RADIUS + 1) * std::mem::size_of::<f32>();
         let uniform = RegionBlurUniform {
@@ -1610,6 +1713,130 @@ impl GpuRenderer {
             None,
             wgpu::Color::TRANSPARENT,
             scissor,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn encode_downsampled_vertical_gradient_blur_to_output_with_source(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        source_texture: &wgpu::Texture,
+        region: (u32, u32, u32, u32),
+        fade_start_y: u32,
+        maximum_radius: u32,
+        fallback_color: [f32; 4],
+    ) {
+        let low_region = downsampled_region(region, self.size, SCROLL_EDGE_DOWNSAMPLE_FACTOR);
+        let (low_x, low_y, low_width, low_height) = low_region;
+        if low_width == 0 || low_height == 0 {
+            return;
+        }
+
+        let low_radius =
+            (maximum_radius / SCROLL_EDGE_DOWNSAMPLE_FACTOR).max(1).min(MAX_BLUR_RADIUS as u32);
+        let gradient_weight_offset =
+            (MAX_GLASS_NODES + 1) * (MAX_BLUR_RADIUS + 1) * std::mem::size_of::<f32>();
+        let uniform = RegionBlurUniform {
+            resolution: gpu_size_as_f32(self.targets.scroll_size),
+            radius: low_radius as i32,
+            weight_offset: i32::try_from(gradient_weight_offset / std::mem::size_of::<f32>())
+                .expect("gradient blur weight offset fits in i32"),
+            region: [low_x as f32, low_y as f32, low_width as f32, low_height as f32],
+            gradient: [0.0; 4],
+        };
+        self.queue.write_buffer(&self.region_blur_uniform, 0, bytemuck::bytes_of(&uniform));
+        let blur_weights = gaussian_weights(low_radius as i32);
+        self.queue.write_buffer(
+            &self.blur_weights,
+            u64::try_from(gradient_weight_offset).expect("gradient blur weight offset fits in u64"),
+            bytemuck::cast_slice(&blur_weights),
+        );
+        self.queue.write_buffer(
+            &self.gradient_composite_uniform,
+            0,
+            bytemuck::bytes_of(&GradientCompositeUniform {
+                fallback: srgb_to_linear_rgba(fallback_color),
+                gradient: [
+                    fade_start_y as f32 / self.size.height as f32,
+                    (region.1 + region.3) as f32 / self.size.height as f32,
+                    0.0,
+                    0.0,
+                ],
+            }),
+        );
+
+        // A linear fullscreen copy into the half-resolution target provides a
+        // cheap first pyramid level. The normalized coordinates stay aligned
+        // with the full-resolution compositor, so the final composite needs no
+        // special UV transform.
+        let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let downsample_bind_group = create_copy_bind_group(
+            &self.device,
+            &self.copy_bind_group_layout,
+            &source_view,
+            &self.sampler,
+        );
+        encode_fullscreen_pass(
+            encoder,
+            "liquid-glass scroll blur downsample pass",
+            &self.targets.scroll_downsample_view,
+            &self.copy_pipeline,
+            &self.fullscreen_vertex_buffer,
+            Some(&downsample_bind_group),
+            None,
+            wgpu::Color::BLACK,
+        );
+
+        // Preserve the sharp/current output for the gradient mix. This is a
+        // full-resolution copy only over the narrow edge region.
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.targets.output,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: region.0, y: region.1, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.targets.scene,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: region.0, y: region.1, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d { width: region.2, height: region.3, depth_or_array_layers: 1 },
+        );
+
+        encode_scissored_fullscreen_pass(
+            encoder,
+            "liquid-glass downsampled scroll blur horizontal pass",
+            &self.targets.scroll_blur_horizontal_view,
+            &self.region_blur_horizontal_pipeline,
+            &self.fullscreen_vertex_buffer,
+            Some(&self.scroll_region_blur_horizontal_bind_group),
+            None,
+            wgpu::Color::BLACK,
+            low_region,
+        );
+        encode_scissored_fullscreen_pass(
+            encoder,
+            "liquid-glass downsampled scroll blur vertical pass",
+            &self.targets.scroll_blur_vertical_view,
+            &self.region_blur_vertical_pipeline,
+            &self.fullscreen_vertex_buffer,
+            Some(&self.scroll_region_blur_vertical_bind_group),
+            None,
+            wgpu::Color::BLACK,
+            low_region,
+        );
+        encode_scissored_fullscreen_pass(
+            encoder,
+            "liquid-glass downsampled scroll blur composite pass",
+            &self.targets.output_view,
+            &self.gradient_composite_pipeline,
+            &self.fullscreen_vertex_buffer,
+            Some(&self.scroll_gradient_composite_bind_group),
+            None,
+            wgpu::Color::TRANSPARENT,
+            region,
         );
     }
 
@@ -2453,6 +2680,38 @@ fn srgb_channel_to_linear(value: f32) -> f32 {
 #[allow(clippy::cast_precision_loss)]
 fn gpu_size_as_f32(size: GpuSize) -> [f32; 2] {
     [size.width as f32, size.height as f32]
+}
+
+#[must_use]
+const fn div_ceil_u32(value: u32, divisor: u32) -> u32 {
+    value.saturating_add(divisor.saturating_sub(1)) / divisor
+}
+
+#[must_use]
+const fn downsampled_size(size: GpuSize, factor: u32) -> GpuSize {
+    let factor = if factor == 0 { 1 } else { factor };
+    let width = div_ceil_u32(size.width, factor);
+    let height = div_ceil_u32(size.height, factor);
+    GpuSize::new(if width == 0 { 1 } else { width }, if height == 0 { 1 } else { height })
+}
+
+#[must_use]
+fn downsampled_region(
+    region: (u32, u32, u32, u32),
+    full_size: GpuSize,
+    factor: u32,
+) -> (u32, u32, u32, u32) {
+    let factor = factor.max(1);
+    let x = region.0.min(full_size.width);
+    let y = region.1.min(full_size.height);
+    let right = x.saturating_add(region.2).min(full_size.width);
+    let bottom = y.saturating_add(region.3).min(full_size.height);
+    let low_size = downsampled_size(full_size, factor);
+    let low_x = (x / factor).min(low_size.width);
+    let low_y = (y / factor).min(low_size.height);
+    let low_right = div_ceil_u32(right, factor).min(low_size.width);
+    let low_bottom = div_ceil_u32(bottom, factor).min(low_size.height);
+    (low_x, low_y, low_right.saturating_sub(low_x), low_bottom.saturating_sub(low_y))
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
@@ -3320,7 +3579,7 @@ mod tests {
             .render_scroll_edge_to_output(
                 (0, 0, 48, 16),
                 8,
-                4,
+                64,
                 [0.8, 0.8, 0.8, 0.8],
                 ScrollEdgeStyle::Soft,
             )
@@ -3402,5 +3661,14 @@ mod tests {
 
         assert!((linear[0] - 0.214_041_14).abs() < 0.000_01);
         assert_eq!(linear[3], 0.4);
+    }
+
+    #[test]
+    fn downsampled_scroll_region_covers_odd_full_resolution_edges() {
+        let full_size = GpuSize::new(9, 7);
+
+        assert_eq!(downsampled_size(full_size, 2), GpuSize::new(5, 4));
+        assert_eq!(downsampled_region((1, 1, 7, 5), full_size, 2), (0, 0, 4, 3));
+        assert_eq!(downsampled_region((8, 6, 8, 8), full_size, 2), (4, 3, 1, 1));
     }
 }
