@@ -3,7 +3,7 @@ use std::{
     fmt,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
     time::Instant,
 };
@@ -207,7 +207,32 @@ static ACTIVE_WINDOW_CONTROL_PROGRESS: Mutex<[f32; 5]> = Mutex::new([0.0; 5]);
 static ACTIVE_WINDOW_CONTROL_PRESS_PROGRESS: Mutex<[f32; 15]> = Mutex::new([0.0; 15]);
 static ACTIVE_WINDOW_CONTROL_SCALE: Mutex<[f32; 15]> = Mutex::new([1.0; 15]);
 static ACTIVE_WINDOW_CONTROL_TUNING: Mutex<WindowControlTuning> =
-    Mutex::new(WindowControlTuning::new());
+    Mutex::new(WindowControlTuning::for_scheme(UiColorScheme::Dark));
+static ACTIVE_WINDOW_CONTROL_ORIGIN: Mutex<(f32, f32)> =
+    Mutex::new((WINDOW_CONTROL_NATIVE_X, WINDOW_CONTROL_NATIVE_Y));
+static ACTIVE_WINDOW_INACTIVE: AtomicBool = AtomicBool::new(false);
+
+#[allow(dead_code)]
+pub fn set_window_control_origin(x: f32, y: f32) {
+    if let Ok(mut origin) = ACTIVE_WINDOW_CONTROL_ORIGIN.lock() {
+        *origin = (x, y);
+    }
+}
+
+pub fn active_window_control_origin() -> (f32, f32) {
+    ACTIVE_WINDOW_CONTROL_ORIGIN
+        .lock()
+        .map_or((WINDOW_CONTROL_NATIVE_X, WINDOW_CONTROL_NATIVE_Y), |val| *val)
+}
+
+#[allow(dead_code)]
+pub fn set_window_inactive(inactive: bool) {
+    ACTIVE_WINDOW_INACTIVE.store(inactive, Ordering::Relaxed);
+}
+
+pub fn is_window_inactive() -> bool {
+    ACTIVE_WINDOW_INACTIVE.load(Ordering::Relaxed)
+}
 
 pub fn set_color_scheme(scheme: UiColorScheme) {
     ACTIVE_COLOR_SCHEME.store(
@@ -217,6 +242,7 @@ pub fn set_color_scheme(scheme: UiColorScheme) {
         },
         Ordering::Relaxed,
     );
+    set_window_control_tuning(WindowControlTuning::for_scheme(scheme));
 }
 
 fn active_color_scheme() -> UiColorScheme {
@@ -1397,7 +1423,7 @@ impl graphics::Compositor for Compositor {
             let traffic_lights_scene = traffic_lights_scene_for_viewport(
                 viewport.scale_factor(),
                 color_scheme,
-                false,
+                is_window_inactive(),
                 &[
                     (
                         WINDOW_CONTROL_NATIVE_IDS[0],
@@ -1547,17 +1573,25 @@ fn traffic_lights_scene_for_viewport(
 ) -> GlassScene {
     let mut scene = GlassScene::default();
     let scale_factor = scale_factor.max(1.0);
+    let (origin_x, origin_y) = active_window_control_origin();
+    let effective_tuning = if color_scheme == UiColorScheme::Dark
+        && active_window_control_tuning() == WindowControlTuning::for_scheme(UiColorScheme::Light)
+    {
+        WindowControlTuning::for_scheme(UiColorScheme::Dark)
+    } else {
+        active_window_control_tuning()
+    };
     push_traffic_light_group(
         &mut scene,
         &WINDOW_CONTROL_NATIVE_IDS,
-        WINDOW_CONTROL_NATIVE_X,
-        WINDOW_CONTROL_NATIVE_Y,
+        origin_x,
+        origin_y,
         WINDOW_CONTROL_NATIVE_SIZE,
         WINDOW_CONTROL_GAP,
         inactive,
         false,
         color_scheme,
-        active_window_control_tuning(),
+        effective_tuning,
         interactions,
     );
     scale_scene(&mut scene, scale_factor);
@@ -1681,8 +1715,10 @@ fn push_traffic_light_group(
         } else {
             1.0
         };
-        let base_color = traffic_light_color(index, inactive, close_disabled);
-        let active_color = traffic_light_color(index, false, close_disabled);
+        let base_color =
+            traffic_light_color_for_scheme(index, inactive, close_disabled, color_scheme);
+        let active_color =
+            traffic_light_color_for_scheme(index, false, close_disabled, color_scheme);
         let display_color =
             if inactive { blend_color(base_color, active_color, focus) } else { base_color };
         let mut node = GlassNode::new(id, bounds)
@@ -1712,12 +1748,25 @@ fn blend_color(from: Color, to: Color, amount: f32) -> Color {
     )
 }
 
-fn traffic_light_color(index: usize, inactive: bool, _close_disabled: bool) -> Color {
+#[allow(dead_code)]
+fn traffic_light_color(index: usize, inactive: bool, close_disabled: bool) -> Color {
+    traffic_light_color_for_scheme(index, inactive, close_disabled, active_color_scheme())
+}
+
+fn traffic_light_color_for_scheme(
+    index: usize,
+    inactive: bool,
+    _close_disabled: bool,
+    scheme: UiColorScheme,
+) -> Color {
     if inactive {
         // AppKit removes the chromatic traffic-light pigments when the window
-        // loses focus. The three controls share one cool light-gray substrate;
-        // only the focused window gets red, yellow, and green bodies.
-        return Color::rgba(0.78, 0.79, 0.82, 0.96);
+        // loses focus. Under dark mode, the graphite substrate is significantly
+        // darker (0.32, 0.32, 0.35) than the light mode cool gray (0.78, 0.79, 0.82).
+        return match scheme {
+            UiColorScheme::Dark => Color::rgba(0.32, 0.32, 0.35, 0.96),
+            UiColorScheme::Light => Color::rgba(0.78, 0.79, 0.82, 0.96),
+        };
     }
     let (red, green, blue) = match index {
         // These are deliberately saturated source colours. The glass body

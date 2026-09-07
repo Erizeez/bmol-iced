@@ -34,6 +34,12 @@ struct State {
 
 impl Default for State {
     fn default() -> Self {
+        let initial_dark = bmol_window_shell::is_system_dark_mode();
+        let initial_scheme = if initial_dark {
+            UiColorScheme::Dark
+        } else {
+            UiColorScheme::Light
+        };
         Self {
             window_id: None,
             window_focused: true,
@@ -47,7 +53,7 @@ impl Default for State {
             reduce_transparency: false,
             increased_contrast: false,
             volume: 64.0,
-            system_scheme: UiColorScheme::Dark,
+            system_scheme: initial_scheme,
             traffic_lights: liquid_glass::TrafficLightsState::new(),
         }
     }
@@ -171,14 +177,20 @@ enum Message {
     IncreasedContrastChanged(bool),
     VolumeChanged(f32),
     SystemThemeChanged(iced::theme::Mode),
+    PollSystemTheme,
 }
 
 type AppElement<'a> = Element<'a, Message, Theme, Renderer>;
 
 fn boot() -> (State, Task<Message>) {
     let state = State::default();
+    let is_dark = state.color_scheme() == UiColorScheme::Dark;
+    let rim_insets: f32 = if is_dark { 2.0 } else { 1.0 };
+    let origin_y = rim_insets + (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
+    iced_backend::set_window_control_origin(WINDOW_CONTROL_NATIVE_X, origin_y);
     iced_backend::set_color_scheme(state.color_scheme());
     iced_backend::set_accessibility(state.accessibility());
+    iced_backend::set_window_inactive(!state.window_focused);
     (
         state,
         Task::batch([
@@ -189,7 +201,7 @@ fn boot() -> (State, Task<Message>) {
 }
 
 fn update(state: &mut State, message: Message) -> Task<Message> {
-    let updates_color_scheme =
+    let mut updates_color_scheme =
         matches!(&message, Message::AppearanceSelected(_) | Message::SystemThemeChanged(_));
     let updates_accessibility = matches!(
         &message,
@@ -228,6 +240,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 iced::window::Event::Focused => {
                     if state.window_id == Some(id) || state.window_id.is_none() {
                         state.window_focused = true;
+                        iced_backend::set_window_inactive(false);
                     }
                 }
                 iced::window::Event::Unfocused => {
@@ -235,6 +248,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                         state.window_focused = false;
                         state.traffic_lights.hover_target = 0.0;
                         state.traffic_lights.hover_progress = 0.0;
+                        iced_backend::set_window_inactive(true);
                     }
                 }
                 iced::window::Event::Closed => {
@@ -295,13 +309,18 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::AnimationTick => {
             state.traffic_lights.step(std::time::Instant::now());
-            iced_backend::set_window_control_group_progress(0, state.traffic_lights.hover_progress);
-            for (index, id) in liquid_glass::WINDOW_CONTROL_NATIVE_IDS.iter().copied().enumerate() {
-                iced_backend::set_window_control_scale(
-                    id,
-                    state.traffic_lights.press_springs[index].value(),
-                );
+            for &id in &liquid_glass::WINDOW_CONTROL_NATIVE_IDS {
+                if let Some(index) = liquid_glass::traffic_lights::slot_index(id) {
+                    iced_backend::set_window_control_scale(
+                        id,
+                        state.traffic_lights.press_springs[index].value(),
+                    );
+                }
             }
+            iced_backend::set_window_control_group_progress(
+                0,
+                state.traffic_lights.hover_progress,
+            );
         }
         Message::SectionSelected(section) => state.active_section = section,
         Message::AppearanceSelected(appearance) => state.appearance = appearance,
@@ -316,11 +335,29 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::SystemThemeChanged(mode) => {
             state.system_scheme = UiColorScheme::from_mode(mode);
         }
+        Message::PollSystemTheme => {
+            let current_dark = bmol_window_shell::is_system_dark_mode();
+            let current_scheme = if current_dark {
+                UiColorScheme::Dark
+            } else {
+                UiColorScheme::Light
+            };
+            if state.system_scheme != current_scheme {
+                state.system_scheme = current_scheme;
+                if state.appearance == Appearance::Automatic {
+                    updates_color_scheme = true;
+                }
+            }
+        }
     }
     if updates_color_scheme {
-        iced_backend::set_color_scheme(state.color_scheme());
+        let scheme = state.color_scheme();
+        let is_dark = scheme == UiColorScheme::Dark;
+        let rim_insets: f32 = if is_dark { 2.0 } else { 1.0 };
+        let origin_y = rim_insets + (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
+        iced_backend::set_window_control_origin(WINDOW_CONTROL_NATIVE_X, origin_y);
+        iced_backend::set_color_scheme(scheme);
         if let Some(id) = state.window_id {
-            let is_dark = state.color_scheme() == UiColorScheme::Dark;
             let options = liquid_glass::NativeWindowOptions::new()
                 .with_corner_radius(14.0)
                 .with_dark_mode(is_dark)
@@ -356,14 +393,16 @@ impl State {
 fn subscription(state: &State) -> Subscription<Message> {
     let window_events = iced::window::events().map(Message::WindowEvent);
     let theme_changes = iced::system::theme_changes().map(Message::SystemThemeChanged);
+    let poll_theme = iced::time::every(std::time::Duration::from_millis(250)).map(|_| Message::PollSystemTheme);
     if state.traffic_lights.is_animating() {
         Subscription::batch([
             window_events,
             theme_changes,
+            poll_theme,
             iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::AnimationTick),
         ])
     } else {
-        Subscription::batch([window_events, theme_changes])
+        Subscription::batch([window_events, theme_changes, poll_theme])
     }
 }
 
@@ -465,7 +504,14 @@ fn view(state: &State) -> AppElement<'_> {
         left: SIDEBAR_CONTENT_INSET,
     });
 
-    let traffic_lights = liquid_glass::traffic_lights::positioned_control_group(
+    let is_dark = state.color_scheme() == UiColorScheme::Dark;
+    let rim_insets: f32 = if is_dark { 2.0 } else { 1.0 };
+    let leading_spacer_w = (4.0_f32 - rim_insets).max(0.0);
+    let origin_y = rim_insets + (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
+    iced_backend::set_window_control_origin(WINDOW_CONTROL_NATIVE_X, origin_y);
+
+    let traffic_lights = row![
+        column![].width(Length::Fixed(leading_spacer_w)),
         liquid_glass::control_group(
             liquid_glass::WINDOW_CONTROL_NATIVE_IDS,
             liquid_glass::WINDOW_CONTROL_NATIVE_SIZE,
@@ -488,10 +534,11 @@ fn view(state: &State) -> AppElement<'_> {
             |id| Message::ControlPressEnded { id },
             Message::ControlGroupHover,
         ),
-        WINDOW_CONTROL_NATIVE_X,
-        iced_backend::WINDOW_CONTROL_NATIVE_Y,
-        liquid_glass::WINDOW_CONTROL_NATIVE_SIZE,
-    );
+        space::horizontal().width(Length::Fill),
+    ]
+    .align_y(iced::Alignment::Center)
+    .height(Length::Fixed(FUSED_TOP_BAR_HEIGHT))
+    .width(Length::Fill);
 
     let draggable_sidebar_top = container(
         liquid_glass::loyal_drag_bar(
