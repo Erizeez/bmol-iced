@@ -300,6 +300,59 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmol-designs"
+version = "0.1.0"
+dependencies = [
+ "liquid-rs",
+ "squircle-rs",
+]
+
+[[package]]
+name = "bmol-iced"
+version = "0.1.0"
+dependencies = [
+ "bmol-designs",
+ "bmol-window-native",
+ "bmol-window-platform",
+ "bmol-window-shell",
+ "liquid-glass-animation",
+ "liquid-glass-geometry",
+ "liquid-glass-render",
+ "liquid-glass-scene",
+ "liquid-glass-ui",
+ "liquid-rs",
+]
+
+[[package]]
+name = "bmol-window-native"
+version = "0.1.0"
+dependencies = [
+ "block2 0.6.2",
+ "core-graphics",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "raw-window-handle",
+]
+
+[[package]]
+name = "bmol-window-platform"
+version = "0.1.0"
+
+[[package]]
+name = "bmol-window-shell"
+version = "0.1.0"
+dependencies = [
+ "bmol-window-native",
+ "bmol-window-platform",
+ "iced",
+ "raw-window-handle",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1596,56 +1649,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
-name = "liquid-glass"
-version = "0.1.0"
-dependencies = [
- "liquid-glass-animation",
- "liquid-glass-geometry",
- "liquid-glass-platform",
- "liquid-glass-render",
- "liquid-glass-scene",
- "liquid-glass-ui",
-]
-
-[[package]]
 name = "liquid-glass-animation"
 version = "0.1.0"
 
 [[package]]
 name = "liquid-glass-geometry"
 version = "0.1.0"
-
-[[package]]
-name = "liquid-glass-native"
-version = "0.1.0"
 dependencies = [
- "block2 0.6.2",
- "core-graphics",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation 0.3.2",
- "objc2-quartz-core 0.3.2",
- "raw-window-handle",
+ "squircle-rs",
 ]
-
-[[package]]
-name = "liquid-glass-platform"
-version = "0.1.0"
 
 [[package]]
 name = "liquid-glass-playground"
 version = "0.1.0"
 dependencies = [
+ "bmol-designs",
+ "bmol-iced",
+ "bmol-window-native",
+ "bmol-window-shell",
  "bytemuck",
  "flate2",
  "iced",
  "iced_wgpu",
  "image",
- "liquid-glass",
- "liquid-glass-native",
  "pollster",
+ "spring-rs",
  "wgpu",
  "window-vibrancy",
  "winit",
@@ -1657,6 +1685,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "liquid-glass-scene",
+ "vibrancy-rs",
  "wgpu",
 ]
 
@@ -1671,7 +1700,20 @@ dependencies = [
 name = "liquid-glass-ui"
 version = "0.1.0"
 dependencies = [
+ "bmol-designs",
+ "bmol-window-shell",
  "iced",
+ "liquid-glass-scene",
+ "spring-rs",
+]
+
+[[package]]
+name = "liquid-rs"
+version = "0.1.0"
+dependencies = [
+ "liquid-glass-animation",
+ "liquid-glass-geometry",
+ "liquid-glass-render",
  "liquid-glass-scene",
 ]
 
@@ -2957,6 +2999,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "spring-rs"
+version = "0.1.0"
+source = "git+https://github.com/Erizeez/spring-rs.git?tag=v0.1.0#49d92fe9ee2539c7b75799aef445388a4d580229"
+
+[[package]]
+name = "squircle-rs"
+version = "0.1.1"
+source = "git+https://github.com/Erizeez/squircle-rs?tag=v0.1.1#839ae99ef983bafc4595588cb5f114b840d76b3d"
+
+[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3295,6 +3347,11 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vibrancy-rs"
+version = "0.1.0"
+source = "git+https://github.com/Erizeez/vibrancy-rs.git?tag=v0.1.0#4ad47c163c6b8df1294d70d3c5755f34966def62"
 
 [[package]]
 name = "walkdir"

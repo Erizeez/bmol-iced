@@ -1,19 +1,22 @@
 #[path = "../iced_backend.rs"]
 mod iced_backend;
 
-use std::time::{Duration, Instant};
-
 use iced::{
-    Color, Element, Length, Point, Size, Subscription, Task, Theme, mouse,
-    widget::{button, canvas, column, container, row, scrollable, space, stack, text},
+    Color, Element, Length, Subscription, Task, Theme,
+    widget::{button, column, container, row, scrollable, space, stack, text},
 };
-use iced_backend::{CONTENT_TOP_INSET, Renderer, SIDEBAR_SEARCH_HEIGHT, SIDEBAR_SEARCH_TOP_MARGIN};
+use iced_backend::{
+    FUSED_TOP_BAR_HEIGHT, Renderer, SIDEBAR_CONTENT_INSET, SIDEBAR_CONTENT_WIDTH,
+    SIDEBAR_LIST_BOTTOM_INSET, SIDEBAR_SCROLLBAR_BOTTOM_INSET, SIDEBAR_SEARCH_HEIGHT,
+    SIDEBAR_SEARCH_TOP, SIDEBAR_WIDTH, TOP_BAR_BUTTON_SIZE,
+};
 use liquid_glass::{
-    GlassAccessibility, GlassId, Rect, UiColorScheme, UiIcon, UiTheme,
-    ui::{components, font},
+    GlassAccessibility, GlassId, Rect, ScrollbarConfig, UiColorScheme, UiIcon, UiTheme,
+    ui::{components, font, spring_scroll_view_with_config},
 };
 
 struct State {
+    window_id: Option<iced::window::Id>,
     active_section: Section,
     appearance: Appearance,
     accent: Accent,
@@ -24,15 +27,13 @@ struct State {
     reduce_transparency: bool,
     increased_contrast: bool,
     volume: f32,
-    content_scroll: f32,
-    sidebar_scroll: SidebarScrollMetrics,
-    sidebar_scrollbar_last_activity: Option<Instant>,
     system_scheme: UiColorScheme,
 }
 
 impl Default for State {
     fn default() -> Self {
         Self {
+            window_id: None,
             active_section: Section::General,
             appearance: Appearance::Automatic,
             accent: Accent::Blue,
@@ -43,9 +44,6 @@ impl Default for State {
             reduce_transparency: false,
             increased_contrast: false,
             volume: 64.0,
-            content_scroll: 0.0,
-            sidebar_scroll: SidebarScrollMetrics::default(),
-            sidebar_scrollbar_last_activity: None,
             system_scheme: UiColorScheme::Dark,
         }
     }
@@ -142,6 +140,8 @@ impl std::fmt::Display for Accent {
 
 #[derive(Debug, Clone)]
 enum Message {
+    WindowOpened(iced::window::Id),
+    ResizeWindow(iced::window::Direction),
     SectionSelected(Section),
     AppearanceSelected(Appearance),
     AccentSelected(Accent),
@@ -152,10 +152,6 @@ enum Message {
     ReduceTransparencyChanged(bool),
     IncreasedContrastChanged(bool),
     VolumeChanged(f32),
-    ContentScrolled(f32),
-    SidebarViewportChanged(SidebarScrollMetrics),
-    SidebarScrollRequested(f32),
-    SidebarScrollbarTick(Instant),
     SystemThemeChanged(iced::theme::Mode),
 }
 
@@ -169,7 +165,39 @@ fn boot() -> (State, Task<Message>) {
 }
 
 fn update(state: &mut State, message: Message) -> Task<Message> {
+    let updates_color_scheme =
+        matches!(&message, Message::AppearanceSelected(_) | Message::SystemThemeChanged(_));
+    let updates_accessibility = matches!(
+        &message,
+        Message::ReduceMotionChanged(_)
+            | Message::ReduceTransparencyChanged(_)
+            | Message::IncreasedContrastChanged(_)
+    );
+
+    let mut task = Task::none();
     match message {
+        Message::WindowOpened(id) => {
+            state.window_id = Some(id);
+            let is_dark = state.color_scheme() == UiColorScheme::Dark;
+            let options = liquid_glass::NativeWindowOptions::new()
+                .with_corner_radius(14.0)
+                .with_dark_mode(is_dark)
+                .with_shadow(false)
+                .with_edr(true)
+                .with_stage_manager_guard(true);
+
+            task = iced::window::run(id, move |w| {
+                if let Ok(handle) = w.window_handle() {
+                    let _ = liquid_glass::setup_native_window(handle.as_raw(), options);
+                }
+            })
+            .discard();
+        }
+        Message::ResizeWindow(direction) => {
+            if let Some(id) = state.window_id {
+                task = iced::window::drag_resize(id, direction);
+            }
+        }
         Message::SectionSelected(section) => state.active_section = section,
         Message::AppearanceSelected(appearance) => state.appearance = appearance,
         Message::AccentSelected(accent) => state.accent = accent,
@@ -180,35 +208,17 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::ReduceTransparencyChanged(enabled) => state.reduce_transparency = enabled,
         Message::IncreasedContrastChanged(enabled) => state.increased_contrast = enabled,
         Message::VolumeChanged(volume) => state.volume = volume,
-        Message::ContentScrolled(offset) => state.content_scroll = offset,
-        Message::SidebarViewportChanged(metrics) => {
-            let was_initialized = state.sidebar_scroll.content_height > 0.0;
-            let moved =
-                (metrics.absolute_offset - state.sidebar_scroll.absolute_offset).abs() > 0.01;
-            state.sidebar_scroll = metrics;
-            if was_initialized && moved {
-                state.sidebar_scrollbar_last_activity = Some(Instant::now());
-            }
-        }
-        Message::SidebarScrollRequested(relative_offset) => {
-            state.sidebar_scrollbar_last_activity = Some(Instant::now());
-            return iced::widget::operation::snap_to(
-                sidebar_scroll_id(),
-                scrollable::RelativeOffset { x: 0.0, y: relative_offset.clamp(0.0, 1.0) },
-            );
-        }
-        Message::SidebarScrollbarTick(now) => {
-            if sidebar_scrollbar_opacity(state.sidebar_scrollbar_last_activity, now) <= 0.0 {
-                state.sidebar_scrollbar_last_activity = None;
-            }
-        }
         Message::SystemThemeChanged(mode) => {
             state.system_scheme = UiColorScheme::from_mode(mode);
         }
     }
-    iced_backend::set_color_scheme(state.color_scheme());
-    iced_backend::set_accessibility(state.accessibility());
-    Task::none()
+    if updates_color_scheme {
+        iced_backend::set_color_scheme(state.color_scheme());
+    }
+    if updates_accessibility {
+        iced_backend::set_accessibility(state.accessibility());
+    }
+    task
 }
 
 impl State {
@@ -222,14 +232,10 @@ impl State {
 }
 
 fn subscription(state: &State) -> Subscription<Message> {
-    let scrollbar_fade = if state.sidebar_scrollbar_last_activity.is_some() {
-        iced::time::every(Duration::from_millis(16)).map(Message::SidebarScrollbarTick)
-    } else {
-        Subscription::none()
-    };
+    let _ = state;
     Subscription::batch([
+        iced::window::open_events().map(Message::WindowOpened),
         iced::system::theme_changes().map(Message::SystemThemeChanged),
-        scrollbar_fade,
     ])
 }
 
@@ -244,10 +250,7 @@ fn view(state: &State) -> AppElement<'_> {
         // initial offset, but this space scrolls away with the list so
         // rows can still pass behind the floating search field.
         space().height(Length::Fixed(
-            CONTENT_TOP_INSET
-                + SIDEBAR_SEARCH_TOP_MARGIN
-                + SIDEBAR_SEARCH_HEIGHT
-                + SIDEBAR_FIRST_ROW_GAP,
+            SIDEBAR_SEARCH_TOP + SIDEBAR_SEARCH_HEIGHT + SIDEBAR_FIRST_ROW_GAP,
         )),
         sidebar_group(&[Section::AppleAccount, Section::FamilySharing], state.active_section),
         sidebar_gap(),
@@ -297,70 +300,62 @@ fn view(state: &State) -> AppElement<'_> {
             state.active_section,
         ),
     ]
-    // The selection pill ends exactly one logical pixel before the
-    // visible scrollbar thumb. The transparent remainder belongs to the
-    // scrollbar's wider hit target, not to list-row painting.
-    .padding(iced::Padding::new(0.0).right(sidebar_list_right_inset()));
+    // The scroll viewport spans the sidebar. These are list-content insets,
+    // not outer margins, so the independent scrollbar can stay at the edge.
+    .padding(iced::Padding::new(0.0).left(SIDEBAR_CONTENT_INSET).right(SIDEBAR_CONTENT_INSET));
 
-    let sidebar_scroll = scrollable(sidebar_list)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        // The content viewport intentionally extends behind the floating search
-        // field so its pixels remain available to blur and glass refraction. Its
-        // scrollbar is a separate visual/interaction layer below.
-        .id(sidebar_scroll_id())
-        .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::hidden()))
-        .style(components::sidebar_scrollable_style)
-        .on_scroll(|viewport| {
-            Message::SidebarViewportChanged(SidebarScrollMetrics::from_viewport(viewport))
-        });
+    // The scroll widget owns both the clipped list and the custom scrollbar.
+    // Route the whole widget through the compositor overlay so its scrollbar
+    // is composited after foreground list rows; the rows wrapped in
+    // `glass_foreground` still keep their own foreground layer.
+    let scroll_config = ScrollbarConfig::sidebar(
+        sidebar_scrollbar_top(),
+        SIDEBAR_SCROLLBAR_BOTTOM_INSET,
+        SIDEBAR_SCROLLBAR_EDGE_INSET,
+    );
+    let sidebar_scroll = container(components::glass_overlay(spring_scroll_view_with_config(
+        sidebar_list,
+        state.color_scheme(),
+        scroll_config,
+    )))
+    .width(Length::Fill)
+    .height(Length::Fill);
 
     let search_overlay = container(components::search_field(
         GlassId(11),
-        Rect::new(0.0, 0.0, 212.0, SIDEBAR_SEARCH_HEIGHT),
+        Rect::new(0.0, 0.0, SIDEBAR_CONTENT_WIDTH, SIDEBAR_SEARCH_HEIGHT),
         state.color_scheme(),
         &state.search,
         Message::SearchChanged,
     ))
     .width(Length::Fill)
     .height(Length::Fill)
-    .padding(iced::Padding::new(0.0).top(CONTENT_TOP_INSET + SIDEBAR_SEARCH_TOP_MARGIN));
-
-    // Unlike the optical content overscan above, this is the actual scrollbar
-    // viewport. Its rail starts below the search field and never enters the
-    // titlebar/search occlusion region.
-    let scrollbar_overlay = container(
-        canvas(SidebarScrollbar {
-            metrics: state.sidebar_scroll,
-            color_scheme: state.color_scheme(),
-            opacity: sidebar_scrollbar_opacity(
-                state.sidebar_scrollbar_last_activity,
-                Instant::now(),
-            ),
-        })
-        .width(Length::Fixed(SIDEBAR_SCROLLBAR_SLOT_WIDTH))
-        .height(Length::Fill),
-    )
-    .align_right(Length::Fill)
-    .height(Length::Fill)
     .padding(iced::Padding {
-        top: sidebar_scrollbar_top(),
-        right: 0.0,
-        bottom: 2.0,
-        left: 0.0,
+        top: SIDEBAR_SEARCH_TOP,
+        right: SIDEBAR_CONTENT_INSET,
+        bottom: 0.0,
+        left: SIDEBAR_CONTENT_INSET,
     });
 
-    let sidebar: AppElement<'_> =
-        container(stack![sidebar_scroll, search_overlay, scrollbar_overlay])
-            .width(Length::Fixed(232.0))
-            .height(Length::Fill)
-            .padding(iced::Padding { top: 0.0, right: 10.0, bottom: 10.0, left: 10.0 })
-            .style(components::transparent_surface)
-            .into();
+    let sidebar: AppElement<'_> = container(stack![sidebar_scroll, search_overlay])
+        .width(Length::Fixed(SIDEBAR_WIDTH))
+        .height(Length::Fill)
+        .padding(iced::Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: SIDEBAR_LIST_BOTTOM_INSET,
+            left: 0.0,
+        })
+        .style(components::transparent_surface)
+        .into();
 
+    let toolbar_text_color = match state.color_scheme() {
+        UiColorScheme::Light => Color::from_rgb8(76, 76, 76),
+        UiColorScheme::Dark => Color::from_rgb8(232, 232, 232),
+    };
     let toolbar = components::glass_surface(
         GlassId(10),
-        Rect::new(0.0, 0.0, 1088.0, 56.0),
+        Rect::new(0.0, 0.0, 1088.0, FUSED_TOP_BAR_HEIGHT),
         liquid_glass::GlassRole::Toolbar,
         state.color_scheme(),
         iced::Padding::new(8.0),
@@ -368,18 +363,32 @@ fn view(state: &State) -> AppElement<'_> {
         row![
             compositor_navigation(state.color_scheme()),
             space().width(Length::Fill),
-            text(section_title(state.active_section))
-                .size(font::size::HEADLINE)
-                .font(font::ui_font(iced::font::Weight::Semibold)),
-            space().width(Length::Fill),
-            button(components::icon_tinted(UiIcon::Question, 16.0, |palette| {
-                palette.text_secondary
+            button(components::icon_tinted(UiIcon::Question, 16.0, move |_| {
+                toolbar_text_color
             }))
             .on_press(Message::SectionSelected(state.active_section))
-            .width(Length::Fixed(36.0))
+            .width(Length::Fixed(TOP_BAR_BUTTON_SIZE))
+            .height(Length::Fixed(TOP_BAR_BUTTON_SIZE))
+            .padding(6.0)
             .style(components::toolbar_button_style),
         ]
         .spacing(8)
+        .align_y(iced::Alignment::Center),
+    );
+    // Keep the section title out of the material's widget tree entirely. It
+    // belongs immediately after the navigation capsule and is emitted as an
+    // independent final overlay, so no backdrop or toolbar blur pass can
+    // sample a duplicate copy of the glyphs.
+    let toolbar_title = components::glass_overlay(
+        container(
+            text(section_title(state.active_section))
+                .size(font::size::TOOLBAR_TITLE)
+                .font(font::toolbar_title_font())
+                .style(move |_| text::Style { color: Some(toolbar_text_color) }),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(FUSED_TOP_BAR_HEIGHT))
+        .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 88.0 })
         .align_y(iced::Alignment::Center),
     );
 
@@ -390,8 +399,7 @@ fn view(state: &State) -> AppElement<'_> {
     let content_scroll = scrollable(content_body)
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(components::scrollable_style)
-        .on_scroll(|viewport| Message::ContentScrolled(viewport.absolute_offset().y));
+        .style(components::scrollable_style);
     let content = container(content_scroll)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -399,221 +407,40 @@ fn view(state: &State) -> AppElement<'_> {
         .center_x(Length::Fill)
         .style(components::compositor_content_surface);
 
-    let main = container(stack![content, toolbar]).width(Length::Fill).height(Length::Fill);
+    let main =
+        container(stack![content, toolbar, toolbar_title]).width(Length::Fill).height(Length::Fill);
 
     let window_content = container(row![sidebar, main]).width(Length::Fill).height(Length::Fill);
-    window_content.into()
+    let is_dark = state.color_scheme() == UiColorScheme::Dark;
+    let rimmed = liquid_glass::wrap_window_rim(
+        window_content,
+        liquid_glass::WindowRimConfig::new(is_dark).with_corner_radius(14.0),
+    );
+    liquid_glass::wrap_border_resizer(rimmed, false, Message::ResizeWindow)
 }
 
-const SIDEBAR_SCROLL_ID: &str = "settings-sidebar-scroll";
 const SIDEBAR_SCROLLBAR_GAP: f32 = 8.0;
 const SIDEBAR_FIRST_ROW_GAP: f32 = 12.0;
-const SIDEBAR_SCROLLBAR_MIN_THUMB: f32 = 36.0;
-const SIDEBAR_SCROLLBAR_SLOT_WIDTH: f32 = 15.0;
-const SIDEBAR_SCROLLBAR_THUMB_WIDTH: f32 = 8.0 * 0.70;
-const SIDEBAR_SELECTION_SCROLLBAR_GAP: f32 = 1.0;
-const SIDEBAR_SCROLLBAR_HOLD: Duration = Duration::from_millis(650);
-const SIDEBAR_SCROLLBAR_FADE: Duration = Duration::from_millis(250);
-
-fn sidebar_scroll_id() -> iced::widget::Id {
-    iced::widget::Id::new(SIDEBAR_SCROLL_ID)
-}
+const SIDEBAR_SCROLLBAR_THUMB_WIDTH: f32 = 6.0;
+const SIDEBAR_SCROLLBAR_ITEM_GAP: f32 = 1.0;
+const SIDEBAR_SCROLLBAR_EDGE_INSET: f32 =
+    SIDEBAR_CONTENT_INSET - SIDEBAR_SCROLLBAR_ITEM_GAP - SIDEBAR_SCROLLBAR_THUMB_WIDTH;
 
 fn sidebar_scrollbar_top() -> f32 {
-    CONTENT_TOP_INSET + SIDEBAR_SEARCH_TOP_MARGIN + SIDEBAR_SEARCH_HEIGHT + SIDEBAR_SCROLLBAR_GAP
-}
-
-fn sidebar_list_right_inset() -> f32 {
-    SIDEBAR_SCROLLBAR_THUMB_WIDTH + SIDEBAR_SELECTION_SCROLLBAR_GAP
-}
-
-fn sidebar_scrollbar_opacity(last_activity: Option<Instant>, now: Instant) -> f32 {
-    let Some(last_activity) = last_activity else {
-        return 0.0;
-    };
-    let elapsed = now.saturating_duration_since(last_activity);
-    if elapsed <= SIDEBAR_SCROLLBAR_HOLD {
-        1.0
-    } else {
-        1.0 - (elapsed - SIDEBAR_SCROLLBAR_HOLD).as_secs_f32()
-            / SIDEBAR_SCROLLBAR_FADE.as_secs_f32()
-    }
-    .clamp(0.0, 1.0)
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct SidebarScrollMetrics {
-    absolute_offset: f32,
-    viewport_height: f32,
-    content_height: f32,
-}
-
-impl SidebarScrollMetrics {
-    fn from_viewport(viewport: scrollable::Viewport) -> Self {
-        Self {
-            absolute_offset: viewport.absolute_offset().y,
-            viewport_height: viewport.bounds().height,
-            content_height: viewport.content_bounds().height,
-        }
-    }
-
-    fn relative_offset(self) -> f32 {
-        let scroll_range = (self.content_height - self.viewport_height).max(0.0);
-        if scroll_range <= f32::EPSILON {
-            0.0
-        } else {
-            (self.absolute_offset / scroll_range).clamp(0.0, 1.0)
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct SidebarScrollbar {
-    metrics: SidebarScrollMetrics,
-    color_scheme: UiColorScheme,
-    opacity: f32,
-}
-
-#[derive(Debug, Default)]
-struct SidebarScrollbarState {
-    grabbed_at: Option<f32>,
-}
-
-impl SidebarScrollbar {
-    fn thumb_bounds(self, bounds: iced::Rectangle) -> Option<iced::Rectangle> {
-        if self.metrics.content_height <= self.metrics.viewport_height || bounds.height <= 0.0 {
-            return None;
-        }
-
-        let visible_ratio =
-            (self.metrics.viewport_height / self.metrics.content_height).clamp(0.0, 1.0);
-        let height =
-            (bounds.height * visible_ratio).max(SIDEBAR_SCROLLBAR_MIN_THUMB).min(bounds.height);
-        let y = (bounds.height - height) * self.metrics.relative_offset();
-
-        Some(iced::Rectangle::new(
-            Point::new(bounds.width - SIDEBAR_SCROLLBAR_THUMB_WIDTH, y),
-            Size::new(SIDEBAR_SCROLLBAR_THUMB_WIDTH, height),
-        ))
-    }
-
-    fn requested_offset(self, bounds: iced::Rectangle, pointer_y: f32, grabbed_at: f32) -> f32 {
-        let Some(thumb) = self.thumb_bounds(bounds) else {
-            return 0.0;
-        };
-        let travel = bounds.height - thumb.height;
-        if travel <= f32::EPSILON {
-            0.0
-        } else {
-            ((pointer_y - grabbed_at) / travel).clamp(0.0, 1.0)
-        }
-    }
-}
-
-impl canvas::Program<Message, Theme, Renderer> for SidebarScrollbar {
-    type State = SidebarScrollbarState;
-
-    fn update(
-        &self,
-        state: &mut Self::State,
-        event: &canvas::Event,
-        bounds: iced::Rectangle,
-        cursor: mouse::Cursor,
-    ) -> Option<canvas::Action<Message>> {
-        if self.opacity <= 0.0 {
-            return None;
-        }
-        match event {
-            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                let pointer = cursor.position_in(bounds)?;
-                let thumb = self.thumb_bounds(bounds)?;
-                let grabbed_at =
-                    if thumb.contains(pointer) { pointer.y - thumb.y } else { thumb.height * 0.5 };
-                state.grabbed_at = Some(grabbed_at);
-                Some(
-                    canvas::Action::publish(Message::SidebarScrollRequested(
-                        self.requested_offset(bounds, pointer.y, grabbed_at),
-                    ))
-                    .and_capture(),
-                )
-            }
-            canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                let grabbed_at = state.grabbed_at?;
-                let pointer = cursor.position_in(bounds)?;
-                Some(
-                    canvas::Action::publish(Message::SidebarScrollRequested(
-                        self.requested_offset(bounds, pointer.y, grabbed_at),
-                    ))
-                    .and_capture(),
-                )
-            }
-            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
-                if state.grabbed_at.take().is_some() =>
-            {
-                Some(canvas::Action::capture())
-            }
-            _ => None,
-        }
-    }
-
-    fn draw(
-        &self,
-        state: &Self::State,
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: iced::Rectangle,
-        cursor: mouse::Cursor,
-    ) -> Vec<canvas::Geometry<Renderer>> {
-        if self.opacity <= 0.0 {
-            return Vec::new();
-        }
-        let Some(thumb) = self.thumb_bounds(bounds) else {
-            return Vec::new();
-        };
-        let hovered = cursor.position_in(bounds).is_some_and(|position| thumb.contains(position));
-        let active = state.grabbed_at.is_some();
-
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let path = canvas::Path::rounded_rectangle(
-            thumb.position(),
-            thumb.size(),
-            (thumb.width * 0.5).into(),
-        );
-        let emphasis = if active {
-            0.62
-        } else if hovered {
-            0.48
-        } else {
-            0.34
-        };
-        let color = match self.color_scheme {
-            UiColorScheme::Light => Color::from_rgba(0.18, 0.18, 0.20, emphasis * self.opacity),
-            UiColorScheme::Dark => {
-                Color::from_rgba(0.92, 0.92, 0.94, (emphasis + 0.08) * self.opacity)
-            }
-        };
-        frame.fill(&path, color);
-        vec![frame.into_geometry()]
-    }
+    SIDEBAR_SEARCH_TOP + SIDEBAR_SEARCH_HEIGHT + SIDEBAR_SCROLLBAR_GAP
 }
 
 fn sidebar_group(sections: &[Section], active: Section) -> AppElement<'static> {
-    container(
-        column(
-            sections
-                .iter()
-                .copied()
-                .map(|section| components::glass_foreground(sidebar_entry(section, active)))
-                .collect::<Vec<_>>(),
-        )
-        .spacing(2),
+    components::sidebar_group(
+        sections
+            .iter()
+            .copied()
+            .map(|section| sidebar_entry(section, active)),
     )
-    .width(Length::Fill)
-    .into()
 }
 
 fn sidebar_gap() -> AppElement<'static> {
-    space().height(Length::Fixed(8.0)).into()
+    components::sidebar_gap()
 }
 
 fn sidebar_entry(section: Section, active: Section) -> AppElement<'static> {
@@ -1033,33 +860,19 @@ fn compositor_navigation(scheme: UiColorScheme) -> AppElement<'static> {
 
 fn main() -> iced::Result {
     let fonts = font::ui_fonts();
-    let window_config = liquid_glass::WindowConfig::desktop_backdrop();
     let window_settings = iced::window::Settings {
-        transparent: window_config.transparent,
-        // winit requests compositor blur without adding a view above the
-        // wgpu CAMetalLayer, so Iced content remains visible.
-        blur: window_config.blur && (cfg!(target_os = "linux") || cfg!(target_os = "macos")),
-        #[cfg(target_os = "macos")]
-        platform_specific: iced::window::settings::PlatformSpecific {
-            // Let the Iced surface extend beneath the native titlebar. The
-            // sidebar compositor now owns the background behind the traffic
-            // lights, while content keeps its inset through layout padding.
-            titlebar_transparent: true,
-            title_hidden: true,
-            fullsize_content_view: true,
-            ..iced::window::settings::PlatformSpecific::default()
-        },
-        #[cfg(not(target_os = "macos"))]
-        platform_specific: iced::window::settings::PlatformSpecific::default(),
-        ..iced::window::Settings::default()
+        size: iced::Size::new(1320.0, 760.0),
+        transparent: true,
+        blur: true,
+        decorations: false,
+        ..Default::default()
     };
 
     let mut app = iced::application::<State, Message, Theme, Renderer>(boot, update, view)
         .title("System Settings")
         .theme(app_theme)
         .subscription(subscription)
-        .window(window_settings)
-        .window_size(iced::Size::new(1320.0, 760.0));
+        .window(window_settings);
     for bytes in &fonts.bytes {
         app = app.font(bytes.clone());
     }
@@ -1071,17 +884,53 @@ fn main() -> iced::Result {
 
 #[cfg(test)]
 mod sidebar_scrollbar_tests {
+    use std::time::Instant;
+    use iced::{Point, Size};
+    use liquid_glass::ui::{
+        SpringScrollState, SpringScrollView,
+        scroll_view::scrollbar_opacity,
+    };
     use super::*;
 
-    fn scrollbar_at(absolute_offset: f32) -> SidebarScrollbar {
-        SidebarScrollbar {
-            metrics: SidebarScrollMetrics {
-                absolute_offset,
-                viewport_height: 600.0,
-                content_height: 1_000.0,
-            },
-            color_scheme: UiColorScheme::Light,
-            opacity: 1.0,
+    const TEST_SLOT_WIDTH: f32 = 15.0;
+
+    fn sidebar_config() -> ScrollbarConfig {
+        ScrollbarConfig::sidebar(
+            sidebar_scrollbar_top(),
+            SIDEBAR_SCROLLBAR_BOTTOM_INSET,
+            SIDEBAR_SCROLLBAR_EDGE_INSET,
+        )
+    }
+
+    fn scrollbar_at(
+        absolute_offset: f32,
+    ) -> (SpringScrollView<'static, Message, Theme, Renderer>, SpringScrollState) {
+        let view = SpringScrollView::new(space(), UiColorScheme::Light).config(sidebar_config());
+        let state = SpringScrollState {
+            offset: absolute_offset,
+            viewport_height: 600.0,
+            content_height: 1_000.0,
+            ..SpringScrollState::default()
+        };
+        (view, state)
+    }
+
+    fn rail() -> iced::Rectangle {
+        iced::Rectangle::new(
+            Point::ORIGIN,
+            Size::new(
+                TEST_SLOT_WIDTH,
+                sidebar_scrollbar_top() + 500.0 + SIDEBAR_SCROLLBAR_BOTTOM_INSET,
+            ),
+        )
+    }
+
+    fn state_at(absolute_offset: f32) -> SpringScrollState {
+        SpringScrollState {
+            offset: absolute_offset,
+            viewport_height: 600.0,
+            content_height: 1_000.0,
+            ..SpringScrollState::default()
         }
     }
 
@@ -1090,52 +939,91 @@ mod sidebar_scrollbar_tests {
         assert_eq!(SIDEBAR_SEARCH_HEIGHT, 28.0);
         assert_eq!(
             sidebar_scrollbar_top(),
-            CONTENT_TOP_INSET
-                + SIDEBAR_SEARCH_TOP_MARGIN
-                + SIDEBAR_SEARCH_HEIGHT
-                + SIDEBAR_SCROLLBAR_GAP
+            SIDEBAR_SEARCH_TOP + SIDEBAR_SEARCH_HEIGHT + SIDEBAR_SCROLLBAR_GAP
         );
+        assert_eq!(
+            SIDEBAR_SEARCH_TOP,
+            FUSED_TOP_BAR_HEIGHT + iced_backend::SIDEBAR_SEARCH_TOP_MARGIN
+        );
+        assert_eq!(iced_backend::SIDEBAR_SEARCH_TOP_MARGIN, 10.0);
     }
 
     #[test]
     fn thumb_stays_inside_its_independent_rail() {
-        let rail =
-            iced::Rectangle::new(Point::ORIGIN, Size::new(SIDEBAR_SCROLLBAR_SLOT_WIDTH, 500.0));
-        let top = scrollbar_at(0.0).thumb_bounds(rail).expect("overflowing list has a thumb");
-        let bottom = scrollbar_at(400.0).thumb_bounds(rail).expect("overflowing list has a thumb");
+        let rail = rail();
+        let (scrollbar, top_state) = scrollbar_at(0.0);
+        let (_, bottom_state) = scrollbar_at(400.0);
+        let top = scrollbar.thumb_bounds(&top_state, rail).expect("overflowing list has a thumb");
+        let bottom =
+            scrollbar.thumb_bounds(&bottom_state, rail).expect("overflowing list has a thumb");
 
-        assert_eq!(top.x, SIDEBAR_SCROLLBAR_SLOT_WIDTH - SIDEBAR_SCROLLBAR_THUMB_WIDTH);
+        assert_eq!(
+            top.x,
+            TEST_SLOT_WIDTH
+                - SIDEBAR_SCROLLBAR_EDGE_INSET
+                - SIDEBAR_SCROLLBAR_THUMB_WIDTH
+        );
         assert_eq!(top.width, SIDEBAR_SCROLLBAR_THUMB_WIDTH);
-        assert_eq!(top.y, 0.0);
-        assert!((bottom.y + bottom.height - rail.height).abs() <= f32::EPSILON);
+        assert_eq!(top.y, sidebar_scrollbar_top());
+        assert_eq!(bottom.y + bottom.height, rail.height - SIDEBAR_SCROLLBAR_BOTTOM_INSET);
     }
 
     #[test]
-    fn selection_ends_one_pixel_before_the_thumb() {
-        let content_width = 212.0;
-        let rail_left = content_width - SIDEBAR_SCROLLBAR_SLOT_WIDTH;
-        let thumb_left = rail_left + SIDEBAR_SCROLLBAR_SLOT_WIDTH - SIDEBAR_SCROLLBAR_THUMB_WIDTH;
-        let selection_right = content_width - sidebar_list_right_inset();
+    fn list_items_keep_the_measured_scrollbar_gap() {
+        assert_eq!(SIDEBAR_CONTENT_WIDTH, SIDEBAR_WIDTH - SIDEBAR_CONTENT_INSET * 2.0);
+        assert_eq!(SIDEBAR_CONTENT_WIDTH, 212.0);
+        assert_eq!(SIDEBAR_CONTENT_INSET, 10.0);
+        let item_right = SIDEBAR_WIDTH - SIDEBAR_CONTENT_INSET;
+        let thumb_left =
+            SIDEBAR_WIDTH - SIDEBAR_SCROLLBAR_EDGE_INSET - SIDEBAR_SCROLLBAR_THUMB_WIDTH;
+        assert!((thumb_left - item_right - SIDEBAR_SCROLLBAR_ITEM_GAP).abs() <= f32::EPSILON);
+        assert!((SIDEBAR_SCROLLBAR_EDGE_INSET - 3.0).abs() <= f32::EPSILON);
+        assert_eq!(SIDEBAR_LIST_BOTTOM_INSET, 0.0);
+        assert_eq!(SIDEBAR_SCROLLBAR_BOTTOM_INSET, 3.0);
+    }
 
-        assert_eq!(thumb_left - selection_right, SIDEBAR_SELECTION_SCROLLBAR_GAP);
+    #[test]
+    fn overscroll_compresses_the_thumb_at_both_edges() {
+        let (view, _) = scrollbar_at(0.0);
+        let rail = rail();
+        let mut top = state_at(0.0);
+        top.offset = -60.0;
+        let top_thumb = view.thumb_bounds(&top, rail).expect("top thumb");
+
+        let mut bottom = state_at(400.0);
+        bottom.offset = bottom.scroll_range() + 60.0;
+        let bottom_thumb = view.thumb_bounds(&bottom, rail).expect("bottom thumb");
+        let normal = view.thumb_bounds(&state_at(200.0), rail).expect("normal thumb");
+
+        assert!(top_thumb.height < normal.height);
+        assert!(bottom_thumb.height < normal.height);
+        assert_eq!(top_thumb.y, sidebar_scrollbar_top());
+        assert_eq!(
+            bottom_thumb.y + bottom_thumb.height,
+            rail.height - SIDEBAR_SCROLLBAR_BOTTOM_INSET
+        );
     }
 
     #[test]
     fn scrollbar_is_hidden_until_the_list_moves() {
-        assert_eq!(sidebar_scrollbar_opacity(None, Instant::now()), 0.0);
+        let config = sidebar_config();
+        assert_eq!(scrollbar_opacity(None, Instant::now(), config.hold_duration, config.fade_duration), 0.0);
     }
 
     #[test]
     fn scrollbar_holds_then_fades_out() {
         let started = Instant::now();
-        assert_eq!(sidebar_scrollbar_opacity(Some(started), started), 1.0);
-        assert_eq!(sidebar_scrollbar_opacity(Some(started), started + SIDEBAR_SCROLLBAR_HOLD), 1.0);
-        let halfway = started + SIDEBAR_SCROLLBAR_HOLD + SIDEBAR_SCROLLBAR_FADE / 2;
-        assert!((sidebar_scrollbar_opacity(Some(started), halfway) - 0.5).abs() < 0.01);
+        let config = sidebar_config();
+        assert_eq!(scrollbar_opacity(Some(started), started, config.hold_duration, config.fade_duration), 1.0);
+        assert_eq!(scrollbar_opacity(Some(started), started + config.hold_duration, config.hold_duration, config.fade_duration), 1.0);
+        let halfway = started + config.hold_duration + config.fade_duration / 2;
+        assert!((scrollbar_opacity(Some(started), halfway, config.hold_duration, config.fade_duration) - 0.5).abs() < 0.01);
         assert_eq!(
-            sidebar_scrollbar_opacity(
+            scrollbar_opacity(
                 Some(started),
-                started + SIDEBAR_SCROLLBAR_HOLD + SIDEBAR_SCROLLBAR_FADE,
+                started + config.hold_duration + config.fade_duration,
+                config.hold_duration,
+                config.fade_duration,
             ),
             0.0
         );
@@ -1143,12 +1031,31 @@ mod sidebar_scrollbar_tests {
 
     #[test]
     fn rail_clicks_map_to_clamped_relative_offsets() {
-        let rail =
-            iced::Rectangle::new(Point::ORIGIN, Size::new(SIDEBAR_SCROLLBAR_SLOT_WIDTH, 500.0));
-        let scrollbar = scrollbar_at(0.0);
-        let thumb = scrollbar.thumb_bounds(rail).expect("overflowing list has a thumb");
+        let rail = rail();
+        let (scrollbar, state) = scrollbar_at(0.0);
+        let thumb = scrollbar.thumb_bounds(&state, rail).expect("overflowing list has a thumb");
 
-        assert_eq!(scrollbar.requested_offset(rail, -20.0, thumb.height * 0.5), 0.0);
-        assert_eq!(scrollbar.requested_offset(rail, 520.0, thumb.height * 0.5), 1.0);
+        assert_eq!(
+            scrollbar.requested_offset(
+                &state,
+                rail,
+                sidebar_scrollbar_top() - 20.0,
+                thumb.height * 0.5
+            ),
+            0.0
+        );
+        assert_eq!(
+            scrollbar.requested_offset(&state, rail, rail.height + 20.0, thumb.height * 0.5),
+            400.0
+        );
+    }
+
+    #[test]
+    fn offset_is_clamped_to_content_range() {
+        let mut state = state_at(0.0);
+        assert!(state.set_offset(999.0));
+        assert_eq!(state.offset, 400.0);
+        assert!(state.set_offset(-1.0));
+        assert_eq!(state.offset, 0.0);
     }
 }
