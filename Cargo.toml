@@ -1,13 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/liquid-glass",
-    "crates/liquid-glass-animation",
-    "crates/liquid-glass-geometry",
-    "crates/liquid-glass-native",
-    "crates/liquid-glass-platform",
-    "crates/liquid-glass-render",
-    "crates/liquid-glass-scene",
+    "crates/bmol-iced",
     "crates/liquid-glass-ui",
     "examples/playground",
 ]
@@ -17,7 +11,10 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
-keywords = ["rust", "ui", "wgpu", "iced", "liquid-glass"]
+authors = ["Erizeez <zhangyongcheng@sjtu.edu.cn>"]
+repository = "https://github.com/Erizeez/bmol-iced"
+homepage = "https://github.com/Erizeez/bmol-iced"
+keywords = ["rust", "ui", "wgpu", "iced", "liquid-glass", "macos"]
 categories = ["gui", "graphics", "rendering"]
 
 [workspace.lints.rust]
@@ -29,12 +26,8 @@ missing_docs = "allow"
 all = "warn"
 pedantic = "warn"
 
-# A fully unoptimized wgpu/Iced stack makes the interactive demos appear far
-# slower than the renderer they are meant to evaluate. Keep workspace code
-# quick to compile and debuggable, while optimizing the already-stable graphics
-# dependency graph enough for representative scrolling and animation.
 [profile.dev]
-opt-level = 1
+opt-level = 2
 
 [profile.dev.package."*"]
 opt-level = 2

@@ -10,24 +10,204 @@ use std::{
 
 use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
 use liquid_glass::{
-    GlassAccessibility, GlassId, GlassInteraction, GlassNode, GlassRole, GlassScene, GpuRenderer,
-    GpuSize, Rect, UiColorScheme, UiTheme,
+    Color, GlassAccessibility, GlassId, GlassInteraction, GlassMaterial, GlassNode, GlassRole,
+    GlassScene, GlassShape, GlassVariant, GpuRenderer, GpuSize, Rect, TrafficLightStyle,
+    UiColorScheme, UiTheme,
 };
 
 #[path = "background.rs"]
 mod background;
 
-#[cfg(target_os = "macos")]
-pub const CONTENT_TOP_INSET: f32 = 32.0;
-#[cfg(not(target_os = "macos"))]
-pub const CONTENT_TOP_INSET: f32 = 0.0;
+/// Height of the fused titlebar/toolbar chrome used by this demo.
+///
+/// The macOS reference samples report a 52 pt top-level AXToolbar. The sidebar
+/// search field is laid out below this chrome instead of being placed inside it.
+pub const FUSED_TOP_BAR_HEIGHT: f32 = 52.0;
+
+/// Entering hover is intentionally crisp, while leaving hover uses the
+/// previous, slightly softer response. Both values are shared with the Iced
+/// glyph layer so the icon and material never drift apart.
+pub const INTERACTION_ENTER_ANIMATION_TIME_CONSTANT: f32 = 0.085 / 4.5;
+pub const INTERACTION_EXIT_ANIMATION_TIME_CONSTANT: f32 = 0.085 / 3.0;
+
+/// The navigation capsule is a 36 pt control centered inside the 52 pt bar.
+pub const TOP_BAR_NAVIGATION_HEIGHT: f32 = 36.0;
+
+/// Standard top-bar icon controls use the 28 pt minimum visual size.
+#[allow(dead_code)]
+pub const TOP_BAR_BUTTON_SIZE: f32 = 28.0;
+
+/// Shared sidebar geometry. Search and list content use this same inset frame;
+/// the scrollbar is an independent overlay and must not change this width.
+pub const SIDEBAR_WIDTH: f32 = 232.0;
+pub const SIDEBAR_CONTENT_INSET: f32 = 10.0;
+pub const SIDEBAR_CONTENT_WIDTH: f32 = SIDEBAR_WIDTH - SIDEBAR_CONTENT_INSET * 2.0;
+#[allow(dead_code)]
+pub const SIDEBAR_LIST_BOTTOM_INSET: f32 = 0.0;
+#[allow(dead_code)]
+pub const SIDEBAR_SCROLLBAR_BOTTOM_INSET: f32 = 3.0;
 
 /// Native System Settings uses AppKit's large search-field control size.
-pub const SIDEBAR_SEARCH_TOP_MARGIN: f32 = 10.0;
+pub const SIDEBAR_SEARCH_TOP_MARGIN: f32 = SIDEBAR_CONTENT_INSET;
 pub const SIDEBAR_SEARCH_HEIGHT: f32 = 28.0;
+
+/// The search field uses the same 10 pt top, leading, and trailing inset.
+pub const SIDEBAR_SEARCH_TOP: f32 = FUSED_TOP_BAR_HEIGHT + SIDEBAR_SEARCH_TOP_MARGIN;
+
+/// The dedicated window-controls sample uses stable IDs so the scene and the
+/// Iced hit targets share the same interaction state.
+pub const WINDOW_CONTROL_NATIVE_IDS: [GlassId; 3] = [GlassId(100), GlassId(101), GlassId(102)];
+pub const WINDOW_CONTROL_REFERENCE_IDS: [GlassId; 3] = [GlassId(110), GlassId(111), GlassId(112)];
+pub const WINDOW_CONTROL_LARGE_IDS: [GlassId; 3] = [GlassId(120), GlassId(121), GlassId(122)];
+pub const WINDOW_CONTROL_INACTIVE_IDS: [GlassId; 3] = [GlassId(130), GlassId(131), GlassId(132)];
+pub const WINDOW_CONTROL_DISABLED_IDS: [GlassId; 3] = [GlassId(140), GlassId(141), GlassId(142)];
+
+pub const WINDOW_CONTROL_NATIVE_X: f32 = 10.0;
+pub const WINDOW_CONTROL_NATIVE_Y: f32 = 18.0;
+pub const WINDOW_CONTROL_REFERENCE_X: f32 = 240.0;
+pub const WINDOW_CONTROL_REFERENCE_Y: f32 = 196.0;
+pub const WINDOW_CONTROL_LARGE_X: f32 = 240.0;
+pub const WINDOW_CONTROL_LARGE_Y: f32 = 292.0;
+pub const WINDOW_CONTROL_INACTIVE_X: f32 = 240.0;
+pub const WINDOW_CONTROL_INACTIVE_Y: f32 = 418.0;
+pub const WINDOW_CONTROL_DISABLED_X: f32 = 240.0;
+pub const WINDOW_CONTROL_DISABLED_Y: f32 = 544.0;
+/// AppKit's standard traffic-light circle measures 28 px on a 2x display.
+/// Keep the cross-platform sample in logical points so its 1:1 reference is
+/// independent of the backing scale factor.
+pub const WINDOW_CONTROL_NATIVE_SIZE: f32 = 14.0;
+pub const WINDOW_CONTROL_LARGE_SIZE: f32 = 64.0;
+pub const WINDOW_CONTROL_GAP: f32 = 9.0;
+pub const WINDOW_CONTROL_LARGE_GAP: f32 = 12.0;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DemoSurface {
+    #[default]
+    Settings,
+    WindowControls,
+}
+
+/// Runtime optical controls for the standalone window-controls laboratory.
+///
+/// The values are copied into the semantic traffic-light material for one
+/// frame, so changing a slider does not alter any other glass role.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindowControlTuning {
+    pub blur_radius: f32,
+    pub opacity: f32,
+    pub substrate_coverage: f32,
+    pub lower_substrate_coverage: f32,
+    pub lower_tint_coverage: f32,
+    pub angular_light: f32,
+    pub light_angle: f32,
+    pub light_softness: f32,
+    pub body_thickness: f32,
+    pub internal_scattering: f32,
+    pub side_edge_darkness: f32,
+    pub side_edge_width: f32,
+    pub edge_side_bias: f32,
+    pub edge_side_angle: f32,
+    pub refraction_strength: f32,
+    pub fresnel_strength: f32,
+}
+
+impl WindowControlTuning {
+    pub const fn new() -> Self {
+        Self {
+            blur_radius: 17.0,
+            opacity: 1.0,
+            substrate_coverage: 0.88,
+            lower_substrate_coverage: 0.54,
+            lower_tint_coverage: 0.66,
+            angular_light: 0.055,
+            light_angle: 0.52,
+            light_softness: 1.0,
+            body_thickness: 0.79,
+            internal_scattering: 1.0,
+            side_edge_darkness: 4.0,
+            side_edge_width: 1.26,
+            edge_side_bias: 1.0,
+            edge_side_angle: 23.0,
+            refraction_strength: 0.5,
+            fresnel_strength: 0.0,
+        }
+    }
+
+    /// Returns the scheme-specific material preset used by the standalone
+    /// controls laboratory. The dark preset intentionally removes the side
+    /// absorption and refraction response while increasing Fresnel, matching
+    /// the measured dark-mode control treatment.
+    #[allow(dead_code)]
+    #[must_use]
+    pub const fn for_scheme(scheme: UiColorScheme) -> Self {
+        match scheme {
+            UiColorScheme::Light => Self::new(),
+            UiColorScheme::Dark => Self {
+                blur_radius: 17.0,
+                internal_scattering: 1.0,
+                side_edge_darkness: 0.0,
+                side_edge_width: 0.5,
+                opacity: 1.0,
+                substrate_coverage: 0.88,
+                lower_substrate_coverage: 0.54,
+                lower_tint_coverage: 0.66,
+                angular_light: 0.055,
+                light_angle: 0.52,
+                light_softness: 1.0,
+                body_thickness: 0.79,
+                edge_side_bias: 1.0,
+                edge_side_angle: 23.0,
+                refraction_strength: 0.0,
+                fresnel_strength: 0.39,
+            },
+        }
+    }
+
+    #[must_use]
+    fn clamped(self) -> Self {
+        Self {
+            blur_radius: self.blur_radius.clamp(0.0, 80.0),
+            opacity: self.opacity.clamp(0.0, 1.0),
+            substrate_coverage: self.substrate_coverage.clamp(0.0, 1.0),
+            lower_substrate_coverage: self.lower_substrate_coverage.clamp(0.0, 1.0),
+            lower_tint_coverage: self.lower_tint_coverage.clamp(0.0, 1.0),
+            angular_light: self.angular_light.clamp(0.0, 2.0),
+            light_angle: self.light_angle.clamp(0.0, 1.0),
+            light_softness: self.light_softness.clamp(0.0, 1.0),
+            body_thickness: self.body_thickness.clamp(0.25, 3.0),
+            internal_scattering: self.internal_scattering.clamp(0.0, 1.0),
+            side_edge_darkness: self.side_edge_darkness.clamp(0.0, 4.0),
+            side_edge_width: self.side_edge_width.clamp(0.25, 4.0),
+            edge_side_bias: self.edge_side_bias.clamp(0.0, 1.0),
+            edge_side_angle: self.edge_side_angle.clamp(10.0, 80.0),
+            refraction_strength: self.refraction_strength.clamp(0.0, 1.0),
+            fresnel_strength: self.fresnel_strength.clamp(0.0, 1.0),
+        }
+    }
+}
+
+impl Default for WindowControlTuning {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 static ACTIVE_COLOR_SCHEME: AtomicU8 = AtomicU8::new(1);
 static ACTIVE_ACCESSIBILITY: AtomicU8 = AtomicU8::new(0);
+static ACTIVE_SURFACE: AtomicU8 = AtomicU8::new(0);
+// The outer group hit area is intentionally larger than each circle. Keep its
+// hover target beside the renderer so the three visual nodes and the Iced
+// glyph layer share one state machine, including the gaps between circles.
+static ACTIVE_WINDOW_CONTROL_HOVER: AtomicU8 = AtomicU8::new(0);
+// The Iced layer advances this shared value on its animation tick. The
+// compositor consumes the same value for the material transition, avoiding a
+// separate renderer clock that could make the glyph and colour drift by a few
+// frames.
+static ACTIVE_WINDOW_CONTROL_PROGRESS: Mutex<[f32; 5]> = Mutex::new([0.0; 5]);
+static ACTIVE_WINDOW_CONTROL_PRESS_PROGRESS: Mutex<[f32; 15]> = Mutex::new([0.0; 15]);
+static ACTIVE_WINDOW_CONTROL_SCALE: Mutex<[f32; 15]> = Mutex::new([1.0; 15]);
+static ACTIVE_WINDOW_CONTROL_TUNING: Mutex<WindowControlTuning> =
+    Mutex::new(WindowControlTuning::new());
 
 pub fn set_color_scheme(scheme: UiColorScheme) {
     ACTIVE_COLOR_SCHEME.store(
@@ -60,6 +240,83 @@ pub fn set_accessibility(accessibility: GlassAccessibility) {
     ACTIVE_ACCESSIBILITY.store(value, Ordering::Relaxed);
 }
 
+#[allow(dead_code)]
+pub fn set_window_control_tuning(tuning: WindowControlTuning) {
+    if let Ok(mut active) = ACTIVE_WINDOW_CONTROL_TUNING.lock() {
+        *active = tuning.clamped();
+    }
+}
+
+fn active_window_control_tuning() -> WindowControlTuning {
+    ACTIVE_WINDOW_CONTROL_TUNING
+        .lock()
+        .map_or_else(|poisoned| *poisoned.into_inner(), |active| *active)
+}
+
+#[allow(dead_code)]
+pub fn set_surface(surface: DemoSurface) {
+    ACTIVE_SURFACE.store(
+        match surface {
+            DemoSurface::Settings => 0,
+            DemoSurface::WindowControls => 1,
+        },
+        Ordering::Relaxed,
+    );
+}
+
+#[allow(dead_code)]
+pub fn set_window_control_group_hover(group_index: usize, hovered: bool) {
+    if group_index >= u8::BITS as usize {
+        return;
+    }
+    let bit = 1_u8 << group_index;
+    if hovered {
+        ACTIVE_WINDOW_CONTROL_HOVER.fetch_or(bit, Ordering::Relaxed);
+    } else {
+        ACTIVE_WINDOW_CONTROL_HOVER.fetch_and(!bit, Ordering::Relaxed);
+    }
+}
+
+#[allow(dead_code)]
+pub fn set_window_control_group_progress(group_index: usize, progress: f32) {
+    if let Ok(mut values) = ACTIVE_WINDOW_CONTROL_PROGRESS.lock()
+        && let Some(value) = values.get_mut(group_index)
+    {
+        *value = progress.clamp(0.0, 1.0);
+    }
+}
+
+#[allow(dead_code)]
+pub fn set_window_control_press_progress(id: GlassId, progress: f32) {
+    let Some(index) = window_control_slot_index(id) else {
+        return;
+    };
+    if let Ok(mut values) = ACTIVE_WINDOW_CONTROL_PRESS_PROGRESS.lock()
+        && let Some(value) = values.get_mut(index)
+    {
+        *value = progress.clamp(0.0, 1.0);
+    }
+}
+
+#[allow(dead_code)]
+pub fn set_window_control_scale(id: GlassId, scale: f32) {
+    let Some(index) = window_control_slot_index(id) else {
+        return;
+    };
+    if let Ok(mut values) = ACTIVE_WINDOW_CONTROL_SCALE.lock()
+        && let Some(value) = values.get_mut(index)
+    {
+        *value = scale.clamp(0.85, 1.30);
+    }
+}
+
+fn active_surface() -> DemoSurface {
+    match ACTIVE_SURFACE.load(Ordering::Relaxed) {
+        1 => DemoSurface::WindowControls,
+        _ => DemoSurface::Settings,
+    }
+}
+
 fn active_accessibility() -> GlassAccessibility {
     let value = ACTIVE_ACCESSIBILITY.load(Ordering::Relaxed);
     GlassAccessibility {
@@ -74,7 +331,7 @@ pub struct Renderer {
     foreground: Option<IcedRenderer>,
     overlay: Option<IcedRenderer>,
     active_layer: RenderLayer,
-    interactions: Arc<Mutex<HashMap<GlassId, GlassInteraction>>>,
+    interactions: Arc<Mutex<HashMap<GlassId, AnimatedInteraction>>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -83,6 +340,13 @@ enum RenderLayer {
     Source,
     Foreground,
     Overlay,
+}
+
+#[derive(Clone, Copy)]
+struct AnimatedInteraction {
+    current: GlassInteraction,
+    target: GlassInteraction,
+    last_updated: Instant,
 }
 
 impl fmt::Debug for Renderer {
@@ -103,11 +367,60 @@ impl Renderer {
     }
 
     fn glass_interaction(&self, id: GlassId) -> GlassInteraction {
-        self.interactions
-            .lock()
-            .ok()
-            .and_then(|interactions| interactions.get(&id).copied())
-            .unwrap_or_else(GlassInteraction::inactive)
+        let Ok(mut interactions) = self.interactions.lock() else {
+            return GlassInteraction::inactive();
+        };
+        let Some(interaction) = interactions.get_mut(&id) else {
+            return GlassInteraction::inactive();
+        };
+
+        let now = Instant::now();
+        let delta = now.saturating_duration_since(interaction.last_updated).as_secs_f32().min(0.1);
+        interaction.last_updated = now;
+        let group_hover = window_control_group_hover_target(id);
+        let target_hover = interaction.target.hover.max(group_hover);
+        let hover_time_constant = if target_hover >= interaction.current.hover {
+            INTERACTION_ENTER_ANIMATION_TIME_CONSTANT
+        } else {
+            INTERACTION_EXIT_ANIMATION_TIME_CONSTANT
+        };
+        let hover_step = 1.0 - (-delta / hover_time_constant).exp();
+        let press_step = 1.0
+            - (-delta
+                / if interaction.target.press >= interaction.current.press {
+                    INTERACTION_ENTER_ANIMATION_TIME_CONSTANT
+                } else {
+                    INTERACTION_EXIT_ANIMATION_TIME_CONSTANT
+                })
+            .exp();
+        let focus_step = 1.0
+            - (-delta
+                / if interaction.target.focus >= interaction.current.focus {
+                    INTERACTION_ENTER_ANIMATION_TIME_CONSTANT
+                } else {
+                    INTERACTION_EXIT_ANIMATION_TIME_CONSTANT
+                })
+            .exp();
+        interaction.current.hover = approach(interaction.current.hover, target_hover, hover_step);
+        interaction.current.press =
+            approach(interaction.current.press, interaction.target.press, press_step);
+        interaction.current.focus =
+            approach(interaction.current.focus, interaction.target.focus, focus_step);
+        interaction.current.pointer = interaction.target.pointer;
+        interaction.current.spring = interaction.target.spring;
+        interaction.current.parallax = interaction.target.parallax;
+        if let Some(progress) = window_control_group_progress(id) {
+            interaction.current.hover = progress;
+        }
+        if let Some(progress) = window_control_press_progress(id) {
+            // The custom GlassButton is rebuilt by Iced after each message,
+            // so its local pressed flag is only authoritative for the input
+            // event itself. The demo-level press animation is the durable
+            // source of truth for the material while it fades out.
+            interaction.current.press = progress;
+            interaction.target.press = progress;
+        }
+        interaction.current
     }
 
     fn active_mut(&mut self) -> &mut IcedRenderer {
@@ -125,6 +438,69 @@ impl Renderer {
             RenderLayer::Source => {}
         }
         &mut self.inner
+    }
+}
+
+fn window_control_group_hover_target(id: GlassId) -> f32 {
+    let Some(group_index) = window_control_group_index(id) else {
+        return 0.0;
+    };
+    let bit = 1_u8 << group_index;
+    if ACTIVE_WINDOW_CONTROL_HOVER.load(Ordering::Relaxed) & bit != 0 { 1.0 } else { 0.0 }
+}
+
+fn window_control_group_progress(id: GlassId) -> Option<f32> {
+    let group_index = window_control_group_index(id)?;
+    ACTIVE_WINDOW_CONTROL_PROGRESS.lock().ok().and_then(|values| values.get(group_index).copied())
+}
+
+fn window_control_press_progress(id: GlassId) -> Option<f32> {
+    let index = window_control_slot_index(id)?;
+    ACTIVE_WINDOW_CONTROL_PRESS_PROGRESS.lock().ok().and_then(|values| values.get(index).copied())
+}
+
+fn window_control_scale(id: GlassId) -> f32 {
+    let Some(index) = window_control_slot_index(id) else {
+        return 1.0;
+    };
+    ACTIVE_WINDOW_CONTROL_SCALE
+        .lock()
+        .ok()
+        .and_then(|values| values.get(index).copied())
+        .unwrap_or(1.0)
+}
+
+fn window_control_slot_index(id: GlassId) -> Option<usize> {
+    let group = window_control_group_index(id)?;
+    let within_group = if let Some(index) =
+        WINDOW_CONTROL_NATIVE_IDS.iter().position(|item| *item == id)
+    {
+        index
+    } else if let Some(index) = WINDOW_CONTROL_REFERENCE_IDS.iter().position(|item| *item == id) {
+        index
+    } else if let Some(index) = WINDOW_CONTROL_LARGE_IDS.iter().position(|item| *item == id) {
+        index
+    } else if let Some(index) = WINDOW_CONTROL_INACTIVE_IDS.iter().position(|item| *item == id) {
+        index
+    } else {
+        WINDOW_CONTROL_DISABLED_IDS.iter().position(|item| *item == id)?
+    };
+    Some(group * 3 + within_group)
+}
+
+fn window_control_group_index(id: GlassId) -> Option<usize> {
+    if WINDOW_CONTROL_NATIVE_IDS.contains(&id) {
+        Some(0)
+    } else if WINDOW_CONTROL_REFERENCE_IDS.contains(&id) {
+        Some(1)
+    } else if WINDOW_CONTROL_LARGE_IDS.contains(&id) {
+        Some(2)
+    } else if WINDOW_CONTROL_INACTIVE_IDS.contains(&id) {
+        Some(3)
+    } else if WINDOW_CONTROL_DISABLED_IDS.contains(&id) {
+        Some(4)
+    } else {
+        None
     }
 }
 
@@ -147,9 +523,21 @@ impl liquid_glass::GlassForegroundRenderer for Renderer {
 
     fn update_glass_interaction(&self, id: GlassId, interaction: GlassInteraction) {
         if let Ok(mut interactions) = self.interactions.lock() {
-            interactions.insert(id, interaction);
+            let now = Instant::now();
+            interactions.entry(id).and_modify(|animated| animated.target = interaction).or_insert(
+                AnimatedInteraction {
+                    current: interaction,
+                    target: interaction,
+                    last_updated: now,
+                },
+            );
         }
     }
+}
+
+fn approach(current: f32, target: f32, step: f32) -> f32 {
+    let value = current + (target - current) * step.clamp(0.0, 1.0);
+    if (value - target).abs() < 0.001 { target } else { value }
 }
 
 impl iced::advanced::Renderer for Renderer {
@@ -430,6 +818,93 @@ pub struct Compositor {
     native_backdrop: Option<liquid_glass_native::DesktopBlurTarget>,
     color_scheme: UiColorScheme,
     started_at: Instant,
+    profiler: FrameProfiler,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FrameTiming {
+    source_gpu_encode_ns: u128,
+    source_iced_ns: u128,
+    scene_build_ns: u128,
+    layers_iced_ns: u128,
+    glass_gpu_encode_ns: u128,
+    gpu_wait_ns: u128,
+    total_ns: u128,
+}
+
+#[derive(Debug)]
+struct FrameProfiler {
+    enabled: bool,
+    wait_for_gpu: bool,
+    skip_toolbar: bool,
+    skip_scroll_edge: bool,
+    skip_navigation: bool,
+    skip_search: bool,
+    frame: u64,
+    samples: u32,
+    sum: FrameTiming,
+    max: FrameTiming,
+}
+
+impl FrameProfiler {
+    fn new() -> Self {
+        Self {
+            enabled: std::env::var_os("LIQUID_GLASS_PROFILE").is_some(),
+            wait_for_gpu: std::env::var_os("LIQUID_GLASS_PROFILE_GPU").is_some(),
+            skip_toolbar: std::env::var_os("LIQUID_GLASS_PROFILE_SKIP_TOOLBAR").is_some(),
+            skip_scroll_edge: std::env::var_os("LIQUID_GLASS_PROFILE_SKIP_SCROLL_EDGE").is_some(),
+            skip_navigation: std::env::var_os("LIQUID_GLASS_PROFILE_SKIP_NAVIGATION").is_some(),
+            skip_search: std::env::var_os("LIQUID_GLASS_PROFILE_SKIP_SEARCH").is_some(),
+            frame: 0,
+            samples: 0,
+            sum: FrameTiming::default(),
+            max: FrameTiming::default(),
+        }
+    }
+
+    fn record(&mut self, timing: FrameTiming) {
+        if !self.enabled {
+            return;
+        }
+
+        self.frame = self.frame.saturating_add(1);
+        self.samples = self.samples.saturating_add(1);
+        self.sum.source_gpu_encode_ns += timing.source_gpu_encode_ns;
+        self.sum.source_iced_ns += timing.source_iced_ns;
+        self.sum.scene_build_ns += timing.scene_build_ns;
+        self.sum.layers_iced_ns += timing.layers_iced_ns;
+        self.sum.glass_gpu_encode_ns += timing.glass_gpu_encode_ns;
+        self.sum.gpu_wait_ns += timing.gpu_wait_ns;
+        self.sum.total_ns += timing.total_ns;
+        self.max.source_gpu_encode_ns =
+            self.max.source_gpu_encode_ns.max(timing.source_gpu_encode_ns);
+        self.max.source_iced_ns = self.max.source_iced_ns.max(timing.source_iced_ns);
+        self.max.scene_build_ns = self.max.scene_build_ns.max(timing.scene_build_ns);
+        self.max.layers_iced_ns = self.max.layers_iced_ns.max(timing.layers_iced_ns);
+        self.max.glass_gpu_encode_ns = self.max.glass_gpu_encode_ns.max(timing.glass_gpu_encode_ns);
+        self.max.gpu_wait_ns = self.max.gpu_wait_ns.max(timing.gpu_wait_ns);
+        self.max.total_ns = self.max.total_ns.max(timing.total_ns);
+
+        if self.samples == 60 {
+            let average = |total: u128| total as f64 / 60.0 / 1_000_000.0;
+            let milliseconds = |value: u128| value as f64 / 1_000_000.0;
+            eprintln!(
+                "liquid-glass frame profile: frames={} avg(total={:.2}ms source_gpu={:.2}ms source_iced={:.2}ms scene={:.2}ms layers_iced={:.2}ms glass_gpu={:.2}ms gpu_wait={:.2}ms) max(total={:.2}ms)",
+                self.frame,
+                average(self.sum.total_ns),
+                average(self.sum.source_gpu_encode_ns),
+                average(self.sum.source_iced_ns),
+                average(self.sum.scene_build_ns),
+                average(self.sum.layers_iced_ns),
+                average(self.sum.glass_gpu_encode_ns),
+                average(self.sum.gpu_wait_ns),
+                milliseconds(self.max.total_ns),
+            );
+            self.samples = 0;
+            self.sum = FrameTiming::default();
+            self.max = FrameTiming::default();
+        }
+    }
 }
 
 impl fmt::Debug for Compositor {
@@ -469,6 +944,10 @@ impl graphics::Compositor for Compositor {
             .and_then(|handle| liquid_glass_native::desktop_blur_target(handle.as_raw()));
         if let Some(target) = native_backdrop {
             liquid_glass_native::refresh_desktop_blur(target);
+            liquid_glass_native::configure_window_corner_radius(
+                target,
+                f64::from(liquid_glass::IcedWindowPolicy::liquid_glass().corner_radius()),
+            );
             // Stage Manager resets the blur asynchronously between redraws;
             // the guard reapplies it on every workspace transition.
             liquid_glass_native::install_stage_manager_guard(target);
@@ -523,6 +1002,13 @@ impl graphics::Compositor for Compositor {
         // continuously updates and blurs it behind transparent pixels; it is
         // deliberately not copied into the custom glass renderer.
         liquid.set_transparent_background(true);
+        // Keep the internal scene rectangular for compositing, then apply the
+        // shared squircle mask exactly once at presentation. This gives the
+        // borderless transparent window real rounded corners instead of only
+        // rounding individual controls.
+        liquid.set_window_corner_radius(f32::from(
+            liquid_glass::IcedWindowPolicy::liquid_glass().corner_radius(),
+        ));
         // Other platforms keep the deterministic wallpaper source for the
         // demo because they do not have the macOS compositor backdrop.
         #[cfg(not(target_os = "macos"))]
@@ -539,7 +1025,6 @@ impl graphics::Compositor for Compositor {
             settings.antialiasing,
             shell,
         );
-
         Ok(Self {
             instance,
             adapter,
@@ -558,6 +1043,7 @@ impl graphics::Compositor for Compositor {
             native_backdrop,
             color_scheme: active_color_scheme(),
             started_at: Instant::now(),
+            profiler: FrameProfiler::new(),
         })
     }
 
@@ -601,6 +1087,10 @@ impl graphics::Compositor for Compositor {
             },
         );
         if let Some(target) = self.native_backdrop {
+            liquid_glass_native::configure_window_corner_radius(
+                target,
+                f64::from(liquid_glass::IcedWindowPolicy::liquid_glass().corner_radius()),
+            );
             liquid_glass_native::configure_extended_dynamic_range(
                 target,
                 self.format == wgpu::TextureFormat::Rgba16Float,
@@ -627,6 +1117,7 @@ impl graphics::Compositor for Compositor {
         background_color: iced::Color,
         on_pre_present: impl FnOnce(),
     ) -> Result<(), graphics::compositor::SurfaceError> {
+        let frame_started = Instant::now();
         let frame = surface.get_current_texture().map_err(|error| map_surface_error(&error))?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let physical = viewport.physical_size();
@@ -691,55 +1182,100 @@ impl graphics::Compositor for Compositor {
         let source_texture = self.iced_source.as_ref().expect("Iced source texture is initialized");
         let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let color_scheme = active_color_scheme();
+        let surface_kind = active_surface();
+        let palette = UiTheme::new(color_scheme).palette();
         let sidebar_medium = match color_scheme {
             // This neutral medium is also the fallback for sparse transparent
             // pixels while the top scroll-edge blur is filtering list content.
             UiColorScheme::Light => [0.84, 0.855, 0.87, 0.84],
             UiColorScheme::Dark => [0.21, 0.23, 0.27, 0.76],
         };
-        let sidebar_tint = match color_scheme {
-            // WindowServer supplies the continuously updated blur underneath;
-            // this is only the translucent grey material laid over it.
-            UiColorScheme::Light => [0.90, 0.91, 0.92, 0.84],
-            UiColorScheme::Dark => [0.21, 0.23, 0.27, 0.76],
-        };
+        // WindowServer supplies the continuously updated blur underneath;
+        // this is only the translucent semantic sidebar material laid over it.
+        let sidebar_tint = [
+            palette.sidebar_background.r,
+            palette.sidebar_background.g,
+            palette.sidebar_background.b,
+            palette.sidebar_background.a,
+        ];
         let scale = viewport.scale_factor().max(1.0);
-        let right_x = (232.0 * scale).round() as u32;
+        let right_x = (SIDEBAR_WIDTH * scale).round() as u32;
         let sidebar_region = (0, 0, right_x.min(size.width), size.height);
         // Above the search field the sidebar uses one fixed, strong blur.
         // Only the search field's own height is the fade band: it starts at
         // the field's top edge and reaches zero at its bottom edge. The
         // search field is composited afterward, above this entire treatment.
         let sidebar_gradient_y = sidebar_region.1;
-        let search_top_y = ((CONTENT_TOP_INSET + SIDEBAR_SEARCH_TOP_MARGIN) * scale).round() as u32;
-        let search_bottom_y =
-            ((CONTENT_TOP_INSET + SIDEBAR_SEARCH_TOP_MARGIN + SIDEBAR_SEARCH_HEIGHT) * scale)
-                .round() as u32;
+        let search_top_y = (SIDEBAR_SEARCH_TOP * scale).round() as u32;
+        let search_bottom_y = ((SIDEBAR_SEARCH_TOP + SIDEBAR_SEARCH_HEIGHT) * scale).round() as u32;
         let sidebar_gradient_height =
             search_bottom_y.saturating_sub(sidebar_gradient_y).min(sidebar_region.3);
         // The sidebar remains translucent so the native compositor blur is
         // visible. The content pane stays an opaque white application surface.
         let mut source_batch =
             self.liquid.begin_frame_batch(Some("liquid-glass Iced source preparation"));
-        source_batch
-            .render_background_to_view(&source_view)
-            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
-        source_batch
-            .render_solid_region_to_view(&source_view, sidebar_region, sidebar_tint)
-            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
-        source_batch
-            .render_solid_region_to_view(
-                &source_view,
-                (right_x, 0, size.width.saturating_sub(right_x), size.height),
-                [0.97, 0.97, 0.98, 1.0],
-            )
-            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        if self.native_backdrop.is_some() {
+            // WindowServer owns the desktop backdrop on macOS. The source
+            // texture only needs to start transparent before the semantic
+            // sidebar/content regions are drawn; sampling the backdrop shader
+            // here would add a full-window pass on every redraw.
+            source_batch.clear_view(&source_view, wgpu::Color::TRANSPARENT);
+        } else {
+            source_batch
+                .render_background_to_view(&source_view)
+                .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        }
+        if surface_kind == DemoSurface::Settings {
+            source_batch
+                .render_solid_region_to_view(&source_view, sidebar_region, sidebar_tint)
+                .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+            source_batch
+                .render_solid_region_to_view(
+                    &source_view,
+                    (right_x, 0, size.width.saturating_sub(right_x), size.height),
+                    [
+                        palette.content_background.r,
+                        palette.content_background.g,
+                        palette.content_background.b,
+                        palette.content_background.a,
+                    ],
+                )
+                .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        }
+        let source_gpu_encode_finished = Instant::now();
         source_batch.submit();
+        let source_gpu_submit_finished = Instant::now();
         renderer.inner.present(None, frame.texture.format(), &source_view, viewport);
+        let source_iced_finished = Instant::now();
         if self.color_scheme != color_scheme {
             self.color_scheme = color_scheme;
         }
-        let scene = scene_for_viewport(size, viewport.scale_factor(), color_scheme);
+        let scene_started = Instant::now();
+        let scene = if self.profiler.skip_toolbar && surface_kind == DemoSurface::Settings {
+            GlassScene::default()
+        } else {
+            match surface_kind {
+                DemoSurface::Settings => {
+                    scene_for_viewport(size, viewport.scale_factor(), color_scheme)
+                }
+                DemoSurface::WindowControls => window_controls_scene(
+                    size,
+                    viewport.scale_factor(),
+                    color_scheme,
+                    active_window_control_tuning(),
+                    WINDOW_CONTROL_NATIVE_IDS
+                        .into_iter()
+                        .chain(WINDOW_CONTROL_REFERENCE_IDS)
+                        .chain(WINDOW_CONTROL_LARGE_IDS)
+                        .chain(WINDOW_CONTROL_INACTIVE_IDS)
+                        .chain(WINDOW_CONTROL_DISABLED_IDS)
+                        .map(|id| (id, renderer.glass_interaction(id)))
+                        .collect::<Vec<_>>(),
+                ),
+            }
+        };
+        let scene_built = Instant::now();
+        let layers_iced_started = scene_built;
         if let Some(foreground_texture) = self.iced_foreground.as_ref()
             && let Some(foreground) = renderer.foreground.as_mut()
         {
@@ -752,20 +1288,6 @@ impl graphics::Compositor for Compositor {
                 viewport,
             );
         }
-        // Toolbar text is now in the foreground layer. Render the navigation
-        // material after that text and before the final overlay so it can
-        // actually refract the pixels below it while its chevrons stay sharp.
-        let navigation_scene = navigation_scene_for_viewport(
-            viewport.scale_factor(),
-            color_scheme,
-            renderer.glass_interaction(GlassId(12)),
-        );
-        let search_scene = search_scene_for_viewport(
-            size,
-            viewport.scale_factor(),
-            color_scheme,
-            renderer.glass_interaction(GlassId(11)),
-        );
         if let Some(overlay_texture) = self.iced_overlay.as_ref()
             && let Some(overlay) = renderer.overlay.as_mut()
         {
@@ -777,39 +1299,130 @@ impl graphics::Compositor for Compositor {
                 viewport,
             );
         }
+        let layers_iced_finished = Instant::now();
         let time_seconds = self.started_at.elapsed().as_secs_f32();
         let mut glass_batch = self.liquid.begin_frame_batch(Some("liquid-glass Iced composition"));
         glass_batch
             .render_scene_with_source(source_texture, &scene, time_seconds)
             .map_err(|_| graphics::compositor::SurfaceError::Other)?;
-        if let Some(foreground_texture) = self.iced_foreground.as_ref() {
-            glass_batch.composite_texture_to_output(foreground_texture);
-            // Keep the top region at a fixed radius of 128. Within the
-            // search field bounds only the overlay opacity changes, ending
-            // fully transparent at the field's lower edge.
+        if surface_kind == DemoSurface::Settings {
+            // The right titlebar is a fused surface rather than a flat white
+            // strip: its top is optically stronger, while the lower part
+            // keeps a softer residual blur. Do this before framework
+            // foreground rendering so the title and controls stay crisp.
+            let toolbar_region = (
+                right_x,
+                0,
+                size.width.saturating_sub(right_x),
+                ((FUSED_TOP_BAR_HEIGHT * scale).round() as u32).min(size.height),
+            );
+            // Keep the upper part at the same full-strength blur as the
+            // sidebar's area above the search field. Only the lower band of
+            // the titlebar transitions toward its softer endpoint.
+            let toolbar_fade_start = (18.0 * scale).round() as u32;
             glass_batch
-                .render_scroll_edge_to_output(
-                    (0, sidebar_gradient_y, right_x, sidebar_gradient_height.max(1)),
-                    search_top_y,
+                .render_vertical_gradient_blur_to_output(
+                    toolbar_region,
+                    toolbar_fade_start,
+                    // Match the broad sidebar treatment at the top of the
+                    // fused titlebar. The lower edge deliberately retains a
+                    // substantial residual mix so it stays soft as well.
                     (128.0 * scale).round() as u32,
-                    sidebar_medium,
-                    liquid_glass::ScrollEdgeStyle::Soft,
+                    match color_scheme {
+                        UiColorScheme::Light => [1.0, 1.0, 1.0, 1.0],
+                        UiColorScheme::Dark => [0.12, 0.12, 0.14, 1.0],
+                    },
+                    0.52,
                 )
                 .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+            let toolbar_bottom = toolbar_region.1 + toolbar_region.3;
+            if toolbar_bottom > 0 && toolbar_region.2 > 0 {
+                glass_batch
+                    .render_solid_region_to_output(
+                        (toolbar_region.0, toolbar_bottom.saturating_sub(1), toolbar_region.2, 1),
+                        match color_scheme {
+                            UiColorScheme::Light => {
+                                [229.0 / 255.0, 229.0 / 255.0, 229.0 / 255.0, 1.0]
+                            }
+                            UiColorScheme::Dark => {
+                                [70.0 / 255.0, 70.0 / 255.0, 70.0 / 255.0, 1.0]
+                            }
+                        },
+                    )
+                    .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+            }
         }
-        glass_batch
-            .render_scene_over_output(&navigation_scene, time_seconds)
-            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
-        glass_batch
-            .render_scene_over_output(&search_scene, time_seconds)
-            .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+        if let Some(foreground_texture) = self.iced_foreground.as_ref() {
+            glass_batch.composite_texture_to_output(foreground_texture);
+            if surface_kind == DemoSurface::Settings && !self.profiler.skip_scroll_edge {
+                // Keep the top region at a fixed radius of 128. Within the
+                // search field bounds only the overlay opacity changes,
+                // ending fully transparent at the field's lower edge.
+                glass_batch
+                    .render_scroll_edge_to_output(
+                        (0, sidebar_gradient_y, right_x, sidebar_gradient_height.max(1)),
+                        search_top_y,
+                        (128.0 * scale).round() as u32,
+                        sidebar_medium,
+                        liquid_glass::ScrollEdgeStyle::Soft,
+                    )
+                    .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+            }
+        }
+        if surface_kind == DemoSurface::Settings {
+            // Navigation and search materials are rendered before the final
+            // overlay. Toolbar copy itself is in that topmost overlay, so its
+            // glyphs stay sharp above every optical surface.
+            let navigation_scene = navigation_scene_for_viewport(
+                viewport.scale_factor(),
+                color_scheme,
+                renderer.glass_interaction(GlassId(12)),
+            );
+            let search_scene = search_scene_for_viewport(
+                size,
+                viewport.scale_factor(),
+                color_scheme,
+                renderer.glass_interaction(GlassId(11)),
+            );
+            if !self.profiler.skip_navigation {
+                glass_batch
+                    .render_scene_over_output(&navigation_scene, time_seconds)
+                    .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+            }
+            if !self.profiler.skip_search {
+                glass_batch
+                    .render_scene_over_output(&search_scene, time_seconds)
+                    .map_err(|_| graphics::compositor::SurfaceError::Other)?;
+            }
+        }
         if let Some(overlay_texture) = self.iced_overlay.as_ref() {
             glass_batch.composite_texture_to_output(overlay_texture);
         }
         glass_batch.copy_output_to_view(&view);
         glass_batch.submit();
+        let glass_gpu_submit_finished = Instant::now();
+        let gpu_wait_started = glass_gpu_submit_finished;
+        if self.profiler.wait_for_gpu {
+            let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        }
+        let gpu_wait_finished = Instant::now();
         on_pre_present();
         frame.present();
+        self.profiler.record(FrameTiming {
+            source_gpu_encode_ns: source_gpu_encode_finished
+                .duration_since(frame_started)
+                .as_nanos(),
+            source_iced_ns: source_iced_finished
+                .duration_since(source_gpu_submit_finished)
+                .as_nanos(),
+            scene_build_ns: scene_built.duration_since(scene_started).as_nanos(),
+            layers_iced_ns: layers_iced_finished.duration_since(layers_iced_started).as_nanos(),
+            glass_gpu_encode_ns: glass_gpu_submit_finished
+                .duration_since(layers_iced_finished)
+                .as_nanos(),
+            gpu_wait_ns: gpu_wait_finished.duration_since(gpu_wait_started).as_nanos(),
+            total_ns: gpu_wait_finished.duration_since(frame_started).as_nanos(),
+        });
         let _ = background_color;
         Ok(())
     }
@@ -882,7 +1495,7 @@ fn apply_native_backdrop<W: graphics::compositor::Window>(window: &W) {
 fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorScheme) -> GlassScene {
     let scale_factor = scale_factor.max(1.0);
     let logical_width = size.width as f32 / scale_factor;
-    let sidebar_width = 232.0;
+    let sidebar_width = SIDEBAR_WIDTH;
     let content_x = sidebar_width;
     let content_width = (logical_width - content_x).max(1.0);
     // The right-side toolbar is fused with the native titlebar, so its glass
@@ -891,15 +1504,225 @@ fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorSch
     let theme = UiTheme::new(color_scheme);
     let mut scene = GlassScene::default();
 
-    let mut toolbar =
-        GlassNode::new(GlassId(10), Rect::new(content_x, content_y, content_width, 56.0))
-            .shape(theme.glass_shape(GlassRole::Toolbar))
-            .material(theme.glass_material(GlassRole::Toolbar));
+    let mut toolbar = GlassNode::new(
+        GlassId(10),
+        Rect::new(content_x, content_y, content_width, FUSED_TOP_BAR_HEIGHT),
+    )
+    .shape(theme.glass_shape(GlassRole::Toolbar))
+    .material(theme.glass_material(GlassRole::Toolbar));
     toolbar.z_index = 10;
     scene.push(toolbar);
 
     scale_scene(&mut scene, scale_factor);
     scene
+}
+
+fn window_controls_scene(
+    size: GpuSize,
+    scale_factor: f32,
+    color_scheme: UiColorScheme,
+    tuning: WindowControlTuning,
+    interactions: Vec<(GlassId, GlassInteraction)>,
+) -> GlassScene {
+    let mut scene = GlassScene::default();
+    let scale_factor = scale_factor.max(1.0);
+    let logical_width = size.width as f32 / scale_factor;
+    // The toolbar belongs to the selected window scheme. Traffic-light nodes
+    // opt into their own light reference sample in the GPU material, so the
+    // stage and toolbar must not be forced to light mode here.
+    let theme = UiTheme::new(color_scheme);
+    let mut toolbar =
+        GlassNode::new(GlassId(90), Rect::new(0.0, 0.0, logical_width, FUSED_TOP_BAR_HEIGHT))
+            .shape(theme.glass_shape(GlassRole::Toolbar))
+            .material(theme.glass_material(GlassRole::Toolbar));
+    toolbar.z_index = 10;
+    scene.push(toolbar);
+    push_traffic_light_group(
+        &mut scene,
+        &WINDOW_CONTROL_NATIVE_IDS,
+        WINDOW_CONTROL_NATIVE_X,
+        WINDOW_CONTROL_NATIVE_Y,
+        WINDOW_CONTROL_NATIVE_SIZE,
+        WINDOW_CONTROL_GAP,
+        false,
+        false,
+        color_scheme,
+        tuning,
+        &interactions,
+    );
+    push_traffic_light_group(
+        &mut scene,
+        &WINDOW_CONTROL_REFERENCE_IDS,
+        WINDOW_CONTROL_REFERENCE_X,
+        WINDOW_CONTROL_REFERENCE_Y,
+        WINDOW_CONTROL_NATIVE_SIZE,
+        WINDOW_CONTROL_GAP,
+        false,
+        false,
+        color_scheme,
+        tuning,
+        &interactions,
+    );
+    push_traffic_light_group(
+        &mut scene,
+        &WINDOW_CONTROL_LARGE_IDS,
+        WINDOW_CONTROL_LARGE_X,
+        WINDOW_CONTROL_LARGE_Y,
+        WINDOW_CONTROL_LARGE_SIZE,
+        WINDOW_CONTROL_LARGE_GAP,
+        false,
+        false,
+        color_scheme,
+        tuning,
+        &interactions,
+    );
+    push_traffic_light_group(
+        &mut scene,
+        &WINDOW_CONTROL_INACTIVE_IDS,
+        WINDOW_CONTROL_INACTIVE_X,
+        WINDOW_CONTROL_INACTIVE_Y,
+        WINDOW_CONTROL_LARGE_SIZE,
+        WINDOW_CONTROL_LARGE_GAP,
+        true,
+        false,
+        color_scheme,
+        tuning,
+        &interactions,
+    );
+    push_traffic_light_group(
+        &mut scene,
+        &WINDOW_CONTROL_DISABLED_IDS,
+        WINDOW_CONTROL_DISABLED_X,
+        WINDOW_CONTROL_DISABLED_Y,
+        WINDOW_CONTROL_LARGE_SIZE,
+        WINDOW_CONTROL_LARGE_GAP,
+        false,
+        true,
+        color_scheme,
+        tuning,
+        &interactions,
+    );
+    scale_scene(&mut scene, scale_factor);
+    scene
+}
+
+fn push_traffic_light_group(
+    scene: &mut GlassScene,
+    ids: &[GlassId; 3],
+    x: f32,
+    y: f32,
+    size: f32,
+    gap: f32,
+    inactive: bool,
+    close_disabled: bool,
+    color_scheme: UiColorScheme,
+    tuning: WindowControlTuning,
+    interactions: &[(GlassId, GlassInteraction)],
+) {
+    for (index, id) in ids.iter().copied().enumerate() {
+        let base_x = x + index as f32 * (size + gap);
+        let scale = window_control_scale(id);
+        let visual_size = size * scale;
+        let inset = (size - visual_size) * 0.5;
+        let bounds = Rect::new(base_x + inset, y + inset, visual_size, visual_size);
+        let interaction = interactions
+            .iter()
+            .find(|(interaction_id, _)| *interaction_id == id)
+            .map_or_else(GlassInteraction::inactive, |(_, interaction)| *interaction);
+        let focus = if inactive {
+            window_control_group_progress(id).unwrap_or_else(|| interaction.hover.clamp(0.0, 1.0))
+        } else {
+            1.0
+        };
+        let base_color = traffic_light_color(index, inactive, close_disabled);
+        let active_color = traffic_light_color(index, false, close_disabled);
+        let display_color =
+            if inactive { blend_color(base_color, active_color, focus) } else { base_color };
+        let mut node = GlassNode::new(id, bounds)
+            .shape(GlassShape::Circle)
+            .material(traffic_light_material(
+                display_color,
+                visual_size,
+                inactive,
+                close_disabled,
+                color_scheme,
+                tuning,
+                focus,
+            ))
+            .interaction(interaction);
+        node.z_index = 40;
+        scene.push(node);
+    }
+}
+
+fn blend_color(from: Color, to: Color, amount: f32) -> Color {
+    let amount = amount.clamp(0.0, 1.0);
+    Color::rgba(
+        from.r + (to.r - from.r) * amount,
+        from.g + (to.g - from.g) * amount,
+        from.b + (to.b - from.b) * amount,
+        from.a + (to.a - from.a) * amount,
+    )
+}
+
+fn traffic_light_color(index: usize, inactive: bool, _close_disabled: bool) -> Color {
+    if inactive {
+        // AppKit removes the chromatic traffic-light pigments when the window
+        // loses focus. The three controls share one cool light-gray substrate;
+        // only the focused window gets red, yellow, and green bodies.
+        return Color::rgba(0.78, 0.79, 0.82, 0.96);
+    }
+    let (red, green, blue) = match index {
+        // These are deliberately saturated source colours. The glass body
+        // contributes a neutral titlebar substrate and transmission, so a
+        // palette matched only to the displayed centre samples would look
+        // washed out after composition.
+        0 => (1.00, 0.34, 0.28),
+        1 => (1.00, 0.72, 0.05),
+        _ => (0.18, 0.84, 0.10),
+    };
+    Color::rgba(red, green, blue, 0.96)
+}
+
+fn traffic_light_material(
+    color: Color,
+    _size: f32,
+    inactive: bool,
+    _close_disabled: bool,
+    _color_scheme: UiColorScheme,
+    tuning: WindowControlTuning,
+    focus: f32,
+) -> GlassMaterial {
+    let focus = focus.clamp(0.0, 1.0);
+    let muted_alpha = if inactive { 0.84 + 0.16 * focus } else { 1.0 };
+    let muted_opacity = if inactive { 0.94 + 0.06 * focus } else { 1.0 };
+    // Experimental baseline: the control is an exact circular SDF using the
+    // stock physical glass material. Do not add a traffic-light-specific
+    // border, light, glare, shadow, or size compensation here; the sphere's
+    // refraction and Fresnel response must establish the edge by themselves.
+    let mut material = GlassMaterial::regular();
+    material.variant = GlassVariant::TrafficLightPhysical;
+    material.blur.radius = tuning.blur_radius;
+    material.traffic_light = TrafficLightStyle {
+        substrate_coverage: tuning.substrate_coverage,
+        lower_substrate_coverage: tuning.lower_substrate_coverage,
+        lower_tint_coverage: tuning.lower_tint_coverage,
+        angular_light: tuning.angular_light,
+        light_angle: tuning.light_angle,
+        light_softness: tuning.light_softness,
+        body_thickness: tuning.body_thickness,
+        internal_scattering: tuning.internal_scattering,
+        side_edge_darkness: tuning.side_edge_darkness,
+        side_edge_width: tuning.side_edge_width,
+        edge_side_bias: tuning.edge_side_bias,
+        edge_side_angle: tuning.edge_side_angle,
+    };
+    material.tint = Color::rgba(color.r, color.g, color.b, muted_alpha);
+    material.refraction.strength = tuning.refraction_strength;
+    material.fresnel.strength = tuning.fresnel_strength;
+    material.whiteness = 0.0;
+    material.opacity = tuning.opacity * muted_opacity;
+    material
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -909,13 +1732,17 @@ fn navigation_scene_for_viewport(
     interaction: GlassInteraction,
 ) -> GlassScene {
     let scale_factor = scale_factor.max(1.0);
-    let content_x = 232.0;
+    let content_x = SIDEBAR_WIDTH;
     let theme = UiTheme::new(color_scheme);
     let mut scene = GlassScene::default();
-    let mut navigation = GlassNode::new(GlassId(12), Rect::new(content_x + 8.0, 10.0, 72.0, 36.0))
-        .shape(theme.glass_shape(GlassRole::FloatingControl))
-        .material(theme.glass_material(GlassRole::FloatingControl))
-        .interaction(interaction);
+    let navigation_y = (FUSED_TOP_BAR_HEIGHT - TOP_BAR_NAVIGATION_HEIGHT) * 0.5;
+    let mut navigation = GlassNode::new(
+        GlassId(12),
+        Rect::new(content_x + 8.0, navigation_y, 72.0, TOP_BAR_NAVIGATION_HEIGHT),
+    )
+    .shape(theme.glass_shape(GlassRole::FloatingControl))
+    .material(theme.glass_material(GlassRole::FloatingControl))
+    .interaction(interaction);
     navigation.z_index = 20;
     scene.push(navigation);
     scale_scene(&mut scene, scale_factor);
@@ -929,12 +1756,16 @@ fn search_scene_for_viewport(
     interaction: GlassInteraction,
 ) -> GlassScene {
     let scale_factor = scale_factor.max(1.0);
-    let content_y = CONTENT_TOP_INSET;
     let theme = UiTheme::new(color_scheme);
     let mut scene = GlassScene::default();
     let mut search = GlassNode::new(
         GlassId(11),
-        Rect::new(10.0, content_y + SIDEBAR_SEARCH_TOP_MARGIN, 212.0, SIDEBAR_SEARCH_HEIGHT),
+        Rect::new(
+            SIDEBAR_CONTENT_INSET,
+            SIDEBAR_SEARCH_TOP,
+            SIDEBAR_CONTENT_WIDTH,
+            SIDEBAR_SEARCH_HEIGHT,
+        ),
     )
     .shape(theme.glass_shape(GlassRole::SearchField))
     .material(theme.glass_material(GlassRole::SearchField))
@@ -973,6 +1804,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fused_top_bar_uses_the_measured_height() {
+        assert_eq!(FUSED_TOP_BAR_HEIGHT, 52.0);
+        assert_eq!((FUSED_TOP_BAR_HEIGHT - TOP_BAR_NAVIGATION_HEIGHT) * 0.5, 8.0);
+    }
+
+    #[test]
     fn surface_format_has_a_safe_fallback() {
         assert_eq!(
             preferred_surface_format(&[
@@ -982,6 +1819,81 @@ mod tests {
             Some(wgpu::TextureFormat::Bgra8UnormSrgb),
         );
         assert_eq!(preferred_surface_format(&[]), None);
+    }
+
+    #[test]
+    fn inactive_traffic_lights_share_a_neutral_substrate() {
+        let red = traffic_light_color(0, true, false);
+        let yellow = traffic_light_color(1, true, false);
+        let green = traffic_light_color(2, true, false);
+
+        assert_eq!(red.r, yellow.r);
+        assert_eq!(yellow.r, green.r);
+        assert_eq!(red.g, yellow.g);
+        assert_eq!(yellow.g, green.g);
+        assert_eq!(red.b, yellow.b);
+        assert_eq!(yellow.b, green.b);
+        assert!(red.b > red.r);
+    }
+
+    #[test]
+    fn traffic_lights_use_the_configured_physical_material() {
+        let tuning = WindowControlTuning::default();
+        let traffic = traffic_light_material(
+            Color::rgba(1.0, 0.37, 0.34, 0.96),
+            WINDOW_CONTROL_NATIVE_SIZE,
+            false,
+            false,
+            UiColorScheme::Light,
+            tuning,
+            1.0,
+        );
+        let stock = GlassMaterial::regular();
+
+        assert_eq!(traffic.variant, GlassVariant::TrafficLightPhysical);
+        assert_eq!(traffic.refraction.thickness, stock.refraction.thickness);
+        assert_eq!(traffic.refraction.index, stock.refraction.index);
+        assert_eq!(traffic.refraction.strength, tuning.refraction_strength);
+        assert_eq!(traffic.fresnel.range, stock.fresnel.range);
+        assert_eq!(traffic.fresnel.hardness, stock.fresnel.hardness);
+        assert_eq!(traffic.fresnel.strength, tuning.fresnel_strength);
+        assert_eq!(traffic.glare, stock.glare);
+        assert_eq!(traffic.shadow, stock.shadow);
+        assert_eq!(traffic.adaptive, stock.adaptive);
+
+        let large = traffic_light_material(
+            Color::rgba(1.0, 0.37, 0.34, 0.96),
+            WINDOW_CONTROL_LARGE_SIZE,
+            false,
+            false,
+            UiColorScheme::Light,
+            tuning,
+            1.0,
+        );
+        assert_eq!(large.refraction.strength, tuning.refraction_strength);
+        assert_eq!(large.fresnel.strength, tuning.fresnel_strength);
+    }
+
+    #[test]
+    fn dark_window_controls_use_the_dark_material_preset() {
+        let tuning = WindowControlTuning::for_scheme(UiColorScheme::Dark);
+
+        assert_eq!(tuning.blur_radius, 17.0);
+        assert_eq!(tuning.internal_scattering, 1.0);
+        assert_eq!(tuning.side_edge_darkness, 0.0);
+        assert_eq!(tuning.side_edge_width, 0.5);
+        assert_eq!(tuning.opacity, 1.0);
+        assert_eq!(tuning.substrate_coverage, 0.88);
+        assert_eq!(tuning.lower_substrate_coverage, 0.54);
+        assert_eq!(tuning.lower_tint_coverage, 0.66);
+        assert_eq!(tuning.angular_light, 0.055);
+        assert_eq!(tuning.light_angle, 0.52);
+        assert_eq!(tuning.light_softness, 1.0);
+        assert_eq!(tuning.body_thickness, 0.79);
+        assert_eq!(tuning.edge_side_bias, 1.0);
+        assert_eq!(tuning.edge_side_angle, 23.0);
+        assert_eq!(tuning.refraction_strength, 0.0);
+        assert_eq!(tuning.fresnel_strength, 0.39);
     }
 
     #[cfg(target_os = "macos")]

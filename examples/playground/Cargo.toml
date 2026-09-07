@@ -1,6 +1,6 @@
 [package]
 name = "liquid-glass-playground"
-description = "Foundation playground for Liquid Glass renderer development."
+description = "Foundation playground for BMOL Iced renderer development."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,9 +12,12 @@ iced = { version = "0.14.0", default-features = false, features = ["wgpu", "adva
 iced_wgpu = { version = "0.14.0", features = ["svg", "image"] }
 flate2 = "1.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
-liquid-glass = { path = "../../crates/liquid-glass", version = "0.1.0" }
-liquid-glass-native = { path = "../../crates/liquid-glass-native", version = "0.1.0" }
+liquid-glass = { package = "bmol-iced", path = "../../crates/bmol-iced", version = "0.1.0" }
+liquid-glass-native = { package = "bmol-window-native", path = "../../../bmol-window-shell/crates/bmol-window-native", version = "0.1.0" }
+bmol-designs = { path = "../../../bmol-designs", version = "0.1.0" }
+bmol-window-shell = { path = "../../../bmol-window-shell/crates/bmol-window-shell", version = "0.1.0" }
 pollster = "1.0.1"
+spring-rs = { git = "https://github.com/Erizeez/spring-rs.git", tag = "v0.1.0" }
 wgpu = { version = "27.0.1", features = ["noop"] }
 window-vibrancy = "0.8.0"
 winit = "0.30.12"

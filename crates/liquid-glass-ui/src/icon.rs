@@ -44,6 +44,10 @@ pub enum UiIcon {
     Search,
     ChevronLeft,
     ChevronRight,
+    WindowClose,
+    WindowMinimize,
+    WindowMaximize,
+    WindowZoom,
     Question,
     Info,
     Laptop,
@@ -106,6 +110,7 @@ pub enum UiIconAsset {
 impl UiIcon {
     /// The embedded asset backing this icon.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn asset(self) -> UiIconAsset {
         match self {
             Self::Gear => UiIconAsset::Svg(include_str!("../assets/icons/gear.svg")),
@@ -120,6 +125,14 @@ impl UiIcon {
             Self::ChevronRight => {
                 UiIconAsset::Svg(include_str!("../assets/icons/chevron_right.svg"))
             }
+            Self::WindowClose => UiIconAsset::Svg(include_str!("../assets/icons/window_close.svg")),
+            Self::WindowMinimize => {
+                UiIconAsset::Svg(include_str!("../assets/icons/window_minimize.svg"))
+            }
+            Self::WindowMaximize => {
+                UiIconAsset::Svg(include_str!("../assets/icons/window_maximize.svg"))
+            }
+            Self::WindowZoom => UiIconAsset::Svg(include_str!("../assets/icons/window_zoom.svg")),
             Self::Question => UiIconAsset::Svg(include_str!("../assets/icons/question.svg")),
             Self::Info => UiIconAsset::Svg(include_str!("../assets/icons/info.svg")),
             Self::Laptop => UiIconAsset::Svg(include_str!("../assets/icons/laptop.svg")),
@@ -309,6 +322,9 @@ mod tests {
             UiIcon::Search,
             UiIcon::ChevronLeft,
             UiIcon::ChevronRight,
+            UiIcon::WindowClose,
+            UiIcon::WindowMinimize,
+            UiIcon::WindowZoom,
             UiIcon::Question,
             UiIcon::Info,
             UiIcon::Laptop,

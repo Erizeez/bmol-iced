@@ -10,10 +10,20 @@ use std::fmt;
 pub mod components;
 pub mod font;
 pub mod icon;
+pub mod scroll_view;
 mod theme;
+pub mod window;
 
 pub use icon::UiIcon;
-pub use theme::{GlassChrome, GlassRole, UiColorScheme, UiPalette, UiTheme};
+pub use scroll_view::{
+    ScrollbarConfig, SpringScrollState, SpringScrollView, spring_scroll_view,
+    spring_scroll_view_with_config,
+};
+pub use theme::{GlassChrome, GlassRole, UiColorScheme, UiCornerStyle, UiPalette, UiTheme};
+pub use window::{
+    DEFAULT_WINDOW_CORNER_RADIUS, IcedWindowController, IcedWindowPolicy, WindowCommand,
+    WindowDragArea, WindowExpandBehavior,
+};
 
 use iced::advanced::text::Renderer as TextRenderer;
 use iced::{
@@ -22,7 +32,7 @@ use iced::{
 };
 use liquid_glass_scene::{
     CornerCurve, GlassId, GlassInteraction, GlassMaterial, GlassNode, GlassShape, GlassShapeLayer,
-    Rect,
+    PathCommand, Rect, squircle_path_commands,
 };
 
 /// Allows a compositor to route the visual contents of a glass surface into
@@ -646,20 +656,92 @@ impl GlassButton {
         Theme: 'static,
         Renderer: advanced::Renderer + TextRenderer + GlassForegroundRenderer + 'static,
     {
+        self.into_element_with_press(on_press, None)
+    }
+
+    /// Converts this button into an Iced element and optionally publishes a
+    /// second message at the beginning of a left-button press.
+    ///
+    /// The ordinary `on_press` message remains release-based. The additional
+    /// callback is intended for transient visual state such as a material
+    /// press light, while keeping activation semantics unchanged.
+    #[must_use]
+    pub fn into_element_with_press<Message, Theme, Renderer>(
+        self,
+        on_press: Message,
+        on_press_start: Option<Message>,
+    ) -> iced::Element<'static, Message, Theme, Renderer>
+    where
+        Message: Clone + 'static,
+        Theme: 'static,
+        Renderer: advanced::Renderer + TextRenderer + GlassForegroundRenderer + 'static,
+    {
+        self.into_element_with_press_callbacks(on_press, on_press_start, None, None)
+    }
+
+    /// Converts this button into an Iced element with callbacks for press
+    /// start and release/cancellation.
+    ///
+    /// `on_press_end` is emitted for every captured mouse release, including
+    /// releases outside the button. This is useful for resetting transient
+    /// visual state without changing the ordinary click activation rule.
+    #[must_use]
+    pub fn into_element_with_press_end<Message, Theme, Renderer>(
+        self,
+        on_press: Message,
+        on_press_start: Option<Message>,
+        on_press_end: Option<Message>,
+    ) -> iced::Element<'static, Message, Theme, Renderer>
+    where
+        Message: Clone + 'static,
+        Theme: 'static,
+        Renderer: advanced::Renderer + TextRenderer + GlassForegroundRenderer + 'static,
+    {
+        self.into_element_with_press_callbacks(on_press, on_press_start, None, on_press_end)
+    }
+
+    /// Converts this button into an Iced element with independent callbacks
+    /// for press start, pointer cancellation, and release.
+    ///
+    /// Pointer cancellation is emitted when a captured press leaves the
+    /// button. Release is emitted for every captured mouse release, including
+    /// releases outside the button. The ordinary click callback is still only
+    /// emitted when the release happens inside the button.
+    #[must_use]
+    pub fn into_element_with_press_callbacks<Message, Theme, Renderer>(
+        self,
+        on_press: Message,
+        on_press_start: Option<Message>,
+        on_press_cancel: Option<Message>,
+        on_press_end: Option<Message>,
+    ) -> iced::Element<'static, Message, Theme, Renderer>
+    where
+        Message: Clone + 'static,
+        Theme: 'static,
+        Renderer: advanced::Renderer + TextRenderer + GlassForegroundRenderer + 'static,
+    {
         iced::Element::new(GlassButtonWidget {
             button: self,
             on_press,
-            hovered: false,
-            pressed: false,
+            on_press_start,
+            on_press_cancel,
+            on_press_end,
         })
     }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct GlassButtonState {
+    hovered: bool,
+    pressed: bool,
 }
 
 struct GlassButtonWidget<Message> {
     button: GlassButton,
     on_press: Message,
-    hovered: bool,
-    pressed: bool,
+    on_press_start: Option<Message>,
+    on_press_cancel: Option<Message>,
+    on_press_end: Option<Message>,
 }
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for GlassButtonWidget<Message>
@@ -667,6 +749,14 @@ where
     Message: Clone,
     Renderer: advanced::Renderer + TextRenderer + GlassForegroundRenderer,
 {
+    fn tag(&self) -> iced::advanced::widget::tree::Tag {
+        iced::advanced::widget::tree::Tag::of::<GlassButtonState>()
+    }
+
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        iced::advanced::widget::tree::State::new(GlassButtonState::default())
+    }
+
     fn size(&self) -> Size<Length> {
         Size::new(
             Length::Fixed(self.button.node.bounds.width),
@@ -689,7 +779,7 @@ where
 
     fn draw(
         &self,
-        _tree: &Tree,
+        tree: &Tree,
         renderer: &mut Renderer,
         _theme: &Theme,
         _style: &renderer::Style,
@@ -702,9 +792,10 @@ where
             return;
         }
 
-        let fill = if self.pressed {
+        let state = tree.state.downcast_ref::<GlassButtonState>();
+        let fill = if state.pressed {
             iced_color(self.button.chrome.pressed_overlay)
-        } else if self.hovered {
+        } else if state.hovered {
             iced_color(self.button.chrome.hover_overlay)
         } else {
             IcedColor::TRANSPARENT
@@ -715,7 +806,7 @@ where
                 border: Border::default()
                     .rounded(shape_radius(&self.button.node))
                     .width(1.0)
-                    .color(iced_color(if self.hovered {
+                    .color(iced_color(if state.hovered {
                         self.button.chrome.hover_border
                     } else {
                         self.button.chrome.border
@@ -758,7 +849,7 @@ where
 
     fn update(
         &mut self,
-        _tree: &mut Tree,
+        tree: &mut Tree,
         event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
@@ -768,18 +859,31 @@ where
         _viewport: &Rectangle,
     ) {
         let hovered = cursor.is_over(layout.bounds());
-        let was_hovered = self.hovered;
-        let was_pressed = self.pressed;
-        self.hovered = hovered;
+        let state = tree.state.downcast_mut::<GlassButtonState>();
+        let was_hovered = state.hovered;
+        let was_pressed = state.pressed;
+        state.hovered = hovered;
+
+        if was_pressed && was_hovered && !hovered {
+            if let Some(message) = self.on_press_cancel.clone() {
+                shell.publish(message);
+            }
+        }
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if hovered => {
-                self.pressed = true;
+                state.pressed = true;
                 shell.capture_event();
+                if let Some(message) = self.on_press_start.clone() {
+                    shell.publish(message);
+                }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if self.pressed => {
-                self.pressed = false;
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if state.pressed => {
+                state.pressed = false;
                 shell.capture_event();
+                if let Some(message) = self.on_press_end.clone() {
+                    shell.publish(message);
+                }
                 if hovered {
                     shell.publish(self.on_press.clone());
                 }
@@ -789,10 +893,15 @@ where
 
         renderer.update_glass_interaction(
             self.button.node.id,
-            interaction_for_cursor(layout.bounds(), cursor, self.hovered, self.pressed),
+            interaction_for_cursor(
+                layout.bounds(),
+                cursor,
+                state.hovered,
+                state.pressed && state.hovered,
+            ),
         );
 
-        if was_hovered != self.hovered || was_pressed != self.pressed {
+        if was_hovered != state.hovered || was_pressed != state.pressed {
             shell.request_redraw();
         }
     }
@@ -1060,45 +1169,9 @@ where
             return;
         }
 
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds,
-                border: Border::default()
-                    .rounded(shape_radius(&self.control.node))
-                    .width(1.0)
-                    .color(iced_color(self.control.chrome.border)),
-                shadow: Shadow {
-                    color: iced_color(self.control.chrome.shadow),
-                    offset: Vector::new(0.0, self.control.chrome.shadow_offset_y),
-                    blur_radius: self.control.chrome.shadow_blur,
-                },
-                snap: true,
-            },
-            // The segmented control's material is rendered by the GPU
-            // compositor; the Iced widget only contributes interaction
-            // overlays and sharp foreground glyphs.
-            Background::Color(IcedColor::TRANSPARENT),
-        );
-
         let segment_count = self.control.segments.len();
         let segment_width = bounds.width / count_as_f32(segment_count);
-        if let Some(index) = self.hovered {
-            let hover_bounds = segment_hover_bounds(bounds, segment_count, index);
-            let overlay = if self.pressed == Some(index) {
-                self.control.chrome.pressed_overlay
-            } else {
-                self.control.chrome.hover_overlay
-            };
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: hover_bounds,
-                    border: Border::default().rounded(hover_bounds.height * 0.5),
-                    shadow: Shadow::default(),
-                    snap: true,
-                },
-                Background::Color(iced_color(overlay)),
-            );
-        }
+        draw_segment_chrome(renderer, &self.control, bounds, self.hovered, self.pressed);
 
         for divider_index in 1..segment_count {
             if divider_touches_hovered(divider_index, self.hovered) {
@@ -1265,6 +1338,75 @@ fn draw_segment_content<Message, Renderer>(
     }
 }
 
+fn draw_segment_chrome<Message, Renderer>(
+    renderer: &mut Renderer,
+    control: &GlassSegmentedControl<Message>,
+    bounds: Rectangle,
+    hovered: Option<usize>,
+    pressed: Option<usize>,
+) where
+    Renderer: advanced::Renderer + advanced::graphics::geometry::Renderer,
+{
+    use advanced::graphics::geometry::{Frame, Stroke};
+
+    let outer_style = crate::UiCornerStyle::CONTROL.with_radius(shape_radius(&control.node));
+    renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let outer = squircle_path(bounds.size(), iced::Point::ORIGIN, outer_style);
+        if control.chrome.border.a > 0.0 {
+            frame.stroke(
+                &outer,
+                Stroke::default().with_width(1.0).with_color(iced_color(control.chrome.border)),
+            );
+        }
+        if let Some(index) = hovered {
+            let hover_bounds = segment_hover_bounds(
+                Rectangle { x: 0.0, y: 0.0, ..bounds },
+                control.segments.len(),
+                index,
+            );
+            let overlay = if pressed == Some(index) {
+                control.chrome.pressed_overlay
+            } else {
+                control.chrome.hover_overlay
+            };
+            let hover = squircle_path(
+                hover_bounds.size(),
+                iced::Point::new(hover_bounds.x, hover_bounds.y),
+                crate::UiCornerStyle::CONTROL.with_radius(hover_bounds.height * 0.5),
+            );
+            frame.fill(&hover, iced_color(overlay));
+        }
+        renderer.draw_geometry(frame.into_geometry());
+    });
+}
+
+fn squircle_path(
+    size: Size,
+    offset: iced::Point,
+    style: crate::UiCornerStyle,
+) -> advanced::graphics::geometry::Path {
+    let commands = squircle_path_commands(&style.params(size.width, size.height));
+    advanced::graphics::geometry::Path::new(move |path| {
+        for command in commands.iter().copied() {
+            match command {
+                PathCommand::MoveTo(point) => {
+                    path.move_to(iced::Point::new(offset.x + point.x, offset.y + point.y));
+                }
+                PathCommand::LineTo(point) => {
+                    path.line_to(iced::Point::new(offset.x + point.x, offset.y + point.y));
+                }
+                PathCommand::CubicTo { c0, c1, to } => path.bezier_curve_to(
+                    iced::Point::new(offset.x + c0.x, offset.y + c0.y),
+                    iced::Point::new(offset.x + c1.x, offset.y + c1.y),
+                    iced::Point::new(offset.x + to.x, offset.y + to.y),
+                ),
+                PathCommand::Close => path.close(),
+            }
+        }
+    })
+}
+
 fn segment_text_color<Message>(
     segment: &GlassSegment<Message>,
     chrome: GlassChrome,
@@ -1338,8 +1480,9 @@ mod tests {
         let mut button = GlassButtonWidget {
             button: GlassButton::new(GlassId(8), "Apply", Rect::new(0.0, 0.0, 120.0, 48.0)),
             on_press: 42_u8,
-            hovered: false,
-            pressed: false,
+            on_press_start: Some(7_u8),
+            on_press_cancel: None,
+            on_press_end: Some(8_u8),
         };
         let mut tree = Tree::new(&button as &dyn Widget<u8, (), ()>);
         let limits = layout::Limits::new(Size::ZERO, Size::new(200.0, 100.0));
@@ -1368,6 +1511,19 @@ mod tests {
                 &mut shell,
                 &viewport,
             );
+
+            // A published press-start message causes the application view to
+            // be rebuilt. The state tree must keep the capture state across
+            // that reconciliation so release still reaches this widget.
+            let replacement = GlassButtonWidget {
+                button: GlassButton::new(GlassId(8), "Apply", Rect::new(0.0, 0.0, 120.0, 48.0)),
+                on_press: 42_u8,
+                on_press_start: Some(7_u8),
+                on_press_cancel: None,
+                on_press_end: Some(8_u8),
+            };
+            tree.diff(&replacement as &dyn Widget<u8, (), ()>);
+
             let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
             <GlassButtonWidget<u8> as Widget<u8, (), ()>>::update(
                 &mut button,
@@ -1382,8 +1538,8 @@ mod tests {
             );
         }
 
-        assert_eq!(messages, vec![42]);
-        assert!(!button.pressed);
+        assert_eq!(messages, vec![7, 8, 42]);
+        assert!(!tree.state.downcast_ref::<GlassButtonState>().pressed);
     }
 
     #[test]

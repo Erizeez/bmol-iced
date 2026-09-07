@@ -2,8 +2,62 @@
 
 use iced::{Color as IcedColor, Theme};
 use liquid_glass_scene::{
-    Color as GlassColor, GlareStyle, GlassMaterial, GlassShape, GlassVariant, ShadowStyle,
+    APPLE_CORNER_SMOOTHING, Color as GlassColor, GlareStyle, GlassMaterial, GlassShape,
+    GlassVariant, ShadowStyle, SquircleParams,
 };
+
+/// The one corner model used by the UI library.
+///
+/// Iced's built-in `Border` can only rasterize circular corners, so controls
+/// that are still supplied by Iced use [`Self::radius`] as their fallback
+/// border radius. Custom Liquid Glass surfaces and widgets use
+/// [`Self::params`] and therefore receive the exact `squircle-rs` continuous
+/// curvature path.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UiCornerStyle {
+    radius: f32,
+    smoothing: f32,
+}
+
+impl UiCornerStyle {
+    pub const GROUP: Self = Self::new(10.0);
+    pub const CONTROL: Self = Self::new(8.0);
+    pub const PICKER: Self = Self::new(6.0);
+    pub const MENU: Self = Self::new(8.0);
+    pub const SCROLLBAR: Self = Self::new(8.0);
+    pub const ICON_CHIP: Self = Self::new(8.0);
+    pub const WINDOW: Self = Self::new(14.0);
+
+    #[must_use]
+    pub const fn new(radius: f32) -> Self {
+        Self { radius, smoothing: APPLE_CORNER_SMOOTHING }
+    }
+
+    #[must_use]
+    pub const fn with_smoothing(self, smoothing: f32) -> Self {
+        Self { smoothing, ..self }
+    }
+
+    #[must_use]
+    pub const fn with_radius(self, radius: f32) -> Self {
+        Self { radius, ..self }
+    }
+
+    #[must_use]
+    pub const fn radius(self) -> f32 {
+        self.radius
+    }
+
+    #[must_use]
+    pub const fn smoothing(self) -> f32 {
+        self.smoothing
+    }
+
+    #[must_use]
+    pub fn params(self, width: f32, height: f32) -> SquircleParams {
+        SquircleParams::new(width, height, self.radius).with_smoothing(self.smoothing)
+    }
+}
 
 /// The resolved light or dark tone used to render an application window.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -125,7 +179,9 @@ impl UiTheme {
             UiColorScheme::Light => UiPalette {
                 window_background: rgba(0.950, 0.950, 0.965, 1.0),
                 sidebar_background: rgba(0.900, 0.900, 0.920, 0.72),
-                content_background: rgba(0.955, 0.955, 0.970, 1.0),
+                // The light settings content pane and fused right titlebar
+                // are sampled as neutral white on macOS.
+                content_background: rgba(1.0, 1.0, 1.0, 1.0),
                 group_background: rgba(1.0, 1.0, 1.0, 0.94),
                 group_border: rgba(0.0, 0.0, 0.0, 0.10),
                 separator: rgba(0.0, 0.0, 0.0, 0.10),
@@ -144,8 +200,8 @@ impl UiTheme {
                 sidebar_background: rgba(0.145, 0.145, 0.155, 0.72),
                 content_background: rgba(0.105, 0.105, 0.115, 1.0),
                 group_background: rgba(0.175, 0.175, 0.190, 0.96),
-                group_border: rgba(1.0, 1.0, 1.0, 0.085),
-                separator: rgba(1.0, 1.0, 1.0, 0.085),
+                group_border: rgba(70.0 / 255.0, 70.0 / 255.0, 70.0 / 255.0, 1.0),
+                separator: rgba(70.0 / 255.0, 70.0 / 255.0, 70.0 / 255.0, 1.0),
                 text_primary: rgba(0.94, 0.94, 0.96, 1.0),
                 text_secondary: rgba(0.66, 0.66, 0.69, 1.0),
                 text_tertiary: rgba(1.0, 1.0, 1.0, 0.25),
@@ -244,8 +300,8 @@ impl UiTheme {
         }
         if role == GlassRole::Sidebar {
             // The sidebar is a broad system surface, not a floating optical
-            // object. Keep only the Gaussian backdrop blur and neutral wash;
-            // the reference shader uses zero refraction as its flat-blur
+            // object. Keep only the Dual Kawase backdrop blur and neutral wash;
+            // the reference shader uses zero refraction as its flat-vibrancy
             // mode, which also suppresses Fresnel and glare in the fragment
             // path.
             material.refraction.strength = 0.0;
@@ -263,8 +319,7 @@ impl UiTheme {
             // navigation capsule is lighter and more transparent.
             GlassRole::Toolbar => 0.54,
             GlassRole::InputField => 0.64,
-            GlassRole::SearchField => 0.72,
-            GlassRole::FloatingControl => 0.72,
+            GlassRole::SearchField | GlassRole::FloatingControl => 0.72,
         };
         material.shadow = match role {
             GlassRole::FloatingControl => ShadowStyle::elevated(),
@@ -394,6 +449,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn sidebar_is_whiter_and_more_blurred_than_toolbar() {
         let theme = UiTheme::light();
         let sidebar = theme.glass_material(GlassRole::Sidebar);
@@ -424,6 +480,15 @@ mod tests {
         assert!(search.shadow.factor > 0.0);
         assert!(search.fresnel.strength > input.fresnel.strength);
         assert!(search.glare.factor > input.glare.factor);
+    }
+
+    #[test]
+    fn corner_styles_share_the_apple_squircle_smoothing() {
+        let style = UiCornerStyle::CONTROL.with_radius(12.0);
+        let params = style.params(120.0, 40.0);
+
+        assert!((params.radius() - 12.0).abs() < f32::EPSILON);
+        assert!((params.smoothing - APPLE_CORNER_SMOOTHING).abs() < f32::EPSILON);
     }
 
     #[test]

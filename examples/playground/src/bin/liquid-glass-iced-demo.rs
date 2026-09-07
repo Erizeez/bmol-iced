@@ -8,7 +8,7 @@ use iced::{
 use iced_backend::{
     FUSED_TOP_BAR_HEIGHT, Renderer, SIDEBAR_CONTENT_INSET, SIDEBAR_CONTENT_WIDTH,
     SIDEBAR_LIST_BOTTOM_INSET, SIDEBAR_SCROLLBAR_BOTTOM_INSET, SIDEBAR_SEARCH_HEIGHT,
-    SIDEBAR_SEARCH_TOP, SIDEBAR_WIDTH, TOP_BAR_BUTTON_SIZE,
+    SIDEBAR_SEARCH_TOP, SIDEBAR_WIDTH, TOP_BAR_BUTTON_SIZE, WINDOW_CONTROL_NATIVE_X,
 };
 use liquid_glass::{
     GlassAccessibility, GlassId, Rect, ScrollbarConfig, UiColorScheme, UiIcon, UiTheme,
@@ -17,6 +17,7 @@ use liquid_glass::{
 
 struct State {
     window_id: Option<iced::window::Id>,
+    window_focused: bool,
     active_section: Section,
     appearance: Appearance,
     accent: Accent,
@@ -28,12 +29,14 @@ struct State {
     increased_contrast: bool,
     volume: f32,
     system_scheme: UiColorScheme,
+    traffic_lights: liquid_glass::TrafficLightsState,
 }
 
 impl Default for State {
     fn default() -> Self {
         Self {
             window_id: None,
+            window_focused: true,
             active_section: Section::General,
             appearance: Appearance::Automatic,
             accent: Accent::Blue,
@@ -45,6 +48,7 @@ impl Default for State {
             increased_contrast: false,
             volume: 64.0,
             system_scheme: UiColorScheme::Dark,
+            traffic_lights: liquid_glass::TrafficLightsState::new(),
         }
     }
 }
@@ -140,8 +144,13 @@ impl std::fmt::Display for Accent {
 
 #[derive(Debug, Clone)]
 enum Message {
-    WindowOpened(iced::window::Id),
+    WindowReady(Option<iced::window::Id>),
+    WindowEvent((iced::window::Id, iced::window::Event)),
     ResizeWindow(iced::window::Direction),
+    DragWindow,
+    ToggleMaximize,
+    TrafficLightAction(liquid_glass::TrafficLightsAction),
+    TrafficLightHover(bool),
     SectionSelected(Section),
     AppearanceSelected(Appearance),
     AccentSelected(Accent),
@@ -161,7 +170,13 @@ fn boot() -> (State, Task<Message>) {
     let state = State::default();
     iced_backend::set_color_scheme(state.color_scheme());
     iced_backend::set_accessibility(state.accessibility());
-    (state, iced::system::theme().map(Message::SystemThemeChanged))
+    (
+        state,
+        Task::batch([
+            iced::system::theme().map(Message::SystemThemeChanged),
+            liquid_glass::IcedWindowController::latest().map(Message::WindowReady),
+        ]),
+    )
 }
 
 fn update(state: &mut State, message: Message) -> Task<Message> {
@@ -176,7 +191,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
 
     let mut task = Task::none();
     match message {
-        Message::WindowOpened(id) => {
+        Message::WindowReady(Some(id)) => {
             state.window_id = Some(id);
             let is_dark = state.color_scheme() == UiColorScheme::Dark;
             let options = liquid_glass::NativeWindowOptions::new()
@@ -193,10 +208,59 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             })
             .discard();
         }
+        Message::WindowReady(None) => {}
+        Message::WindowEvent((id, event)) => {
+            match event {
+                iced::window::Event::Opened { .. } => {
+                    if state.window_id.is_none() {
+                        return update(state, Message::WindowReady(Some(id)));
+                    }
+                }
+                iced::window::Event::Focused => {
+                    if state.window_id == Some(id) || state.window_id.is_none() {
+                        state.window_focused = true;
+                    }
+                }
+                iced::window::Event::Unfocused => {
+                    if state.window_id == Some(id) {
+                        state.window_focused = false;
+                        state.traffic_lights.set_hovered(false);
+                    }
+                }
+                iced::window::Event::Closed => {
+                    if state.window_id == Some(id) {
+                        state.window_id = None;
+                    }
+                }
+                _ => {}
+            }
+        }
         Message::ResizeWindow(direction) => {
             if let Some(id) = state.window_id {
                 task = iced::window::drag_resize(id, direction);
             }
+        }
+        Message::DragWindow => {
+            if let Some(id) = state.window_id {
+                task = iced::window::drag(id);
+            }
+        }
+        Message::ToggleMaximize => {
+            if let Some(id) = state.window_id {
+                task = iced::window::toggle_maximize(id);
+            }
+        }
+        Message::TrafficLightAction(action) => {
+            if let Some(id) = state.window_id {
+                task = match action {
+                    liquid_glass::TrafficLightsAction::Close => iced::window::close(id),
+                    liquid_glass::TrafficLightsAction::Minimize => iced::window::minimize(id, true),
+                    liquid_glass::TrafficLightsAction::Zoom => iced::window::toggle_maximize(id),
+                };
+            }
+        }
+        Message::TrafficLightHover(hovered) => {
+            state.traffic_lights.set_hovered(hovered);
         }
         Message::SectionSelected(section) => state.active_section = section,
         Message::AppearanceSelected(appearance) => state.appearance = appearance,
@@ -214,6 +278,23 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
     }
     if updates_color_scheme {
         iced_backend::set_color_scheme(state.color_scheme());
+        if let Some(id) = state.window_id {
+            let is_dark = state.color_scheme() == UiColorScheme::Dark;
+            let options = liquid_glass::NativeWindowOptions::new()
+                .with_corner_radius(14.0)
+                .with_dark_mode(is_dark)
+                .with_shadow(false)
+                .with_edr(true)
+                .with_stage_manager_guard(true);
+
+            let native_task = iced::window::run(id, move |w| {
+                if let Ok(handle) = w.window_handle() {
+                    let _ = liquid_glass::setup_native_window(handle.as_raw(), options);
+                }
+            })
+            .discard();
+            task = Task::batch([task, native_task]);
+        }
     }
     if updates_accessibility {
         iced_backend::set_accessibility(state.accessibility());
@@ -234,7 +315,7 @@ impl State {
 fn subscription(state: &State) -> Subscription<Message> {
     let _ = state;
     Subscription::batch([
-        iced::window::open_events().map(Message::WindowOpened),
+        iced::window::events().map(Message::WindowEvent),
         iced::system::theme_changes().map(Message::SystemThemeChanged),
     ])
 }
@@ -337,7 +418,37 @@ fn view(state: &State) -> AppElement<'_> {
         left: SIDEBAR_CONTENT_INSET,
     });
 
-    let sidebar: AppElement<'_> = container(stack![sidebar_scroll, search_overlay])
+    let is_dark = state.color_scheme() == UiColorScheme::Dark;
+    let traffic_lights = liquid_glass::view_traffic_lights(
+        liquid_glass::TrafficLightsConfig::new(is_dark, state.window_focused),
+        &state.traffic_lights,
+        Message::TrafficLightAction,
+        Message::TrafficLightHover,
+    );
+
+    let sidebar_top_bar = row![
+        space().width(Length::Fixed(WINDOW_CONTROL_NATIVE_X)),
+        traffic_lights,
+        space().width(Length::Fill),
+    ]
+    .align_y(iced::Alignment::Center)
+    .height(Length::Fixed(FUSED_TOP_BAR_HEIGHT))
+    .width(Length::Fixed(SIDEBAR_WIDTH));
+
+    let draggable_sidebar_top = components::glass_overlay(
+        container(
+            liquid_glass::loyal_drag_bar(
+                FUSED_TOP_BAR_HEIGHT,
+                sidebar_top_bar,
+                Message::DragWindow,
+                Some(Message::ToggleMaximize),
+            )
+        )
+        .width(Length::Fixed(SIDEBAR_WIDTH))
+        .height(Length::Fixed(FUSED_TOP_BAR_HEIGHT)),
+    );
+
+    let sidebar: AppElement<'_> = container(stack![sidebar_scroll, search_overlay, draggable_sidebar_top])
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Length::Fill)
         .padding(iced::Padding {
@@ -392,6 +503,18 @@ fn view(state: &State) -> AppElement<'_> {
         .align_y(iced::Alignment::Center),
     );
 
+    let toolbar_content = stack![toolbar, toolbar_title];
+    let draggable_toolbar = container(
+        liquid_glass::loyal_drag_bar(
+            FUSED_TOP_BAR_HEIGHT,
+            toolbar_content,
+            Message::DragWindow,
+            Some(Message::ToggleMaximize),
+        )
+    )
+    .width(Length::Fill)
+    .height(Length::Fixed(FUSED_TOP_BAR_HEIGHT));
+
     let content_body = container(settings_page(state))
         .width(Length::Fill)
         .max_width(720.0)
@@ -408,7 +531,7 @@ fn view(state: &State) -> AppElement<'_> {
         .style(components::compositor_content_surface);
 
     let main =
-        container(stack![content, toolbar, toolbar_title]).width(Length::Fill).height(Length::Fill);
+        container(stack![content, draggable_toolbar]).width(Length::Fill).height(Length::Fill);
 
     let window_content = container(row![sidebar, main]).width(Length::Fill).height(Length::Fill);
     let is_dark = state.color_scheme() == UiColorScheme::Dark;
@@ -1059,3 +1182,49 @@ mod sidebar_scrollbar_tests {
         assert_eq!(state.offset, 0.0);
     }
 }
+
+#[cfg(test)]
+mod window_and_traffic_lights_tests {
+    use super::*;
+
+    #[test]
+    fn test_window_ready_attaches_window_id() {
+        let mut state = State::default();
+        assert_eq!(state.window_id, None);
+        assert!(state.window_focused);
+
+        let test_id = iced::window::Id::unique();
+        let _ = update(&mut state, Message::WindowReady(Some(test_id)));
+        assert_eq!(state.window_id, Some(test_id));
+    }
+
+    #[test]
+    fn test_window_focus_and_unfocus_events() {
+        let mut state = State::default();
+        let test_id = iced::window::Id::unique();
+        let _ = update(&mut state, Message::WindowReady(Some(test_id)));
+
+        state.traffic_lights.set_hovered(true);
+        assert!(state.traffic_lights.is_hovered);
+
+        let _ = update(&mut state, Message::WindowEvent((test_id, iced::window::Event::Unfocused)));
+        assert!(!state.window_focused);
+        assert!(!state.traffic_lights.is_hovered);
+
+        let _ = update(&mut state, Message::WindowEvent((test_id, iced::window::Event::Focused)));
+        assert!(state.window_focused);
+    }
+
+    #[test]
+    fn test_traffic_lights_hover_state() {
+        let mut state = State::default();
+        assert!(!state.traffic_lights.is_hovered);
+
+        let _ = update(&mut state, Message::TrafficLightHover(true));
+        assert!(state.traffic_lights.is_hovered);
+
+        let _ = update(&mut state, Message::TrafficLightHover(false));
+        assert!(!state.traffic_lights.is_hovered);
+    }
+}
+

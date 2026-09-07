@@ -8,8 +8,8 @@
 use std::fmt;
 
 pub use bmol_window_shell::{
-    ChromeDrawPlan, ChromeLayoutMode, NativeWindowOptions, TrafficLightsAction, TrafficLightsState,
-    WindowAppearance, WindowChromeConfig, WindowChromeMetrics, WindowRimConfig,
+    ChromeDrawPlan, ChromeLayoutMode, NativeWindowOptions, TrafficLightsAction, TrafficLightsConfig,
+    TrafficLightsState, WindowAppearance, WindowChromeConfig, WindowChromeMetrics, WindowRimConfig,
     WindowShellController, is_system_dark_mode, loyal_drag_bar, setup_native_window,
     view_traffic_lights, wrap_border_resizer, wrap_window_rim,
 };

@@ -25,7 +25,7 @@ use liquid_glass_scene::{Color as GlassColor, GlassId, GlassMaterial, Rect};
 
 use crate::{
     GlassContainer, GlassForeground, GlassForegroundRenderer, GlassOverlay, GlassRole,
-    UiColorScheme, UiPalette, UiTheme, font,
+    UiColorScheme, UiCornerStyle, UiPalette, UiTheme, font,
     icon::{UiIcon, UiIconAsset, icon as ui_icon},
 };
 
@@ -138,7 +138,10 @@ pub fn group_surface(theme: &Theme) -> container::Style {
     container::Style {
         text_color: Some(palette.text_primary),
         background: Some(Background::Color(palette.group_background)),
-        border: Border::default().rounded(10.0).width(1.0).color(palette.group_border),
+        border: Border::default()
+            .rounded(UiCornerStyle::GROUP.radius())
+            .width(1.0)
+            .color(palette.group_border),
         ..container::Style::default()
     }
 }
@@ -211,7 +214,10 @@ pub fn pick_list_style(theme: &Theme, _status: pick_list::Status) -> pick_list::
         placeholder_color: palette.text_tertiary,
         handle_color: palette.text_secondary,
         background: Background::Color(palette.group_background),
-        border: Border::default().rounded(6.0).width(1.0).color(palette.group_border),
+        border: Border::default()
+            .rounded(UiCornerStyle::PICKER.radius())
+            .width(1.0)
+            .color(palette.group_border),
     }
 }
 
@@ -220,7 +226,10 @@ pub fn menu_style(theme: &Theme) -> iced::overlay::menu::Style {
     let palette = palette(theme);
     iced::overlay::menu::Style {
         background: Background::Color(Color { a: 1.0, ..palette.group_background }),
-        border: Border::default().rounded(8.0).width(1.0).color(palette.group_border),
+        border: Border::default()
+            .rounded(UiCornerStyle::MENU.radius())
+            .width(1.0)
+            .color(palette.group_border),
         text_color: palette.text_primary,
         selected_text_color: Color::WHITE,
         selected_background: Background::Color(palette.accent),
@@ -242,7 +251,7 @@ pub fn scrollable_style(theme: &Theme, _status: scrollable::Status) -> scrollabl
         gap: None,
         auto_scroll: scrollable::AutoScroll {
             background: Background::Color(palette.content_background),
-            border: Border::default().rounded(8.0),
+            border: Border::default().rounded(UiCornerStyle::MENU.radius()),
             shadow: Shadow::default(),
             icon: palette.text_secondary,
         },
@@ -264,7 +273,7 @@ pub fn sidebar_scrollable_style(theme: &Theme, _status: scrollable::Status) -> s
         gap: None,
         auto_scroll: scrollable::AutoScroll {
             background: Background::Color(Color::TRANSPARENT),
-            border: Border::default().rounded(8.0),
+            border: Border::default().rounded(UiCornerStyle::SCROLLBAR.radius()),
             shadow: Shadow::default(),
             icon: palette.text_secondary,
         },
@@ -311,6 +320,31 @@ where
         .into()
 }
 
+/// A vector icon with an explicit compositing opacity.
+///
+/// Iced's SVG colour filter uses the RGB channels as a rasterization key and
+/// does not apply the alpha channel of the tint to the resulting image. Use
+/// this helper for animated fades so opacity is sent through the SVG widget's
+/// compositing path instead of disappearing only when the widget is removed.
+pub fn icon_tinted_with_opacity<'a, Message, R>(
+    icon: UiIcon,
+    size: f32,
+    color: Color,
+) -> Element<'a, Message, Theme, R>
+where
+    Message: 'a,
+    R: advanced_svg::Renderer + 'a,
+{
+    let opacity = color.a.clamp(0.0, 1.0);
+    let color = Color { a: 1.0, ..color };
+    iced::widget::svg(svg_handle(icon))
+        .width(Length::Fixed(size))
+        .height(Length::Fixed(size))
+        .opacity(opacity)
+        .style(move |_theme, _status| iced::widget::svg::Style { color: Some(color) })
+        .into()
+}
+
 fn svg_handle(icon: UiIcon) -> iced::widget::svg::Handle {
     let UiIconAsset::Svg(source) = icon.asset() else {
         unreachable!("icon_tinted is only used with vector icons")
@@ -340,7 +374,8 @@ where
         .center_y(Length::Fixed(size))
         .style(move |_theme| container::Style {
             background: Some(Background::Color(chip_color)),
-            border: Border::default().rounded(size * 0.26),
+            border: Border::default()
+                .rounded(UiCornerStyle::ICON_CHIP.with_radius(size * 0.26).radius()),
             ..container::Style::default()
         })
         .into()
@@ -485,9 +520,29 @@ where
     Message: Clone + 'a,
     R: TextRenderer<Font = Font> + 'a,
 {
+    setting_slider_with_step(label, value_text, value, range, 1.0, on_change)
+}
+
+/// A settings-style slider with an explicit floating-point step.
+///
+/// Iced's default slider step is `1`, which is appropriate for integer-like
+/// settings but makes normalized `0.0..=1.0` material controls effectively
+/// binary. This variant lets visual tuning panels choose a useful resolution.
+pub fn setting_slider_with_step<'a, Message, R>(
+    label: impl Into<String>,
+    value_text: impl Into<String>,
+    value: f32,
+    range: std::ops::RangeInclusive<f32>,
+    step: f32,
+    on_change: impl Fn(f32) -> Message + 'a,
+) -> Element<'a, Message, Theme, R>
+where
+    Message: Clone + 'a,
+    R: TextRenderer<Font = Font> + 'a,
+{
     let control = row![
         text(value_text.into()).size(font::size::CAPTION).style(secondary_text),
-        slider(range, value, on_change).width(Length::Fixed(170.0)).style(slider_style),
+        slider(range, value, on_change).step(step).width(Length::Fixed(170.0)).style(slider_style),
     ]
     .spacing(10)
     .align_y(Alignment::Center);
@@ -543,6 +598,47 @@ where
     .padding([4, 6])
     .style(move |theme, status| sidebar_item_style(theme, status, selected))
     .into()
+}
+
+/// Groups a list of sidebar items into a vertical group with macOS standard 2px spacing,
+/// routing each item into the compositor foreground layer.
+pub fn sidebar_group<'a, Message, R>(
+    items: impl IntoIterator<Item = Element<'a, Message, Theme, R>>,
+) -> Element<'a, Message, Theme, R>
+where
+    Message: 'a,
+    R: CoreRenderer + GlassForegroundRenderer + 'a,
+{
+    container(
+        column(items.into_iter().map(glass_foreground).collect::<Vec<_>>())
+            .spacing(2),
+    )
+    .width(Length::Fill)
+    .into()
+}
+
+/// Standard spacing gap between sidebar groups.
+pub fn sidebar_gap<'a, Message, R>() -> Element<'a, Message, Theme, R>
+where
+    Message: 'a,
+    R: CoreRenderer + 'a,
+{
+    space().height(Length::Fixed(8.0)).into()
+}
+
+/// A standard sidebar section header label.
+pub fn sidebar_section_header<'a, Message, R>(title: &'a str) -> Element<'a, Message, Theme, R>
+where
+    Message: 'a,
+    R: ComponentRenderer + 'a,
+{
+    text(title)
+        .size(font::size::CAPTION)
+        .font(font::ui_font(iced::font::Weight::Bold))
+        .style(|theme: &Theme| text::Style {
+            color: Some(palette(theme).text_secondary),
+        })
+        .into()
 }
 
 /// The transparent, glass-backed search field for a sidebar.
@@ -621,12 +717,11 @@ where
             });
             container::Style { background, ..container::Style::default() }
         });
-    // Toolbar copy belongs between the toolbar material and any controls
-    // whose material is explicitly rendered above it. Other controls remain
-    // in the final overlay so their labels cannot accidentally be sampled by
-    // unrelated glass surfaces.
-    let foreground: Element<'a, Message, Theme, R> =
-        if role == GlassRole::Toolbar { glass_foreground(content) } else { glass_overlay(content) };
+    // Toolbar copy is part of the final chrome layer. The fused titlebar can
+    // receive a second, directional blur pass, so its title and controls
+    // must be composited after every material pass rather than left in the
+    // intermediate foreground surface.
+    let foreground: Element<'a, Message, Theme, R> = glass_overlay(content);
     iced::widget::stack![background, foreground].into()
 }
 
@@ -641,7 +736,10 @@ where
         .height(Length::Fixed(14.0))
         .style(move |theme| container::Style {
             background: Some(Background::Color(color)),
-            border: Border::default().rounded(7.0).width(1.0).color(palette(theme).group_border),
+            border: Border::default()
+                .rounded(UiCornerStyle::CONTROL.with_radius(7.0).radius())
+                .width(1.0)
+                .color(palette(theme).group_border),
             ..container::Style::default()
         })
         .into()
@@ -694,7 +792,7 @@ pub fn sidebar_item_style(theme: &Theme, status: button::Status, selected: bool)
     button::Style {
         background: Some(Background::Color(background)),
         text_color,
-        border: Border::default().rounded(6.0),
+        border: Border::default().rounded(UiCornerStyle::PICKER.radius()),
         ..button::Style::default()
     }
 }
@@ -712,12 +810,15 @@ pub fn segmented_style(theme: &Theme, status: button::Status, selected: bool) ->
     button::Style {
         background: Some(Background::Color(background)),
         text_color: palette.text_primary,
-        border: Border::default().rounded(7.0).width(1.0).color(Color::from_rgba(
-            palette.group_border.r,
-            palette.group_border.g,
-            palette.group_border.b,
-            if selected { 0.30 } else { palette.group_border.a },
-        )),
+        border: Border::default()
+            .rounded(UiCornerStyle::CONTROL.with_radius(7.0).radius())
+            .width(1.0)
+            .color(Color::from_rgba(
+                palette.group_border.r,
+                palette.group_border.g,
+                palette.group_border.b,
+                if selected { 0.30 } else { palette.group_border.a },
+            )),
         ..button::Style::default()
     }
 }
@@ -733,7 +834,7 @@ pub fn toolbar_button_style(theme: &Theme, status: button::Status) -> button::St
     button::Style {
         background: Some(Background::Color(background)),
         text_color: palette.text_primary,
-        border: Border::default().rounded(10.0),
+        border: Border::default().rounded(UiCornerStyle::GROUP.radius()),
         ..button::Style::default()
     }
 }
@@ -743,7 +844,10 @@ pub fn search_input_style(theme: &Theme, _status: text_input::Status) -> text_in
     let palette = palette(theme);
     text_input::Style {
         background: Background::Color(Color::TRANSPARENT),
-        border: Border::default().rounded(8.0).width(0.0).color(Color::TRANSPARENT),
+        border: Border::default()
+            .rounded(UiCornerStyle::CONTROL.radius())
+            .width(0.0)
+            .color(Color::TRANSPARENT),
         icon: palette.text_secondary,
         placeholder: palette.text_secondary,
         value: palette.text_primary,

@@ -11,6 +11,11 @@
 use std::path::PathBuf;
 
 /// (SF Symbol name, asset file stem) pairs used by the UI components.
+///
+/// The window close/minimize glyphs are intentionally absent: AppKit draws
+/// those through private theme widgets, and the public `xmark`/`minus`
+/// symbols have visibly thinner geometry. Their dedicated paths live in
+/// `crates/liquid-glass-ui/assets/icons/window_*.svg`.
 #[cfg(target_os = "macos")]
 const SYMBOLS: &[(&str, &str)] = &[
     ("gear", "gear"),
@@ -64,6 +69,11 @@ const BUNDLE_ASSETS: &[(&str, &str, &str, f64)] = &[
 /// the active color scheme, so both are extracted.
 #[cfg(target_os = "macos")]
 const PRIVATE_GLYPHS: &[(&str, &str, &str)] = &[
+    (
+        "/System/Library/CoreServices/CoreGlyphsPrivate.bundle/Contents/Resources/Assets.car",
+        "windowcontrol.outward",
+        "window_zoom",
+    ),
     (
         "/System/Library/CoreServices/CoreGlyphsPrivate.bundle/Contents/Resources/Assets.car",
         "appearance.lightmode",

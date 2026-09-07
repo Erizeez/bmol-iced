@@ -71,12 +71,25 @@ pub fn ui_font(weight: Weight) -> Font {
     Font { family, weight, ..Font::DEFAULT }
 }
 
+/// The font used by fused titlebars and toolbar titles.
+///
+/// This is intentionally a named preset instead of letting each application
+/// combine a size and weight ad hoc. macOS toolbar titles need more optical
+/// weight than ordinary body copy, especially over translucent surfaces.
+#[must_use]
+pub fn toolbar_title_font() -> Font {
+    ui_font(Weight::Bold)
+}
+
 /// Interface text sizes following macOS settings typography.
 pub mod size {
     /// Large in-page section titles ("General").
     pub const TITLE: f32 = 20.0;
     /// Prominent labels such as the toolbar title.
     pub const HEADLINE: f32 = 15.0;
+    /// Fused titlebar/toolbar title. Kept separate so platform chrome can be
+    /// calibrated without changing ordinary headline text.
+    pub const TOOLBAR_TITLE: f32 = 15.0;
     /// Standard control and row labels.
     pub const BODY: f32 = 13.0;
     /// Supporting detail text under a row label.
