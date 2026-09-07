@@ -8,10 +8,16 @@
 use std::fmt;
 
 pub use bmol_window_shell::{
-    ChromeDrawPlan, ChromeLayoutMode, NativeWindowOptions, TrafficLightsAction, TrafficLightsConfig,
-    TrafficLightsState, WindowAppearance, WindowChromeConfig, WindowChromeMetrics, WindowRimConfig,
-    WindowShellController, is_system_dark_mode, loyal_drag_bar, setup_native_window,
-    view_traffic_lights, wrap_border_resizer, wrap_window_rim,
+    ChromeDrawPlan, ChromeLayoutMode, NativeWindowOptions, WindowAppearance, WindowChromeConfig,
+    WindowChromeMetrics, WindowRimConfig, WindowShellController, is_system_dark_mode,
+    loyal_drag_bar, setup_native_window, wrap_border_resizer, wrap_window_rim,
+};
+
+pub use crate::traffic_lights::{
+    ControlAction, ControlAction as TrafficLightsAction, ControlGroup, TrafficLightsState,
+    WINDOW_CONTROL_GAP, WINDOW_CONTROL_LARGE_GAP, WINDOW_CONTROL_LARGE_SIZE,
+    WINDOW_CONTROL_NATIVE_IDS, WINDOW_CONTROL_NATIVE_SIZE, control_group, view_traffic_lights,
+    window_control,
 };
 
 use iced::{Element, Subscription, Task, window};

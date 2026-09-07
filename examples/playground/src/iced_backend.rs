@@ -1394,6 +1394,28 @@ impl graphics::Compositor for Compositor {
                     .render_scene_over_output(&search_scene, time_seconds)
                     .map_err(|_| graphics::compositor::SurfaceError::Other)?;
             }
+            let traffic_lights_scene = traffic_lights_scene_for_viewport(
+                viewport.scale_factor(),
+                color_scheme,
+                false,
+                &[
+                    (
+                        WINDOW_CONTROL_NATIVE_IDS[0],
+                        renderer.glass_interaction(WINDOW_CONTROL_NATIVE_IDS[0]),
+                    ),
+                    (
+                        WINDOW_CONTROL_NATIVE_IDS[1],
+                        renderer.glass_interaction(WINDOW_CONTROL_NATIVE_IDS[1]),
+                    ),
+                    (
+                        WINDOW_CONTROL_NATIVE_IDS[2],
+                        renderer.glass_interaction(WINDOW_CONTROL_NATIVE_IDS[2]),
+                    ),
+                ],
+            );
+            glass_batch
+                .render_scene_over_output(&traffic_lights_scene, time_seconds)
+                .map_err(|_| graphics::compositor::SurfaceError::Other)?;
         }
         if let Some(overlay_texture) = self.iced_overlay.as_ref() {
             glass_batch.composite_texture_to_output(overlay_texture);
@@ -1513,6 +1535,31 @@ fn scene_for_viewport(size: GpuSize, scale_factor: f32, color_scheme: UiColorSch
     toolbar.z_index = 10;
     scene.push(toolbar);
 
+    scale_scene(&mut scene, scale_factor);
+    scene
+}
+
+fn traffic_lights_scene_for_viewport(
+    scale_factor: f32,
+    color_scheme: UiColorScheme,
+    inactive: bool,
+    interactions: &[(GlassId, GlassInteraction)],
+) -> GlassScene {
+    let mut scene = GlassScene::default();
+    let scale_factor = scale_factor.max(1.0);
+    push_traffic_light_group(
+        &mut scene,
+        &WINDOW_CONTROL_NATIVE_IDS,
+        WINDOW_CONTROL_NATIVE_X,
+        WINDOW_CONTROL_NATIVE_Y,
+        WINDOW_CONTROL_NATIVE_SIZE,
+        WINDOW_CONTROL_GAP,
+        inactive,
+        false,
+        color_scheme,
+        active_window_control_tuning(),
+        interactions,
+    );
     scale_scene(&mut scene, scale_factor);
     scene
 }

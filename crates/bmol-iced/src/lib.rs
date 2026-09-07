@@ -37,17 +37,19 @@ pub use scene::{
     TrafficLightStyle,
 };
 pub use ui::{
-    DEFAULT_WINDOW_CORNER_RADIUS, GlassButton, GlassButtonIcon, GlassChrome, GlassContainer,
-    GlassForeground, GlassForegroundRenderer, GlassNavigationControl, GlassRole, GlassSegment,
-    GlassSegmentContent, GlassSegmentedControl, IcedWindowController, IcedWindowPolicy,
-    ScrollbarConfig, SpringScrollState, SpringScrollView, UiColorScheme, UiCornerStyle, UiIcon,
-    UiPalette, UiTheme, WindowCommand, WindowDragArea, WindowExpandBehavior, spring_scroll_view,
-    spring_scroll_view_with_config,
+    ControlAction, ControlGroup, DEFAULT_WINDOW_CORNER_RADIUS, GlassButton, GlassButtonIcon,
+    GlassChrome, GlassContainer, GlassForeground, GlassForegroundRenderer, GlassNavigationControl,
+    GlassRole, GlassSegment, GlassSegmentContent, GlassSegmentedControl, IcedWindowController,
+    IcedWindowPolicy, ScrollbarConfig, SpringScrollState, SpringScrollView, TrafficLightsAction,
+    TrafficLightsState, UiColorScheme, UiCornerStyle, UiIcon, UiPalette, UiTheme,
+    WINDOW_CONTROL_GAP, WINDOW_CONTROL_LARGE_GAP, WINDOW_CONTROL_LARGE_SIZE,
+    WINDOW_CONTROL_NATIVE_IDS, WINDOW_CONTROL_NATIVE_SIZE, WindowCommand, WindowDragArea,
+    WindowExpandBehavior, control_group, positioned_control_group, spring_scroll_view,
+    spring_scroll_view_with_config, traffic_lights, view_traffic_lights, window_control,
 };
 
 pub use bmol_window_shell::{
-    NativeWindowOptions, TrafficLightsAction, TrafficLightsConfig, TrafficLightsState,
-    WindowAppearance, WindowChromeConfig, WindowChromeMetrics, WindowRimConfig,
+    NativeWindowOptions, WindowAppearance, WindowChromeConfig, WindowChromeMetrics, WindowRimConfig,
     WindowShellController, is_system_dark_mode, loyal_drag_bar, setup_native_window,
-    view_traffic_lights, wrap_border_resizer, wrap_window_rim,
+    wrap_border_resizer, wrap_window_rim,
 };
