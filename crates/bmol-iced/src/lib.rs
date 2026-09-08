@@ -19,7 +19,8 @@ pub use geometry::{
     APPLE_CORNER_SMOOTHING, CornerRadii, CornerSegment, CubicBezier, PathCommand, Point,
     ProcessedCorner, SquircleParams, corner_lead_distance, generate_squircle_svg_path,
     glsl_squircle_sdf_source, sd_squircle, squircle_alpha, squircle_border_coverage,
-    squircle_path_commands, wgsl_squircle_sdf_source,
+    squircle_path_commands, squircle_popover_path_commands, wgsl_squircle_sdf_source,
+    PopoverArrowParams, PopoverArrowPreset, PopoverArrowSide, PopoverSpline,
 };
 pub use platform::{
     BackdropError, BackdropFrame, BackdropFrameError, BackdropRequest, BackdropSize,

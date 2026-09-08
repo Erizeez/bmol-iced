@@ -41,7 +41,7 @@ use bmol_designs::{
     menu_metrics,
     popover_metrics::{
         popover_arrow_profile_height_with_spline, PopoverArrowConfig, PopoverArrowEdge,
-        PopoverArrowPreset,
+        PopoverArrowPreset, DOCK_MENU_ARROW_CENTER_OFFSET,
     },
 };
 use bmol_window_shell::{
@@ -50,7 +50,8 @@ use bmol_window_shell::{
 use liquid_glass::{
     ContextMenu, ControlAction, MenuItem, TrafficLightsState, UiColorScheme, UiIcon, UiTheme,
     geometry::{
-        squircle_path_commands, PathCommand, SquircleParams, APPLE_CORNER_SMOOTHING,
+        squircle_popover_path_commands, PathCommand, PopoverArrowParams, PopoverArrowSide,
+        PopoverSpline, SquircleParams, APPLE_CORNER_SMOOTHING,
     },
     ui::font,
 };
@@ -290,9 +291,10 @@ pub mod demo_metrics {
     /// - Total exact height: 96 + 11 + 4 + 10 = 121.0 pt.
     pub const DOCK_REF_HEIGHT: f32 = 121.0;
 
-    /// 1:1 macOS Dock reference arrow left anchor offset: 39.5 pt / 154.0 pt ≈ 0.2565.
-    /// (Places arrow apex at measured x = 79.0 px / 39.5 pt, left base at 27.0 pt, seamlessly clearing corner lead p = 19.2 pt)
-    pub const DOCK_REF_ARROW_OFFSET: f32 = 39.5 / 154.0;
+    /// 1:1 macOS Dock reference arrow left anchor offset: 27.0 pt / 154.0 pt ≈ 0.1753.
+    /// (Places arrow apex at native macOS Dock menu default 27.0 pt from left card boundary)
+    pub const DOCK_REF_ARROW_OFFSET: f32 =
+        super::DOCK_MENU_ARROW_CENTER_OFFSET / DOCK_REF_WIDTH;
 }
 
 /// An occlusion region where a context menu card or popup overlays the wallpaper,
@@ -523,190 +525,62 @@ fn sample_analytical_blurred_wallpaper(
     }
 }
 
-/// Builds an authentic Apple continuous curvature squircle path (G2 continuity) for a rectangle
-/// using our dedicated `squircle-rs` (`liquid_glass::geometry`) library.
-fn build_squircle_path(rect: Rectangle, radius: f32) -> Path {
-    let r = radius.min(rect.width * 0.5).min(rect.height * 0.5);
-    let params = SquircleParams::new(rect.width, rect.height, r)
-        .with_smoothing(APPLE_CORNER_SMOOTHING);
-    let commands = squircle_path_commands(&params);
 
-    Path::new(move |b| {
-        for cmd in &commands {
-            match *cmd {
-                PathCommand::MoveTo(pt) => b.move_to(Point::new(rect.x + pt.x, rect.y + pt.y)),
-                PathCommand::LineTo(pt) => b.line_to(Point::new(rect.x + pt.x, rect.y + pt.y)),
-                PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
-                    Point::new(rect.x + c0.x, rect.y + c0.y),
-                    Point::new(rect.x + c1.x, rect.y + c1.y),
-                    Point::new(rect.x + to.x, rect.y + to.y),
-                ),
-                PathCommand::Close => b.close(),
-            }
-        }
-    })
-}
 
 /// Builds an authentic Apple continuous curvature squircle path with an integrated smooth
-/// popover arrow / beak (触角) on the designated edge.
-///
-/// Builds an authentic Apple continuous curvature squircle path with an integrated smooth
-/// popover arrow / beak (触角) on the designated edge.
-///
-/// If `arrow.edge == PopoverArrowEdge::None` or `!arrow.is_visible()`, strictly defaults
-/// to standard `build_squircle_path`.
+/// popover arrow / beak (触角) on the designated edge, powered by `liquid_glass_geometry`.
 fn build_popover_squircle_path(
     rect: Rectangle,
     radius: f32,
     arrow: PopoverArrowConfig,
 ) -> Path {
-    if !arrow.is_visible() {
-        return build_squircle_path(rect, radius);
-    }
-
     let r = radius.min(rect.width * 0.5).min(rect.height * 0.5);
-    let p = ((1.0 + APPLE_CORNER_SMOOTHING) * r).min(rect.width * 0.5).min(rect.height * 0.5);
     let params = SquircleParams::new(rect.width, rect.height, r)
         .with_smoothing(APPLE_CORNER_SMOOTHING);
-    let commands = squircle_path_commands(&params);
 
-    let w = rect.width;
-    let h = rect.height;
+    let arrow_side = match arrow.edge {
+        PopoverArrowEdge::Top => PopoverArrowSide::Top,
+        PopoverArrowEdge::Bottom => PopoverArrowSide::Bottom,
+        PopoverArrowEdge::Left => PopoverArrowSide::Left,
+        PopoverArrowEdge::Right => PopoverArrowSide::Right,
+        PopoverArrowEdge::None => PopoverArrowSide::None,
+    };
+
+    let arrow_params = PopoverArrowParams {
+        side: arrow_side,
+        base_width: arrow.base_width,
+        height: arrow.height,
+        offset: arrow.offset,
+        spline: PopoverSpline {
+            apex_ctrl_u: arrow.spline.apex_ctrl_u,
+            upper_flank_u: arrow.spline.upper_flank_u,
+            upper_flank_v: arrow.spline.upper_flank_v,
+            inflection_u: arrow.spline.inflection_u,
+            inflection_v: arrow.spline.inflection_v,
+            lower_flank_u: arrow.spline.lower_flank_u,
+            lower_flank_v: arrow.spline.lower_flank_v,
+            base_ctrl_u: arrow.spline.base_ctrl_u,
+        },
+    };
+
+    let commands = squircle_popover_path_commands(&params, &arrow_params);
     let rx = rect.x;
     let ry = rect.y;
 
-    let bw = arrow.base_width.min(w * 0.45).min(h * 0.45);
-    let ha = arrow.height;
-    let wb = bw * 0.5;
-
-    let min_x = rx + p + wb;
-    let max_x = (rx + w - p - wb).max(min_x);
-    let min_y = ry + p + wb;
-    let max_y = (ry + h - p - wb).max(min_y);
-
-    // Authentic Subpixel-Fitted Apple Popover Bézier Spline:
-    // (Fitted to native macOS Popover/Dock context menu screenshots with RMSE < 0.1 px)
-    // Consists of two C1-continuous cubic Bézier curves on each symmetrical half:
-    // - Base flank: Concave sweep from horizontal card edge into the inflection waist
-    // - Apex dome: Smooth convex transition capping the apex with horizontal tangent
-    let u_base_ctrl = arrow.spline.base_ctrl_u * wb;
-    let u_lower_flank = arrow.spline.lower_flank_u * wb;
-    let v_lower_flank = arrow.spline.lower_flank_v * ha;
-    let u_inf = arrow.spline.inflection_u * wb;
-    let v_inf = arrow.spline.inflection_v * ha;
-    let u_upper_flank = arrow.spline.upper_flank_u * wb;
-    let v_upper_flank = arrow.spline.upper_flank_v * ha;
-    let u_apex_ctrl = arrow.spline.apex_ctrl_u * wb;
-
     Path::new(move |b| {
-        let draw_arrow = |b: &mut iced::widget::canvas::path::Builder, map: &dyn Fn(f32, f32) -> Point| {
-            // 1. Line to start of arrow at baseline (-wb, 0.0)
-            b.line_to(map(-wb, 0.0));
-            // 2. Base concave flared flank up to inflection point (-u_inf, v_inf)
-            b.bezier_curve_to(
-                map(-u_base_ctrl, 0.0),
-                map(-u_lower_flank, v_lower_flank),
-                map(-u_inf, v_inf),
-            );
-            // 3. Compact apex dome up to apex (0, ha)
-            b.bezier_curve_to(
-                map(-u_upper_flank, v_upper_flank),
-                map(-u_apex_ctrl, ha),
-                map(0.0, ha),
-            );
-            // 4. Crest descent down to right inflection point (u_inf, v_inf)
-            b.bezier_curve_to(
-                map(u_apex_ctrl, ha),
-                map(u_upper_flank, v_upper_flank),
-                map(u_inf, v_inf),
-            );
-            // 5. Symmetric concave descent back to card baseline (wb, 0.0)
-            b.bezier_curve_to(
-                map(u_lower_flank, v_lower_flank),
-                map(u_base_ctrl, 0.0),
-                map(wb, 0.0),
-            );
-        };
-
-        match arrow.edge {
-            PopoverArrowEdge::Top => {
-                let xc = (rx + w * arrow.offset).clamp(min_x, max_x);
-                let map = |u: f32, v: f32| Point::new(xc + u, ry - v);
-                for (i, cmd) in commands.iter().enumerate() {
-                    if i == commands.len() - 1 {
-                        draw_arrow(b, &map);
-                        if let PathCommand::MoveTo(pt) = commands[0] {
-                            b.line_to(Point::new(rx + pt.x, ry + pt.y));
-                        }
-                        b.close();
-                    } else {
-                        emit_cmd(b, rx, ry, cmd);
-                    }
-                }
-            }
-            PopoverArrowEdge::Bottom => {
-                let xc = (rx + w * arrow.offset).clamp(min_x, max_x);
-                let map = |u: f32, v: f32| Point::new(xc - u, ry + h + v);
-                for cmd in &commands {
-                    if let PathCommand::LineTo(pt) = *cmd {
-                        if (pt.y - h).abs() < 0.1 && pt.x < w * 0.5 {
-                            draw_arrow(b, &map);
-                            b.line_to(Point::new(rx + pt.x, ry + pt.y));
-                            continue;
-                        }
-                    }
-                    emit_cmd(b, rx, ry, cmd);
-                }
-            }
-            PopoverArrowEdge::Left => {
-                let yc = (ry + h * arrow.offset).clamp(min_y, max_y);
-                let map = |u: f32, v: f32| Point::new(rx - v, yc - u);
-                for cmd in &commands {
-                    if let PathCommand::LineTo(pt) = *cmd {
-                        if pt.x.abs() < 0.1 && pt.y < h * 0.5 {
-                            draw_arrow(b, &map);
-                            b.line_to(Point::new(rx + pt.x, ry + pt.y));
-                            continue;
-                        }
-                    }
-                    emit_cmd(b, rx, ry, cmd);
-                }
-            }
-            PopoverArrowEdge::Right => {
-                let yc = (ry + h * arrow.offset).clamp(min_y, max_y);
-                let map = |u: f32, v: f32| Point::new(rx + w + v, yc + u);
-                for cmd in &commands {
-                    if let PathCommand::LineTo(pt) = *cmd {
-                        if (pt.x - w).abs() < 0.1 && pt.y > h * 0.5 {
-                            draw_arrow(b, &map);
-                            b.line_to(Point::new(rx + pt.x, ry + pt.y));
-                            continue;
-                        }
-                    }
-                    emit_cmd(b, rx, ry, cmd);
-                }
-            }
-            PopoverArrowEdge::None => {
-                for cmd in &commands {
-                    emit_cmd(b, rx, ry, cmd);
-                }
+        for cmd in &commands {
+            match *cmd {
+                PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
+                PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
+                PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
+                    Point::new(rx + c0.x, ry + c0.y),
+                    Point::new(rx + c1.x, ry + c1.y),
+                    Point::new(rx + to.x, ry + to.y),
+                ),
+                PathCommand::Close => b.close(),
             }
         }
     })
-}
-
-#[inline]
-fn emit_cmd(b: &mut iced::widget::canvas::path::Builder, rx: f32, ry: f32, cmd: &PathCommand) {
-    match *cmd {
-        PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
-        PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
-        PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
-            Point::new(rx + c0.x, ry + c0.y),
-            Point::new(rx + c1.x, ry + c1.y),
-            Point::new(rx + to.x, ry + to.y),
-        ),
-        PathCommand::Close => b.close(),
-    }
 }
 
 /// Fills an authentic Apple squircle/popover on the frame using continuous curvature.
@@ -2658,8 +2532,10 @@ fn main() -> iced::Result {
 }
 
 #[cfg(test)]
+#[allow(clippy::similar_names)]
 mod tests {
     use super::*;
+    use liquid_glass::geometry::squircle_path_commands;
 
     #[test]
     fn test_initial_state_defaults() {
