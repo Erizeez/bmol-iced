@@ -449,29 +449,29 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
             .style(move |_theme| {
                 if is_dark {
                     container::Style {
-                        background: Some(Background::Color(Color::from_rgba(0.12, 0.12, 0.14, 0.82))),
+                        background: Some(Background::Color(Color::from_rgba(0.12, 0.12, 0.15, 0.88))),
                         border: Border::default()
                             .rounded(menu_metrics::CONTAINER_CORNER_RADIUS)
                             .width(1.0)
-                            .color(Color::from_rgba(1.0, 1.0, 1.0, 0.14)),
+                            .color(Color::from_rgba(1.0, 1.0, 1.0, 0.18)),
                         shadow: Shadow {
-                            color: Color::from_rgba(0.0, 0.0, 0.0, 0.55),
-                            offset: Vector::new(0.0, 10.0),
-                            blur_radius: 28.0,
+                            color: Color::from_rgba(0.0, 0.0, 0.0, 0.65),
+                            offset: Vector::new(0.0, 14.0),
+                            blur_radius: 36.0,
                         },
                         ..container::Style::default()
                     }
                 } else {
                     container::Style {
-                        background: Some(Background::Color(Color::from_rgba(0.97, 0.97, 0.98, 0.84))),
+                        background: Some(Background::Color(Color::from_rgba(0.96, 0.96, 0.98, 0.92))),
                         border: Border::default()
                             .rounded(menu_metrics::CONTAINER_CORNER_RADIUS)
                             .width(1.0)
                             .color(Color::from_rgba(0.0, 0.0, 0.0, 0.12)),
                         shadow: Shadow {
                             color: Color::from_rgba(0.0, 0.0, 0.0, 0.22),
-                            offset: Vector::new(0.0, 8.0),
-                            blur_radius: 24.0,
+                            offset: Vector::new(0.0, 12.0),
+                            blur_radius: 32.0,
                         },
                         ..container::Style::default()
                     }

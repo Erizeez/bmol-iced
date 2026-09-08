@@ -89,6 +89,8 @@ pub enum GlassRole {
     /// Compatibility role for search-specific input fields.
     SearchField,
     FloatingControl,
+    /// Floating context menus and popovers with heavy backdrop blur (64pt).
+    ContextMenu,
 }
 
 /// Iced-side chrome drawn above a compositor-provided glass surface.
@@ -215,10 +217,8 @@ impl UiTheme {
         }
     }
 
-    /// Builds a scheme-aware material for a selective glass surface.
-    #[must_use]
-    pub fn glass_material(self, role: GlassRole) -> GlassMaterial {
-        let (blur_radius, tint, whiteness) = match (self.scheme, role) {
+    fn role_optical_params(self, role: GlassRole) -> (f32, GlassColor, f32) {
+        match (self.scheme, role) {
             (UiColorScheme::Light, GlassRole::Sidebar) => {
                 // Settings uses a very broad, neutral frosted medium here:
                 // desktop color survives only as a soft low-frequency tint.
@@ -238,6 +238,11 @@ impl UiTheme {
                 // interior nearly sharp while retaining the refractive edge.
                 (2.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.06), 0.06)
             }
+            (UiColorScheme::Light, GlassRole::ContextMenu) => {
+                // Apple context menus and popovers use an ultra-heavy 64pt blur
+                // to completely dissolve high-frequency background details.
+                (64.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.42), 0.88)
+            }
             (UiColorScheme::Dark, GlassRole::Sidebar) => {
                 (32.0, GlassColor::rgba(0.12, 0.16, 0.25, 0.14), 0.36)
             }
@@ -253,7 +258,17 @@ impl UiTheme {
             (UiColorScheme::Dark, GlassRole::FloatingControl) => {
                 (2.0, GlassColor::rgba(0.17, 0.22, 0.34, 0.10), 0.05)
             }
-        };
+            (UiColorScheme::Dark, GlassRole::ContextMenu) => {
+                // Dark mode context menu with 56pt heavy blur and deep charcoal tint.
+                (56.0, GlassColor::rgba(0.08, 0.10, 0.14, 0.32), 0.22)
+            }
+        }
+    }
+
+    /// Builds a scheme-aware material for a selective glass surface.
+    #[must_use]
+    pub fn glass_material(self, role: GlassRole) -> GlassMaterial {
+        let (blur_radius, tint, whiteness) = self.role_optical_params(role);
 
         let mut material = GlassMaterial::clear();
         material.variant = GlassVariant::Regular;
@@ -298,12 +313,9 @@ impl UiTheme {
                 factor: 0.59,
             };
         }
-        if role == GlassRole::Sidebar {
-            // The sidebar is a broad system surface, not a floating optical
-            // object. Keep only the Dual Kawase backdrop blur and neutral wash;
-            // the reference shader uses zero refraction as its flat-vibrancy
-            // mode, which also suppresses Fresnel and glare in the fragment
-            // path.
+        if role == GlassRole::Sidebar || role == GlassRole::ContextMenu {
+            // Broad/heavy frosted surfaces suppress specular glare and refraction
+            // distortion so content and typography remain razor sharp.
             material.refraction.strength = 0.0;
             material.dispersion.strength = 0.0;
             material.fresnel.strength = 0.0;
@@ -312,6 +324,10 @@ impl UiTheme {
             GlassRole::Sidebar => match self.scheme {
                 UiColorScheme::Light => 0.88,
                 UiColorScheme::Dark => 0.76,
+            },
+            GlassRole::ContextMenu => match self.scheme {
+                UiColorScheme::Light => 0.94,
+                UiColorScheme::Dark => 0.88,
             },
             // Keep the neutral layer present, but leave enough of the
             // compositor backdrop visible to read as glass on a transparent
@@ -322,7 +338,7 @@ impl UiTheme {
             GlassRole::SearchField | GlassRole::FloatingControl => 0.72,
         };
         material.shadow = match role {
-            GlassRole::FloatingControl => ShadowStyle::elevated(),
+            GlassRole::FloatingControl | GlassRole::ContextMenu => ShadowStyle::elevated(),
             GlassRole::SearchField => ShadowStyle::control(),
             GlassRole::Sidebar | GlassRole::Toolbar | GlassRole::InputField => {
                 ShadowStyle::subtle()
@@ -336,6 +352,9 @@ impl UiTheme {
     pub const fn glass_shape(self, role: GlassRole) -> GlassShape {
         match role {
             GlassRole::Sidebar | GlassRole::Toolbar => GlassShape::RoundedRect { radius: 0.0 },
+            GlassRole::ContextMenu => GlassShape::RoundedRect {
+                radius: bmol_designs::menu_metrics::CONTAINER_CORNER_RADIUS,
+            },
             GlassRole::InputField | GlassRole::SearchField | GlassRole::FloatingControl => {
                 GlassShape::Capsule
             }
@@ -382,6 +401,7 @@ impl UiTheme {
             GlassRole::InputField => (3.0, 9.0),
             GlassRole::SearchField => (3.0, 12.0),
             GlassRole::FloatingControl => (4.0, 10.0),
+            GlassRole::ContextMenu => (8.0, 28.0),
         };
         GlassChrome {
             border,
