@@ -1544,7 +1544,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::CycleArrowPreset => {
             state.arrow_preset = match state.arrow_preset {
                 PopoverArrowPreset::MenuWide => {
-                    state.last_action = Some("已切换触角预设: 🎯 原生 Dock 气泡细触角 (21×6.2 pt, 细腰紧凑温润)".into());
+                    state.last_action = Some("已切换触角预设: 🎯 原生 Dock 气泡细触角 (20×7 pt, 细腰紧凑温润)".into());
                     PopoverArrowPreset::TooltipNarrow
                 }
                 PopoverArrowPreset::TooltipNarrow => {
@@ -1556,7 +1556,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     PopoverArrowPreset::SubtleCompact
                 }
                 PopoverArrowPreset::SubtleCompact => {
-                    state.last_action = Some("已切换触角预设: 🍎 原生 Dock 菜单宽触角 (27×10 pt, 宽穹顶内凹腰线)".into());
+                    state.last_action = Some("已切换触角预设: 🍎 原生 Dock 菜单宽触角 (25×10 pt, 宽穹顶内凹腰线)".into());
                     PopoverArrowPreset::MenuWide
                 }
             };
@@ -3002,8 +3002,8 @@ mod tests {
         let _ = update(&mut state, Message::CycleArrowPreset);
         assert_eq!(state.arrow_preset, PopoverArrowPreset::TooltipNarrow);
         let cfg_narrow = state.current_arrow_config();
-        assert_eq!(cfg_narrow.base_width, 21.0);
-        assert_eq!(cfg_narrow.height, 6.2);
+        assert_eq!(cfg_narrow.base_width, 20.0);
+        assert_eq!(cfg_narrow.height, 7.0);
         assert_eq!(cfg_narrow.tip_radius, 1.0);
 
         // 2. TooltipNarrow -> AppKitStandard
@@ -3026,7 +3026,7 @@ mod tests {
         let _ = update(&mut state, Message::CycleArrowPreset);
         assert_eq!(state.arrow_preset, PopoverArrowPreset::MenuWide);
         let cfg_wide = state.current_arrow_config();
-        assert_eq!(cfg_wide.base_width, 27.0);
+        assert_eq!(cfg_wide.base_width, 25.0);
         assert_eq!(cfg_wide.height, 10.0);
         assert_eq!(cfg_wide.tip_radius, 1.8);
     }
