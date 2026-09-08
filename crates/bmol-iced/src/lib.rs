@@ -37,15 +37,15 @@ pub use scene::{
     TrafficLightStyle,
 };
 pub use ui::{
-    ControlAction, ControlGroup, DEFAULT_WINDOW_CORNER_RADIUS, GlassButton, GlassButtonIcon,
+    ContextMenu, ControlAction, ControlGroup, DEFAULT_WINDOW_CORNER_RADIUS, GlassButton, GlassButtonIcon,
     GlassChrome, GlassContainer, GlassForeground, GlassForegroundRenderer, GlassNavigationControl,
     GlassRole, GlassSegment, GlassSegmentContent, GlassSegmentedControl, IcedWindowController,
-    IcedWindowPolicy, ScrollbarConfig, SpringScrollState, SpringScrollView, TrafficLightsAction,
+    IcedWindowPolicy, MenuItem, ScrollbarConfig, SpringScrollState, SpringScrollView, TrafficLightsAction,
     TrafficLightsState, UiColorScheme, UiCornerStyle, UiIcon, UiPalette, UiTheme,
     WINDOW_CONTROL_GAP, WINDOW_CONTROL_LARGE_GAP, WINDOW_CONTROL_LARGE_SIZE,
     WINDOW_CONTROL_NATIVE_IDS, WINDOW_CONTROL_NATIVE_SIZE, WindowCommand, WindowDragArea,
     WindowExpandBehavior, control_group, positioned_control_group, spring_scroll_view,
-    spring_scroll_view_with_config, traffic_lights, view_traffic_lights, window_control,
+    spring_scroll_view_with_config, traffic_lights, view_context_menu, view_traffic_lights, window_control,
 };
 
 pub use bmol_window_shell::{
