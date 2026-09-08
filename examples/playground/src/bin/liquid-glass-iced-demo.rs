@@ -10,6 +10,7 @@ use iced_backend::{
     SIDEBAR_LIST_BOTTOM_INSET, SIDEBAR_SCROLLBAR_BOTTOM_INSET, SIDEBAR_SEARCH_HEIGHT,
     SIDEBAR_SEARCH_TOP, SIDEBAR_WIDTH, TOP_BAR_BUTTON_SIZE,
 };
+use bmol_window_shell::{window_metrics, window_rim};
 use liquid_glass::{
     GlassAccessibility, GlassId, Rect, ScrollbarConfig, UiColorScheme, UiIcon, UiTheme,
     ui::{components, font, spring_scroll_view_with_config},
@@ -185,7 +186,7 @@ type AppElement<'a> = Element<'a, Message, Theme, Renderer>;
 fn boot() -> (State, Task<Message>) {
     let state = State::default();
     let is_dark = state.color_scheme() == UiColorScheme::Dark;
-    let rim_insets: f32 = if is_dark { 2.0 } else { 1.0 };
+    let rim_insets: f32 = window_rim::rim_thickness(is_dark);
     let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
     let origin_x = rim_insets + symmetric_margin;
     let origin_y = rim_insets + symmetric_margin;
@@ -218,7 +219,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.window_id = Some(id);
             let is_dark = state.color_scheme() == UiColorScheme::Dark;
             let options = liquid_glass::NativeWindowOptions::new()
-                .with_corner_radius(14.0)
+                .with_corner_radius(window_metrics::DEFAULT_CORNER_RADIUS as f64)
                 .with_dark_mode(is_dark)
                 .with_shadow(false)
                 .with_edr(true)
@@ -355,7 +356,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
     if updates_color_scheme {
         let scheme = state.color_scheme();
         let is_dark = scheme == UiColorScheme::Dark;
-        let rim_insets: f32 = if is_dark { 2.0 } else { 1.0 };
+        let rim_insets: f32 = window_rim::rim_thickness(is_dark);
         let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
         let origin_x = rim_insets + symmetric_margin;
         let origin_y = rim_insets + symmetric_margin;
@@ -363,7 +364,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         iced_backend::set_color_scheme(scheme);
         if let Some(id) = state.window_id {
             let options = liquid_glass::NativeWindowOptions::new()
-                .with_corner_radius(14.0)
+                .with_corner_radius(window_metrics::DEFAULT_CORNER_RADIUS as f64)
                 .with_dark_mode(is_dark)
                 .with_shadow(false)
                 .with_edr(true)
@@ -509,9 +510,10 @@ fn view(state: &State) -> AppElement<'_> {
     });
 
     let is_dark = state.color_scheme() == UiColorScheme::Dark;
-    let rim_insets: f32 = if is_dark { 2.0 } else { 1.0 };
+    let rim_insets: f32 = window_rim::rim_thickness(is_dark);
     let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
-    let leading_spacer_w = (symmetric_margin - 6.0).max(0.0);
+    let slop = liquid_glass::traffic_lights::control_hover_slop(liquid_glass::WINDOW_CONTROL_NATIVE_SIZE);
+    let leading_spacer_w = (symmetric_margin - slop).max(0.0);
     let origin_x = rim_insets + symmetric_margin;
     let origin_y = rim_insets + symmetric_margin;
     iced_backend::set_window_control_origin(origin_x, origin_y);
@@ -646,7 +648,8 @@ fn view(state: &State) -> AppElement<'_> {
     let is_dark = state.color_scheme() == UiColorScheme::Dark;
     let rimmed = liquid_glass::wrap_window_rim(
         window_content,
-        liquid_glass::WindowRimConfig::new(is_dark).with_corner_radius(14.0),
+        liquid_glass::WindowRimConfig::new(is_dark)
+            .with_corner_radius(window_metrics::DEFAULT_CORNER_RADIUS),
     );
     liquid_glass::wrap_border_resizer(rimmed, false, Message::ResizeWindow)
 }
