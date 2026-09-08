@@ -39,7 +39,7 @@ use iced::{
 };
 use bmol_designs::{
     menu_metrics,
-    popover_metrics::{PopoverArrowConfig, PopoverArrowEdge},
+    popover_metrics::{PopoverArrowConfig, PopoverArrowEdge, PopoverArrowPreset},
 };
 use bmol_window_shell::{
     WindowChromeConfig, WindowShellController, is_system_dark_mode, traffic_lights, window_metrics,
@@ -222,6 +222,7 @@ pub enum Message {
     ToggleCalibrationGrid,
     SetPopoverArrow(PopoverArrowEdge),
     ToggleMenuPreset,
+    CycleArrowPreset,
 
     // Draggable menu cards
     StartDragCard(DragTarget),
@@ -571,37 +572,47 @@ fn build_popover_squircle_path(
 
     let bw = arrow.base_width.min(w * 0.45).min(h * 0.45);
     let ha = arrow.height;
-    let ku = (bw * 0.5) / 13.0;
-    let kv = ha / 10.0;
-    let wb = 13.0 * ku;
+    let wb = bw * 0.5;
+    let rt = arrow.tip_radius.clamp(0.5, wb * 0.6);
+    let rf = arrow.base_fillet.clamp(0.5, wb * 0.6);
+
+    // Parametric C1 Bezier control nodes dynamically adapting to tip_radius and base_fillet:
+    let u_apex_ctrl = rt * 0.4;
+    let v_inflect = ha * 0.58;
+    let u_inflect = (rt * 0.7 + wb * 0.25).min(wb * 0.65);
+    let u_base_ctrl = wb - rf * 0.45;
+    let u_lower_slope = u_inflect + (wb - u_inflect) * 0.35;
+    let v_lower_slope = v_inflect * 0.58;
+    let u_upper_slope = u_inflect * 0.65;
+    let v_upper_slope = v_inflect + (ha - v_inflect) * 0.6;
 
     Path::new(move |b| {
         let draw_arrow = |b: &mut iced::widget::canvas::path::Builder, map: &dyn Fn(f32, f32) -> Point| {
-            // 1. Line to start of arrow at baseline (-13.0, 0.0)
-            b.line_to(map(-13.0 * ku, 0.0));
+            // 1. Line to start of arrow at baseline (-wb, 0.0)
+            b.line_to(map(-wb, 0.0));
             // 2. Base entry fillet: horizontal tangent from straight edge into lower flank
             b.bezier_curve_to(
-                map(-10.5 * ku, 0.0),
-                map(-7.5 * ku, 3.5 * kv),
-                map(-5.5 * ku, 6.0 * kv),
+                map(-u_base_ctrl, 0.0),
+                map(-u_lower_slope, v_lower_slope),
+                map(-u_inflect, v_inflect),
             );
             // 3. Upper flank into apex dome: smoothly curves towards broad horizontal crest
             b.bezier_curve_to(
-                map(-3.5 * ku, 8.5 * kv),
-                map(-2.0 * ku, 10.0 * kv),
-                map(0.0, 10.0 * kv),
+                map(-u_upper_slope, v_upper_slope),
+                map(-u_apex_ctrl, ha),
+                map(0.0, ha),
             );
-            // 4. Crest descent into downward flank: perfectly horizontal tangent at apex (0, 10)
+            // 4. Crest descent into downward flank: perfectly horizontal tangent at apex (0, ha)
             b.bezier_curve_to(
-                map(2.0 * ku, 10.0 * kv),
-                map(3.5 * ku, 8.5 * kv),
-                map(5.5 * ku, 6.0 * kv),
+                map(u_apex_ctrl, ha),
+                map(u_upper_slope, v_upper_slope),
+                map(u_inflect, v_inflect),
             );
             // 5. Base exit fillet: smooth C1 tangent transition back to card baseline
             b.bezier_curve_to(
-                map(7.5 * ku, 3.5 * kv),
-                map(10.5 * ku, 0.0),
-                map(13.0 * ku, 0.0),
+                map(u_lower_slope, v_lower_slope),
+                map(u_base_ctrl, 0.0),
+                map(wb, 0.0),
             );
         };
 
@@ -1149,6 +1160,7 @@ pub struct State {
     pub active_drag: Option<(DragTarget, Point)>,
     pub top_card: DragTarget,
     pub popover_arrow_edge: PopoverArrowEdge,
+    pub arrow_preset: PopoverArrowPreset,
     pub arrow_offset: f32,
     pub menu_preset: MenuContentPreset,
 }
@@ -1189,6 +1201,7 @@ impl Default for State {
             active_drag: None,
             top_card: DragTarget::DarkCard,
             popover_arrow_edge: PopoverArrowEdge::Bottom,
+            arrow_preset: PopoverArrowPreset::MenuWide,
             arrow_offset: demo_metrics::DOCK_REF_ARROW_OFFSET,
             menu_preset: MenuContentPreset::DockReference1To1,
         }
@@ -1196,6 +1209,11 @@ impl Default for State {
 }
 
 impl State {
+    #[must_use]
+    pub fn current_arrow_config(&self) -> PopoverArrowConfig {
+        PopoverArrowConfig::from_preset(self.popover_arrow_edge, self.arrow_preset)
+            .with_offset(self.arrow_offset)
+    }
     #[must_use]
     pub fn scheme(&self) -> UiColorScheme {
         if self.controller.is_dark {
@@ -1516,6 +1534,27 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 }
             };
             state.rebuild_menus();
+            Task::none()
+        }
+        Message::CycleArrowPreset => {
+            state.arrow_preset = match state.arrow_preset {
+                PopoverArrowPreset::MenuWide => {
+                    state.last_action = Some("已切换触角预设: 🎯 细窄 Hover / Tooltip 气泡 (16×7 pt, R2.0 挺拔)".into());
+                    PopoverArrowPreset::TooltipNarrow
+                }
+                PopoverArrowPreset::TooltipNarrow => {
+                    state.last_action = Some("已切换触角预设: 📐 系统原生 AppKit NSPopover (27.5×13 pt, R5.0)".into());
+                    PopoverArrowPreset::AppKitStandard
+                }
+                PopoverArrowPreset::AppKitStandard => {
+                    state.last_action = Some("已切换触角预设: 🔹 微型提示指针 (12×5 pt, R1.5 超紧凑)".into());
+                    PopoverArrowPreset::SubtleCompact
+                }
+                PopoverArrowPreset::SubtleCompact => {
+                    state.last_action = Some("已切换触角预设: 🍎 宽型菜单穹顶气泡 (26×10 pt, R5.0 饱满圆润)".into());
+                    PopoverArrowPreset::MenuWide
+                }
+            };
             Task::none()
         }
     }
@@ -2017,6 +2056,36 @@ fn view_top_header<'a>(
     })
     .on_press(Message::ToggleMenuPreset);
 
+    let arrow_preset_text = match state.arrow_preset {
+        PopoverArrowPreset::MenuWide => "▼ 宽型菜单 (26×10)",
+        PopoverArrowPreset::TooltipNarrow => "▼ 细窄Hover (16×7)",
+        PopoverArrowPreset::AppKitStandard => "▼ 原生NSPopover (27.5×13)",
+        PopoverArrowPreset::SubtleCompact => "▼ 微型提示 (12×5)",
+    };
+
+    let arrow_preset_btn = button(
+        text(arrow_preset_text)
+            .size(10.5)
+            .font(font::ui_font(Weight::Medium))
+            .color(palette.text_primary),
+    )
+    .padding(Padding {
+        top: 4.0,
+        right: 8.0,
+        bottom: 4.0,
+        left: 8.0,
+    })
+    .style(move |_theme, _status| button::Style {
+        background: Some(Background::Color(if is_dark {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.06)
+        })),
+        border: Border::default().rounded(6.0),
+        ..button::Style::default()
+    })
+    .on_press(Message::CycleArrowPreset);
+
     let theme_btn = button(
         text(if is_dark { "☀️ Light" } else { "🌙 Dark" })
             .size(11.0)
@@ -2045,7 +2114,9 @@ fn view_top_header<'a>(
         title_text,
         space().width(Length::Fill),
         preset_btn,
-        space().width(8.0),
+        space().width(6.0),
+        arrow_preset_btn,
+        space().width(6.0),
         arrow_picker,
         space().width(8.0),
         wallpaper_picker,
@@ -2327,8 +2398,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
     let guide_height = 36.0;
     let top_offset = header_height + guide_height;
 
-    let arrow_cfg = PopoverArrowConfig::new(state.popover_arrow_edge)
-        .with_offset(state.arrow_offset);
+    let arrow_cfg = state.current_arrow_config();
 
     let mut occlusions = vec![
         MenuOcclusion {
@@ -2589,6 +2659,7 @@ mod tests {
         assert_eq!(state.active_drag, None);
         assert_eq!(state.menu_preset, MenuContentPreset::DockReference1To1);
         assert_eq!(state.popover_arrow_edge, PopoverArrowEdge::Bottom);
+        assert_eq!(state.arrow_preset, PopoverArrowPreset::MenuWide);
         assert_eq!(state.arrow_offset, demo_metrics::DOCK_REF_ARROW_OFFSET);
     }
 
@@ -2915,6 +2986,43 @@ mod tests {
         assert_eq!(state.menu_preset, MenuContentPreset::DockReference1To1);
         assert_eq!(state.popover_arrow_edge, PopoverArrowEdge::Bottom);
         assert_eq!(state.arrow_offset, demo_metrics::DOCK_REF_ARROW_OFFSET);
+    }
+
+    #[test]
+    fn test_cycle_arrow_preset_lifecycle() {
+        let mut state = State::default();
+        assert_eq!(state.arrow_preset, PopoverArrowPreset::MenuWide);
+
+        // 1. MenuWide -> TooltipNarrow
+        let _ = update(&mut state, Message::CycleArrowPreset);
+        assert_eq!(state.arrow_preset, PopoverArrowPreset::TooltipNarrow);
+        let cfg_narrow = state.current_arrow_config();
+        assert_eq!(cfg_narrow.base_width, 16.0);
+        assert_eq!(cfg_narrow.height, 7.0);
+        assert_eq!(cfg_narrow.tip_radius, 2.0);
+
+        // 2. TooltipNarrow -> AppKitStandard
+        let _ = update(&mut state, Message::CycleArrowPreset);
+        assert_eq!(state.arrow_preset, PopoverArrowPreset::AppKitStandard);
+        let cfg_std = state.current_arrow_config();
+        assert_eq!(cfg_std.base_width, 27.5);
+        assert_eq!(cfg_std.height, 13.0);
+        assert_eq!(cfg_std.tip_radius, 5.0);
+
+        // 3. AppKitStandard -> SubtleCompact
+        let _ = update(&mut state, Message::CycleArrowPreset);
+        assert_eq!(state.arrow_preset, PopoverArrowPreset::SubtleCompact);
+        let cfg_subtle = state.current_arrow_config();
+        assert_eq!(cfg_subtle.base_width, 12.0);
+        assert_eq!(cfg_subtle.height, 5.0);
+
+        // 4. SubtleCompact -> MenuWide
+        let _ = update(&mut state, Message::CycleArrowPreset);
+        assert_eq!(state.arrow_preset, PopoverArrowPreset::MenuWide);
+        let cfg_wide = state.current_arrow_config();
+        assert_eq!(cfg_wide.base_width, 26.0);
+        assert_eq!(cfg_wide.height, 10.0);
+        assert_eq!(cfg_wide.tip_radius, 5.0);
     }
 
     #[test]
