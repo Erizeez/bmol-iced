@@ -512,6 +512,9 @@ fn build_squircle_path(rect: Rectangle, radius: f32) -> Path {
 /// Builds an authentic Apple continuous curvature squircle path with an integrated smooth
 /// popover arrow / beak (触角) on the designated edge.
 ///
+/// Builds an authentic Apple continuous curvature squircle path with an integrated smooth
+/// popover arrow / beak (触角) on the designated edge.
+///
 /// If `arrow.edge == PopoverArrowEdge::None` or `!arrow.is_visible()`, strictly defaults
 /// to standard `build_squircle_path`.
 fn build_popover_squircle_path(
@@ -533,200 +536,136 @@ fn build_popover_squircle_path(
     let rx = rect.x;
     let ry = rect.y;
 
-    let bw_half = (arrow.base_width * 0.5).min(w * 0.35);
+    let bw = arrow.base_width.min(w * 0.4).min(h * 0.4);
+    let wb = bw * 0.5;
     let ha = arrow.height;
-    let rf = arrow.base_fillet.min(bw_half * 0.5);
-    let rt = arrow.tip_radius.min(ha * 0.5);
+    let fw = arrow.base_fillet.min(wb * 0.6);
+    let fh = fw * 0.42;
+    let tw = arrow.tip_radius.min(ha * 0.6);
+    let th = tw * 0.55;
 
     Path::new(move |b| {
+        let draw_arrow = |b: &mut iced::widget::canvas::path::Builder, map: &dyn Fn(f32, f32) -> Point| {
+            b.line_to(map(-wb, 0.0));
+            // 1. Tangent base entry fillet: horizontal zero-derivative transition into sloped flank
+            b.bezier_curve_to(
+                map(-wb + fw * 0.45, 0.0),
+                map(-wb + fw * 0.85, fh * 0.35),
+                map(-wb + fw, fh),
+            );
+            // 2. Smooth curved upward flank
+            let p1_u = -wb + fw;
+            let p1_v = fh;
+            let p2_u = -tw;
+            let p2_v = ha - th;
+            b.bezier_curve_to(
+                map(p1_u + (p2_u - p1_u) * 0.35, p1_v + (p2_v - p1_v) * 0.38),
+                map(p1_u + (p2_u - p1_u) * 0.68, p1_v + (p2_v - p1_v) * 0.72),
+                map(p2_u, p2_v),
+            );
+            // 3. Broad gentle rounded dome apex: completely horizontal tangent at crest
+            b.bezier_curve_to(
+                map(-tw * 0.45, ha),
+                map(tw * 0.45, ha),
+                map(tw, ha - th),
+            );
+            // 4. Smooth curved downward flank
+            let p3_u = tw;
+            let p3_v = ha - th;
+            let p4_u = wb - fw;
+            let p4_v = fh;
+            b.bezier_curve_to(
+                map(p3_u + (p4_u - p3_u) * 0.32, p3_v + (p4_v - p3_v) * 0.28),
+                map(p3_u + (p4_u - p3_u) * 0.65, p3_v + (p4_v - p3_v) * 0.62),
+                map(p4_u, p4_v),
+            );
+            // 5. Tangent base exit fillet: smooth landing back to straight edge
+            b.bezier_curve_to(
+                map(wb - fw * 0.85, fh * 0.35),
+                map(wb - fw * 0.45, 0.0),
+                map(wb, 0.0),
+            );
+        };
+
         match arrow.edge {
             PopoverArrowEdge::Top => {
-                let xc = (rx + w * arrow.offset).clamp(
-                    rx + r + rf + bw_half,
-                    rx + w - r - rf - bw_half,
-                );
+                let xc = (rx + w * arrow.offset).clamp(rx + r + wb, rx + w - r - wb);
+                let map = |u: f32, v: f32| Point::new(xc + u, ry - v);
                 for (i, cmd) in commands.iter().enumerate() {
                     if i == commands.len() - 1 {
-                        b.line_to(Point::new(xc - bw_half - rf, ry));
-                        b.bezier_curve_to(
-                            Point::new(xc - bw_half - rf * 0.5, ry),
-                            Point::new(xc - bw_half - rf * 0.1, ry - rf * 0.25),
-                            Point::new(xc - bw_half + rf * 0.25, ry - rf * 0.55),
-                        );
-                        b.line_to(Point::new(xc - rt * 0.75, ry - ha + rt * 0.55));
-                        b.bezier_curve_to(
-                            Point::new(xc - rt * 0.35, ry - ha),
-                            Point::new(xc + rt * 0.35, ry - ha),
-                            Point::new(xc + rt * 0.75, ry - ha + rt * 0.55),
-                        );
-                        b.line_to(Point::new(xc + bw_half - rf * 0.25, ry - rf * 0.55));
-                        b.bezier_curve_to(
-                            Point::new(xc + bw_half + rf * 0.1, ry - rf * 0.25),
-                            Point::new(xc + bw_half + rf * 0.5, ry),
-                            Point::new(xc + bw_half + rf, ry),
-                        );
+                        draw_arrow(b, &map);
                         if let PathCommand::MoveTo(pt) = commands[0] {
                             b.line_to(Point::new(rx + pt.x, ry + pt.y));
                         }
                         b.close();
                     } else {
-                        match *cmd {
-                            PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
-                            PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
-                            PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
-                                Point::new(rx + c0.x, ry + c0.y),
-                                Point::new(rx + c1.x, ry + c1.y),
-                                Point::new(rx + to.x, ry + to.y),
-                            ),
-                            PathCommand::Close => b.close(),
-                        }
+                        emit_cmd(b, rx, ry, cmd);
                     }
                 }
             }
             PopoverArrowEdge::Bottom => {
-                let xc = (rx + w * arrow.offset).clamp(
-                    rx + r + rf + bw_half,
-                    rx + w - r - rf - bw_half,
-                );
-                let bot_y = ry + h;
+                let xc = (rx + w * arrow.offset).clamp(rx + r + wb, rx + w - r - wb);
+                let map = |u: f32, v: f32| Point::new(xc - u, ry + h + v);
                 for cmd in &commands {
                     if let PathCommand::LineTo(pt) = *cmd {
                         if (pt.y - h).abs() < 0.1 && pt.x < w * 0.5 {
-                            b.line_to(Point::new(xc + bw_half + rf, bot_y));
-                            b.bezier_curve_to(
-                                Point::new(xc + bw_half + rf * 0.5, bot_y),
-                                Point::new(xc + bw_half + rf * 0.1, bot_y + rf * 0.25),
-                                Point::new(xc + bw_half - rf * 0.25, bot_y + rf * 0.55),
-                            );
-                            b.line_to(Point::new(xc + rt * 0.75, bot_y + ha - rt * 0.55));
-                            b.bezier_curve_to(
-                                Point::new(xc + rt * 0.35, bot_y + ha),
-                                Point::new(xc - rt * 0.35, bot_y + ha),
-                                Point::new(xc - rt * 0.75, bot_y + ha - rt * 0.55),
-                            );
-                            b.line_to(Point::new(xc - bw_half + rf * 0.25, bot_y + rf * 0.55));
-                            b.bezier_curve_to(
-                                Point::new(xc - bw_half - rf * 0.1, bot_y + rf * 0.25),
-                                Point::new(xc - bw_half - rf * 0.5, bot_y),
-                                Point::new(xc - bw_half - rf, bot_y),
-                            );
+                            draw_arrow(b, &map);
                             b.line_to(Point::new(rx + pt.x, ry + pt.y));
                             continue;
                         }
                     }
-                    match *cmd {
-                        PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
-                        PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
-                        PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
-                            Point::new(rx + c0.x, ry + c0.y),
-                            Point::new(rx + c1.x, ry + c1.y),
-                            Point::new(rx + to.x, ry + to.y),
-                        ),
-                        PathCommand::Close => b.close(),
-                    }
+                    emit_cmd(b, rx, ry, cmd);
                 }
             }
             PopoverArrowEdge::Left => {
-                let yc = (ry + h * arrow.offset).clamp(
-                    ry + r + rf + bw_half,
-                    ry + h - r - rf - bw_half,
-                );
+                let yc = (ry + h * arrow.offset).clamp(ry + r + wb, ry + h - r - wb);
+                let map = |u: f32, v: f32| Point::new(rx - v, yc - u);
                 for cmd in &commands {
                     if let PathCommand::LineTo(pt) = *cmd {
                         if pt.x.abs() < 0.1 && pt.y < h * 0.5 {
-                            b.line_to(Point::new(rx, yc + bw_half + rf));
-                            b.bezier_curve_to(
-                                Point::new(rx, yc + bw_half + rf * 0.5),
-                                Point::new(rx - rf * 0.25, yc + bw_half + rf * 0.1),
-                                Point::new(rx - rf * 0.55, yc + bw_half - rf * 0.25),
-                            );
-                            b.line_to(Point::new(rx - ha + rt * 0.55, yc + rt * 0.75));
-                            b.bezier_curve_to(
-                                Point::new(rx - ha, yc + rt * 0.35),
-                                Point::new(rx - ha, yc - rt * 0.35),
-                                Point::new(rx - ha + rt * 0.55, yc - rt * 0.75),
-                            );
-                            b.line_to(Point::new(rx - rf * 0.55, yc - bw_half + rf * 0.25));
-                            b.bezier_curve_to(
-                                Point::new(rx - rf * 0.25, yc - bw_half - rf * 0.1),
-                                Point::new(rx, yc - bw_half - rf * 0.5),
-                                Point::new(rx, yc - bw_half - rf),
-                            );
+                            draw_arrow(b, &map);
                             b.line_to(Point::new(rx + pt.x, ry + pt.y));
                             continue;
                         }
                     }
-                    match *cmd {
-                        PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
-                        PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
-                        PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
-                            Point::new(rx + c0.x, ry + c0.y),
-                            Point::new(rx + c1.x, ry + c1.y),
-                            Point::new(rx + to.x, ry + to.y),
-                        ),
-                        PathCommand::Close => b.close(),
-                    }
+                    emit_cmd(b, rx, ry, cmd);
                 }
             }
             PopoverArrowEdge::Right => {
-                let yc = (ry + h * arrow.offset).clamp(
-                    ry + r + rf + bw_half,
-                    ry + h - r - rf - bw_half,
-                );
-                let right_x = rx + w;
+                let yc = (ry + h * arrow.offset).clamp(ry + r + wb, ry + h - r - wb);
+                let map = |u: f32, v: f32| Point::new(rx + w + v, yc + u);
                 for cmd in &commands {
                     if let PathCommand::LineTo(pt) = *cmd {
                         if (pt.x - w).abs() < 0.1 && pt.y > h * 0.5 {
-                            b.line_to(Point::new(right_x, yc - bw_half - rf));
-                            b.bezier_curve_to(
-                                Point::new(right_x, yc - bw_half - rf * 0.5),
-                                Point::new(right_x + rf * 0.25, yc - bw_half - rf * 0.1),
-                                Point::new(right_x + rf * 0.55, yc - bw_half + rf * 0.25),
-                            );
-                            b.line_to(Point::new(right_x + ha - rt * 0.55, yc - rt * 0.75));
-                            b.bezier_curve_to(
-                                Point::new(right_x + ha, yc - rt * 0.35),
-                                Point::new(right_x + ha, yc + rt * 0.35),
-                                Point::new(right_x + ha - rt * 0.55, yc + rt * 0.75),
-                            );
-                            b.line_to(Point::new(right_x + rf * 0.55, yc + bw_half - rf * 0.25));
-                            b.bezier_curve_to(
-                                Point::new(right_x + rf * 0.25, yc + bw_half + rf * 0.1),
-                                Point::new(right_x, yc + bw_half + rf * 0.5),
-                                Point::new(right_x, yc + bw_half + rf),
-                            );
+                            draw_arrow(b, &map);
                             b.line_to(Point::new(rx + pt.x, ry + pt.y));
                             continue;
                         }
                     }
-                    match *cmd {
-                        PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
-                        PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
-                        PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
-                            Point::new(rx + c0.x, ry + c0.y),
-                            Point::new(rx + c1.x, ry + c1.y),
-                            Point::new(rx + to.x, ry + to.y),
-                        ),
-                        PathCommand::Close => b.close(),
-                    }
+                    emit_cmd(b, rx, ry, cmd);
                 }
             }
             PopoverArrowEdge::None => {
                 for cmd in &commands {
-                    match *cmd {
-                        PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
-                        PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
-                        PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
-                            Point::new(rx + c0.x, ry + c0.y),
-                            Point::new(rx + c1.x, ry + c1.y),
-                            Point::new(rx + to.x, ry + to.y),
-                        ),
-                        PathCommand::Close => b.close(),
-                    }
+                    emit_cmd(b, rx, ry, cmd);
                 }
             }
         }
     })
+}
+
+#[inline]
+fn emit_cmd(b: &mut iced::widget::canvas::path::Builder, rx: f32, ry: f32, cmd: &PathCommand) {
+    match *cmd {
+        PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
+        PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
+        PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
+            Point::new(rx + c0.x, ry + c0.y),
+            Point::new(rx + c1.x, ry + c1.y),
+            Point::new(rx + to.x, ry + to.y),
+        ),
+        PathCommand::Close => b.close(),
+    }
 }
 
 /// Fills an authentic Apple squircle/popover on the frame using continuous curvature.
@@ -909,15 +848,15 @@ fn render_blurred_occlusion(
         };
 
         let top_extension = if arrow.edge == PopoverArrowEdge::Top && (sample_x - arrow_center_x).abs() < arrow_half_w {
-            let frac = 1.0 - ((sample_x - arrow_center_x).abs() / arrow_half_w).clamp(0.0, 1.0);
-            frac * arrow.height
+            let dist = ((sample_x - arrow_center_x).abs() / arrow_half_w).clamp(0.0, 1.0);
+            0.5 * (1.0 + (dist * std::f32::consts::PI).cos()) * arrow.height
         } else {
             0.0
         };
 
         let bottom_extension = if arrow.edge == PopoverArrowEdge::Bottom && (sample_x - arrow_center_x).abs() < arrow_half_w {
-            let frac = 1.0 - ((sample_x - arrow_center_x).abs() / arrow_half_w).clamp(0.0, 1.0);
-            frac * arrow.height
+            let dist = ((sample_x - arrow_center_x).abs() / arrow_half_w).clamp(0.0, 1.0);
+            0.5 * (1.0 + (dist * std::f32::consts::PI).cos()) * arrow.height
         } else {
             0.0
         };
@@ -927,7 +866,14 @@ fn render_blurred_occlusion(
 
         let (slice_top, slice_height) = if is_in_side_arrow {
             let arrow_center_y = rect.y + rect.height * arrow.offset;
-            (arrow_center_y - arrow_half_w * 0.5, arrow_half_w)
+            let dist_x = if arrow.edge == PopoverArrowEdge::Left {
+                (rect.x - sample_x) / arrow.height
+            } else {
+                (sample_x - (rect.x + rect.width)) / arrow.height
+            };
+            let bell = 0.5 * (1.0 + (dist_x.clamp(0.0, 1.0) * std::f32::consts::PI).cos());
+            let current_half_w = arrow_half_w * bell;
+            (arrow_center_y - current_half_w, current_half_w * 2.0)
         } else {
             let top = rect.y + inset_y - top_extension;
             let height = (rect.height - inset_y * 2.0 + top_extension + bottom_extension).max(0.0);
