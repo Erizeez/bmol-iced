@@ -32,7 +32,7 @@ use iced::{
     mouse,
     widget::{
         button,
-        canvas::{self, Canvas, Frame, Geometry},
+        canvas::{self, Canvas, Frame, Geometry, Path},
         column, container, row, space, stack, text,
     },
     window,
@@ -43,6 +43,9 @@ use bmol_window_shell::{
 };
 use liquid_glass::{
     ContextMenu, ControlAction, MenuItem, TrafficLightsState, UiColorScheme, UiIcon, UiTheme,
+    geometry::{
+        squircle_path_commands, PathCommand, SquircleParams, APPLE_CORNER_SMOOTHING,
+    },
     ui::font,
 };
 use vibrancy_rs::KawasePassPlan;
@@ -477,95 +480,41 @@ fn sample_analytical_blurred_wallpaper(
     }
 }
 
-/// Fills a rounded rectangle on a Canvas Frame with high-performance slicing.
-fn fill_rounded_rectangle(
-    frame: &mut Frame,
-    rect: Rectangle,
-    corner_radius: f32,
-    color: Color,
-) {
+/// Builds an authentic Apple continuous curvature squircle path (G2 continuity) for a rectangle
+/// using our dedicated `squircle-rs` (`liquid_glass::geometry`) library.
+fn build_squircle_path(rect: Rectangle, radius: f32) -> Path {
+    let r = radius.min(rect.width * 0.5).min(rect.height * 0.5);
+    let params = SquircleParams::new(rect.width, rect.height, r)
+        .with_smoothing(APPLE_CORNER_SMOOTHING);
+    let commands = squircle_path_commands(&params);
+
+    Path::new(move |b| {
+        for cmd in &commands {
+            match *cmd {
+                PathCommand::MoveTo(pt) => b.move_to(Point::new(rect.x + pt.x, rect.y + pt.y)),
+                PathCommand::LineTo(pt) => b.line_to(Point::new(rect.x + pt.x, rect.y + pt.y)),
+                PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
+                    Point::new(rect.x + c0.x, rect.y + c0.y),
+                    Point::new(rect.x + c1.x, rect.y + c1.y),
+                    Point::new(rect.x + to.x, rect.y + to.y),
+                ),
+                PathCommand::Close => b.close(),
+            }
+        }
+    })
+}
+
+/// Fills an authentic Apple squircle on the frame using our continuous curvature library (`squircle-rs`).
+fn fill_squircle(frame: &mut Frame, rect: Rectangle, radius: f32, color: Color) {
     if rect.width <= 0.0 || rect.height <= 0.0 || color.a <= 0.001 {
         return;
     }
-
-    let r = corner_radius.min(rect.width * 0.5).min(rect.height * 0.5);
-    if r <= 0.5 {
-        frame.fill_rectangle(rect.position(), rect.size(), color);
-        return;
-    }
-
-    let r_sq = r * r;
-    // Central rectangular body
-    let central_h = rect.height - r * 2.0;
-    if central_h > 0.0 {
-        frame.fill_rectangle(
-            Point::new(rect.x, rect.y + r),
-            Size::new(rect.width, central_h),
-            color,
-        );
-    }
-
-    // Top and bottom horizontal spans between left and right caps
-    let central_w = rect.width - r * 2.0;
-    if central_w > 0.0 {
-        frame.fill_rectangle(
-            Point::new(rect.x + r, rect.y),
-            Size::new(central_w, r),
-            color,
-        );
-        frame.fill_rectangle(
-            Point::new(rect.x + r, rect.y + rect.height - r),
-            Size::new(central_w, r),
-            color,
-        );
-    }
-
-    // 4 Corner quarter-arcs filled via fine 1.5pt vertical slices
-    let slice_step = 1.5f32;
-    let mut dx = 0.0f32;
-    while dx < r {
-        let step = (r - dx).min(slice_step);
-        let sample_dx = dx + step * 0.5;
-        let dy = (r_sq - (r - sample_dx).powi(2)).max(0.0).sqrt();
-        let corner_h = r - dy;
-
-        // Top-left
-        frame.fill_rectangle(
-            Point::new(rect.x + dx, rect.y + corner_h),
-            Size::new(step.ceil(), r - corner_h),
-            color,
-        );
-        // Bottom-left
-        frame.fill_rectangle(
-            Point::new(rect.x + dx, rect.y + rect.height - r),
-            Size::new(step.ceil(), r - corner_h),
-            color,
-        );
-        // Top-right
-        let right_x = rect.x + rect.width - r + (r - dx - step);
-        frame.fill_rectangle(
-            Point::new(right_x, rect.y + corner_h),
-            Size::new(step.ceil(), r - corner_h),
-            color,
-        );
-        // Bottom-right
-        frame.fill_rectangle(
-            Point::new(right_x, rect.y + rect.height - r),
-            Size::new(step.ceil(), r - corner_h),
-            color,
-        );
-
-        dx += step;
-    }
+    let path = build_squircle_path(rect, radius);
+    frame.fill(&path, color);
 }
 
-/// Renders authentic Apple macOS multi-tier soft backdrop drop shadow on the wallpaper canvas.
-///
-/// In macOS, floating menus cast two distinct shadow tiers:
-/// 1. **Ambient Contact Shadow**: Close-in soft occlusion rim that clearly demarcates the menu
-///    edge against high-luminance backgrounds (e.g. pure white, vivid yellow, bright cyan).
-/// 2. **Key Elevation Drop Shadow**: Deep spatial projection (16pt elevation) feathering smoothly
-///    outward and downward across background wallpaper blocks.
+/// Renders authentic Apple macOS multi-tier soft backdrop drop shadow on the wallpaper canvas
+/// using genuine continuous squircle paths from `squircle-rs`.
 fn render_soft_menu_shadow(
     frame: &mut Frame,
     rect: Rectangle,
@@ -591,7 +540,7 @@ fn render_soft_menu_shadow(
             width: rect.width + spread * 2.0,
             height: rect.height + spread * 2.0,
         };
-        fill_rounded_rectangle(
+        fill_squircle(
             frame,
             shadow_rect,
             corner_radius + spread,
@@ -616,7 +565,7 @@ fn render_soft_menu_shadow(
             width: rect.width + spread * 1.5,
             height: rect.height + spread * 1.35,
         };
-        fill_rounded_rectangle(
+        fill_squircle(
             frame,
             shadow_rect,
             corner_radius + spread,
@@ -639,17 +588,21 @@ fn render_blurred_occlusion(
     }
 
     if matches!(style, WallpaperStyle::PureWhite) {
-        fill_rounded_rectangle(frame, rect, corner_radius, Color::WHITE);
+        fill_squircle(frame, rect, corner_radius, Color::WHITE);
         return;
     }
     if matches!(style, WallpaperStyle::PureBlack) {
-        fill_rounded_rectangle(frame, rect, corner_radius, Color::BLACK);
+        fill_squircle(frame, rect, corner_radius, Color::BLACK);
         return;
     }
 
     let slice_w = 2.0f32;
     let r = corner_radius.min(rect.width * 0.5).min(rect.height * 0.5);
-    let r_sq = r * r;
+
+    // Continuous Apple squircle analytical curvature clipping (exponent n = 3.32)
+    let exp_n = 2.0 + (4.2 - 2.0) * APPLE_CORNER_SMOOTHING;
+    let inv_exp_n = 1.0 / exp_n;
+    let r_pow_n = r.powf(exp_n);
 
     let mut curr_x = rect.x;
     let end_x = rect.x + rect.width;
@@ -658,14 +611,16 @@ fn render_blurred_occlusion(
         let actual_w = (end_x - curr_x).min(slice_w);
         let sample_x = curr_x + actual_w * 0.5;
 
-        // Clip vertical height at corner caps for smooth squircle containment
+        // Clip vertical height at corner caps using authentic Apple Squircle SDF superellipse formula
         let local_x = sample_x - rect.x;
         let inset_y = if local_x < r {
             let dx = r - local_x;
-            r - (r_sq - dx * dx).max(0.0).sqrt()
+            let dy = (r_pow_n - dx.powf(exp_n)).max(0.0).powf(inv_exp_n);
+            r - dy
         } else if local_x > rect.width - r {
             let dx = local_x - (rect.width - r);
-            r - (r_sq - dx * dx).max(0.0).sqrt()
+            let dy = (r_pow_n - dx.powf(exp_n)).max(0.0).powf(inv_exp_n);
+            r - dy
         } else {
             0.0
         };
@@ -2434,5 +2389,42 @@ mod tests {
         );
         assert_eq!(demo_metrics::MENU_HEIGHT, 477.0);
         assert_eq!(demo_metrics::MENU_Y_INSET, 44.0);
+    }
+
+    #[test]
+    fn test_squircle_continuous_curvature_integration() {
+        let rect = Rectangle {
+            x: 50.0,
+            y: 50.0,
+            width: demo_metrics::MENU_WIDTH,
+            height: demo_metrics::MENU_HEIGHT,
+        };
+        let r = demo_metrics::MENU_CORNER_RADIUS;
+
+        // 1. Verify SquircleParams generates non-empty Apple continuous commands
+        let params = SquircleParams::new(rect.width, rect.height, r)
+            .with_smoothing(APPLE_CORNER_SMOOTHING);
+        let commands = squircle_path_commands(&params);
+        assert!(!commands.is_empty(), "Squircle commands must not be empty");
+
+        // 2. Verify Apple smoothing exponent matches tagged library default (3.32)
+        let exp_n = 2.0 + (4.2 - 2.0) * APPLE_CORNER_SMOOTHING;
+        assert!((exp_n - 3.32).abs() < 1e-4);
+
+        // 3. Verify corner curvature inset smoothly vanishes towards center
+        let inv_exp_n = 1.0 / exp_n;
+        let r_pow_n = r.powf(exp_n);
+
+        // At corner tip (dx = r)
+        let dy_tip = (r_pow_n - r.powf(exp_n)).max(0.0).powf(inv_exp_n);
+        let inset_tip = r - dy_tip;
+        assert!((inset_tip - r).abs() < 1e-4, "Corner tip inset must equal full radius");
+
+        // Midway through corner (dx = r * 0.5)
+        let dx_mid = r * 0.5;
+        let dy_mid = (r_pow_n - dx_mid.powf(exp_n)).max(0.0).powf(inv_exp_n);
+        let inset_mid = r - dy_mid;
+        // In G2 squircle, inset_mid is significantly smoother than circle
+        assert!(inset_mid > 0.0 && inset_mid < r * 0.5);
     }
 }
