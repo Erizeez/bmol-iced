@@ -16,10 +16,10 @@ pub use bmol_window_native as native;
 
 pub use animation::{Spring, SpringValue};
 pub use geometry::{
-    APPLE_CORNER_SMOOTHING, CornerRadii, CornerSegment, CubicBezier, Point, ProcessedCorner,
-    SquircleParams, corner_lead_distance, generate_squircle_svg_path, glsl_squircle_sdf_source,
-    sd_squircle, squircle_alpha, squircle_border_coverage, squircle_path_commands,
-    wgsl_squircle_sdf_source,
+    APPLE_CORNER_SMOOTHING, CornerRadii, CornerSegment, CubicBezier, PathCommand, Point,
+    ProcessedCorner, SquircleParams, corner_lead_distance, generate_squircle_svg_path,
+    glsl_squircle_sdf_source, sd_squircle, squircle_alpha, squircle_border_coverage,
+    squircle_path_commands, wgsl_squircle_sdf_source,
 };
 pub use platform::{
     BackdropError, BackdropFrame, BackdropFrameError, BackdropRequest, BackdropSize,

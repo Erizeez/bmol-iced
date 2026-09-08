@@ -221,6 +221,35 @@ pub enum Message {
     ResetCardPositions,
 }
 
+/// Layout metrics strictly governing the context menu cards and floating popups in the demo.
+pub mod demo_metrics {
+    use bmol_designs::menu_metrics;
+
+    /// Drag header grip pill fixed height (38.0 pt).
+    pub const DRAG_HEADER_HEIGHT: f32 = 38.0;
+
+    /// Gap between drag header and the context menu container (6.0 pt).
+    pub const HEADER_MENU_GAP: f32 = 6.0;
+
+    /// Vertical distance from card position (top-left of drag handle) to the menu container.
+    pub const MENU_Y_INSET: f32 = DRAG_HEADER_HEIGHT + HEADER_MENU_GAP;
+
+    /// Fixed width of the context menu container (220.0 pt).
+    pub const MENU_WIDTH: f32 = menu_metrics::DEFAULT_WIDTH;
+
+    /// Corner radius of the context menu container (8.0 pt).
+    pub const MENU_CORNER_RADIUS: f32 = menu_metrics::CONTAINER_CORNER_RADIUS;
+
+    /// Context menu exact physical height:
+    /// - 5 Section headers: 5 * 18.0 = 90.0 pt
+    /// - 13 Action/Check/Submenu items: 13 * 24.0 = 312.0 pt
+    /// - 4 Separators: 4 * (1.0 + 5.0 * 2) = 44.0 pt
+    /// - 21 column item gaps: 21 * 1.0 = 21.0 pt
+    /// - Container top & bottom padding: 5.0 * 2 = 10.0 pt
+    /// - Total exact height: 90 + 312 + 44 + 21 + 10 = 477.0 pt.
+    pub const MENU_HEIGHT: f32 = 477.0;
+}
+
 /// An occlusion region where a context menu card or popup overlays the wallpaper,
 /// requiring genuine continuous backdrop blur spatial convolution.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -448,6 +477,154 @@ fn sample_analytical_blurred_wallpaper(
     }
 }
 
+/// Fills a rounded rectangle on a Canvas Frame with high-performance slicing.
+fn fill_rounded_rectangle(
+    frame: &mut Frame,
+    rect: Rectangle,
+    corner_radius: f32,
+    color: Color,
+) {
+    if rect.width <= 0.0 || rect.height <= 0.0 || color.a <= 0.001 {
+        return;
+    }
+
+    let r = corner_radius.min(rect.width * 0.5).min(rect.height * 0.5);
+    if r <= 0.5 {
+        frame.fill_rectangle(rect.position(), rect.size(), color);
+        return;
+    }
+
+    let r_sq = r * r;
+    // Central rectangular body
+    let central_h = rect.height - r * 2.0;
+    if central_h > 0.0 {
+        frame.fill_rectangle(
+            Point::new(rect.x, rect.y + r),
+            Size::new(rect.width, central_h),
+            color,
+        );
+    }
+
+    // Top and bottom horizontal spans between left and right caps
+    let central_w = rect.width - r * 2.0;
+    if central_w > 0.0 {
+        frame.fill_rectangle(
+            Point::new(rect.x + r, rect.y),
+            Size::new(central_w, r),
+            color,
+        );
+        frame.fill_rectangle(
+            Point::new(rect.x + r, rect.y + rect.height - r),
+            Size::new(central_w, r),
+            color,
+        );
+    }
+
+    // 4 Corner quarter-arcs filled via fine 1.5pt vertical slices
+    let slice_step = 1.5f32;
+    let mut dx = 0.0f32;
+    while dx < r {
+        let step = (r - dx).min(slice_step);
+        let sample_dx = dx + step * 0.5;
+        let dy = (r_sq - (r - sample_dx).powi(2)).max(0.0).sqrt();
+        let corner_h = r - dy;
+
+        // Top-left
+        frame.fill_rectangle(
+            Point::new(rect.x + dx, rect.y + corner_h),
+            Size::new(step.ceil(), r - corner_h),
+            color,
+        );
+        // Bottom-left
+        frame.fill_rectangle(
+            Point::new(rect.x + dx, rect.y + rect.height - r),
+            Size::new(step.ceil(), r - corner_h),
+            color,
+        );
+        // Top-right
+        let right_x = rect.x + rect.width - r + (r - dx - step);
+        frame.fill_rectangle(
+            Point::new(right_x, rect.y + corner_h),
+            Size::new(step.ceil(), r - corner_h),
+            color,
+        );
+        // Bottom-right
+        frame.fill_rectangle(
+            Point::new(right_x, rect.y + rect.height - r),
+            Size::new(step.ceil(), r - corner_h),
+            color,
+        );
+
+        dx += step;
+    }
+}
+
+/// Renders authentic Apple macOS multi-tier soft backdrop drop shadow on the wallpaper canvas.
+///
+/// In macOS, floating menus cast two distinct shadow tiers:
+/// 1. **Ambient Contact Shadow**: Close-in soft occlusion rim that clearly demarcates the menu
+///    edge against high-luminance backgrounds (e.g. pure white, vivid yellow, bright cyan).
+/// 2. **Key Elevation Drop Shadow**: Deep spatial projection (16pt elevation) feathering smoothly
+///    outward and downward across background wallpaper blocks.
+fn render_soft_menu_shadow(
+    frame: &mut Frame,
+    rect: Rectangle,
+    corner_radius: f32,
+    is_dark: bool,
+) {
+    if rect.width <= 0.0 || rect.height <= 0.0 {
+        return;
+    }
+
+    // 1. Ambient Contact Shadow: Close-in subtle occlusion around all 4 edges
+    let ambient_tiers = 8;
+    let ambient_max_spread = 8.0f32;
+    let base_ambient_alpha = if is_dark { 0.050 } else { 0.040 };
+
+    for i in (0..ambient_tiers).rev() {
+        let t = (i + 1) as f32 / ambient_tiers as f32;
+        let spread = ambient_max_spread * t;
+        let alpha = base_ambient_alpha * (1.0 - t * 0.85).powi(2);
+        let shadow_rect = Rectangle {
+            x: rect.x - spread,
+            y: rect.y - spread + 1.5 * t,
+            width: rect.width + spread * 2.0,
+            height: rect.height + spread * 2.0,
+        };
+        fill_rounded_rectangle(
+            frame,
+            shadow_rect,
+            corner_radius + spread,
+            Color::from_rgba(0.0, 0.0, 0.0, alpha),
+        );
+    }
+
+    // 2. Key Elevation Drop Shadow: Deep spatial projection (macOS HIG elevation = 16pt)
+    let key_tiers = 14;
+    let key_max_spread = 30.0f32;
+    let key_offset_y = 14.0f32;
+    let base_key_alpha = if is_dark { 0.036 } else { 0.026 };
+
+    for i in (0..key_tiers).rev() {
+        let t = (i + 1) as f32 / key_tiers as f32;
+        let spread = key_max_spread * t;
+        let offset_y = key_offset_y * t;
+        let alpha = base_key_alpha * (1.0 - t).powi(2);
+        let shadow_rect = Rectangle {
+            x: rect.x - spread * 0.75,
+            y: rect.y + offset_y - spread * 0.35,
+            width: rect.width + spread * 1.5,
+            height: rect.height + spread * 1.35,
+        };
+        fill_rounded_rectangle(
+            frame,
+            shadow_rect,
+            corner_radius + spread,
+            Color::from_rgba(0.0, 0.0, 0.0, alpha),
+        );
+    }
+}
+
 /// Renders a continuous, artifact-free blurred occlusion clipped to continuous squircle/rounded corners.
 fn render_blurred_occlusion(
     frame: &mut Frame,
@@ -462,11 +639,11 @@ fn render_blurred_occlusion(
     }
 
     if matches!(style, WallpaperStyle::PureWhite) {
-        frame.fill_rectangle(rect.position(), rect.size(), Color::WHITE);
+        fill_rounded_rectangle(frame, rect, corner_radius, Color::WHITE);
         return;
     }
     if matches!(style, WallpaperStyle::PureBlack) {
-        frame.fill_rectangle(rect.position(), rect.size(), Color::BLACK);
+        fill_rounded_rectangle(frame, rect, corner_radius, Color::BLACK);
         return;
     }
 
@@ -680,9 +857,21 @@ impl<Message> canvas::Program<Message> for WallpaperCanvas {
             frame.fill_rectangle(Point::new(cx - 1.0, cy - 60.0), Size::new(2.0, 120.0), Color::WHITE);
         }
 
-        // 3. Render continuous analytical backdrop blur for each menu occlusion region
+        // 3. Render authentic Apple multi-tier soft drop shadows and continuous analytical backdrop blur
         if !self.occlusions.is_empty() {
             let blur_radius = self.blur_preset.radius();
+
+            // Step 3a: Soft ambient contact shadow & elevation drop shadow behind each menu card
+            for occ in &self.occlusions {
+                render_soft_menu_shadow(
+                    &mut frame,
+                    occ.bounds,
+                    occ.corner_radius,
+                    occ.is_dark,
+                );
+            }
+
+            // Step 3b: Continuous analytical backdrop blur inside each menu container squircle
             for occ in &self.occlusions {
                 render_blurred_occlusion(
                     &mut frame,
@@ -1534,11 +1723,12 @@ fn view_menu_card<'a>(
 
     let drag_header = iced::widget::mouse_area(
         container(grip_pill)
-            .width(Length::Fill)
+            .width(Length::Fixed(demo_metrics::MENU_WIDTH))
+            .height(Length::Fixed(demo_metrics::DRAG_HEADER_HEIGHT))
             .padding(Padding {
-                top: 6.0,
+                top: 4.0,
                 right: 10.0,
-                bottom: 6.0,
+                bottom: 4.0,
                 left: 10.0,
             })
             .style(move |_theme| container::Style {
@@ -1572,11 +1762,13 @@ fn view_menu_card<'a>(
     })
     .on_press(Message::StartDragCard(config.target));
 
-    let menu_element = menu.view::<iced::Renderer>(theme);
+    let menu_element = container(menu.view::<iced::Renderer>(theme))
+        .width(Length::Fixed(demo_metrics::MENU_WIDTH))
+        .height(Length::Fixed(demo_metrics::MENU_HEIGHT));
 
     let card_box = column![drag_header, menu_element]
-        .spacing(6.0)
-        .width(Length::Fixed(menu_metrics::DEFAULT_WIDTH));
+        .spacing(demo_metrics::HEADER_MENU_GAP)
+        .width(Length::Fixed(demo_metrics::MENU_WIDTH));
 
     container(card_box).into()
 }
@@ -1718,21 +1910,21 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
         MenuOcclusion {
             bounds: Rectangle {
                 x: state.light_pos.x.max(10.0),
-                y: state.light_pos.y.max(10.0) + 47.0,
-                width: menu_metrics::DEFAULT_WIDTH,
-                height: 430.0,
+                y: state.light_pos.y.max(10.0) + demo_metrics::MENU_Y_INSET,
+                width: demo_metrics::MENU_WIDTH,
+                height: demo_metrics::MENU_HEIGHT,
             },
-            corner_radius: menu_metrics::CONTAINER_CORNER_RADIUS,
+            corner_radius: demo_metrics::MENU_CORNER_RADIUS,
             is_dark: false,
         },
         MenuOcclusion {
             bounds: Rectangle {
                 x: state.dark_pos.x.max(10.0),
-                y: state.dark_pos.y.max(10.0) + 47.0,
-                width: menu_metrics::DEFAULT_WIDTH,
-                height: 430.0,
+                y: state.dark_pos.y.max(10.0) + demo_metrics::MENU_Y_INSET,
+                width: demo_metrics::MENU_WIDTH,
+                height: demo_metrics::MENU_HEIGHT,
             },
-            corner_radius: menu_metrics::CONTAINER_CORNER_RADIUS,
+            corner_radius: demo_metrics::MENU_CORNER_RADIUS,
             is_dark: true,
         },
     ];
@@ -1742,10 +1934,10 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
             bounds: Rectangle {
                 x: (pos.x - 10.0).max(10.0),
                 y: (pos.y - 10.0 - top_offset).max(0.0),
-                width: menu_metrics::DEFAULT_WIDTH,
-                height: 430.0,
+                width: demo_metrics::MENU_WIDTH,
+                height: demo_metrics::MENU_HEIGHT,
             },
-            corner_radius: menu_metrics::CONTAINER_CORNER_RADIUS,
+            corner_radius: demo_metrics::MENU_CORNER_RADIUS,
             is_dark: match state.resolved_floating_scheme() {
                 UiColorScheme::Dark => true,
                 UiColorScheme::Light => false,
@@ -1881,15 +2073,19 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
 
         let floating_menu_widget = state.floating_menu_cached.view::<iced::Renderer>(theme);
 
-        let positioned_menu = container(floating_menu_widget)
-            .padding(Padding {
-                top: (pos.y - 10.0).max(10.0),
-                left: (pos.x - 10.0).max(10.0),
-                right: 0.0,
-                bottom: 0.0,
-            })
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let positioned_menu = container(
+            container(floating_menu_widget)
+                .width(Length::Fixed(demo_metrics::MENU_WIDTH))
+                .height(Length::Fixed(demo_metrics::MENU_HEIGHT)),
+        )
+        .padding(Padding {
+            top: (pos.y - 10.0).max(10.0),
+            left: (pos.x - 10.0).max(10.0),
+            right: 0.0,
+            bottom: 0.0,
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
 
         let overlay_stack = stack![dismiss_backdrop, positioned_menu]
             .width(Length::Fill)
@@ -2194,5 +2390,49 @@ mod tests {
         assert!(boundary_sample.r > 0.05, "Yellow's red channel dispersed across boundary");
         assert!(boundary_sample.b > 0.05, "Cyan's blue channel dispersed across boundary");
         assert!(boundary_sample.g > 0.8, "Green channel remains high for both yellow and cyan");
+    }
+
+    #[test]
+    fn test_demo_menu_height_geometry_exactness() {
+        let state = State::default();
+        let menu = build_demo_menu(&state);
+        let items = menu.items_slice();
+
+        // 1. Verify item composition matches expected count
+        assert_eq!(items.len(), 22, "Demo menu must have exactly 22 items");
+
+        let mut section_count = 0;
+        let mut separator_count = 0;
+        let mut action_count = 0;
+
+        for item in items {
+            match item {
+                MenuItem::Section(_) => section_count += 1,
+                MenuItem::Separator => separator_count += 1,
+                MenuItem::Action { .. } | MenuItem::Checkbox { .. } | MenuItem::Submenu { .. } => {
+                    action_count += 1;
+                }
+            }
+        }
+
+        assert_eq!(section_count, 5);
+        assert_eq!(separator_count, 4);
+        assert_eq!(action_count, 13);
+
+        // 2. Compute exact height mathematically:
+        let expected_sections = section_count as f32 * menu_metrics::SECTION_HEADER_HEIGHT;
+        let expected_items = action_count as f32 * menu_metrics::ITEM_HEIGHT;
+        let expected_separators = separator_count as f32 * (menu_metrics::SEPARATOR_HEIGHT + menu_metrics::SEPARATOR_MARGIN_V * 2.0);
+        let expected_gaps = (items.len() - 1) as f32 * 1.0;
+        let container_padding = menu_metrics::CONTAINER_PADDING * 2.0;
+        let total_exact = expected_sections + expected_items + expected_separators + expected_gaps + container_padding;
+
+        assert_eq!(
+            total_exact,
+            demo_metrics::MENU_HEIGHT,
+            "demo_metrics::MENU_HEIGHT must exactly equal total item stack height to avoid transparent occlusion bottom gaps"
+        );
+        assert_eq!(demo_metrics::MENU_HEIGHT, 477.0);
+        assert_eq!(demo_metrics::MENU_Y_INSET, 44.0);
     }
 }
