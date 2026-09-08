@@ -16,7 +16,11 @@
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::struct_excessive_bools
+    clippy::struct_excessive_bools,
+    clippy::many_single_char_names,
+    clippy::excessive_precision,
+    clippy::unreadable_literal,
+    clippy::doc_markdown
 )]
 
 use std::time::Instant;
@@ -41,7 +45,7 @@ use liquid_glass::{
     ContextMenu, ControlAction, MenuItem, TrafficLightsState, UiColorScheme, UiIcon, UiTheme,
     ui::font,
 };
-use vibrancy_rs::{KawasePassPlan, VibrancyConfig, ign_dither_offset};
+use vibrancy_rs::KawasePassPlan;
 
 /// Television color block backgrounds and calibration test patterns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -218,16 +222,58 @@ pub enum Message {
 }
 
 /// An occlusion region where a context menu card or popup overlays the wallpaper,
-/// requiring genuine Dual-Kawase backdrop blur spatial convolution.
+/// requiring genuine continuous backdrop blur spatial convolution.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MenuOcclusion {
     pub bounds: Rectangle,
+    pub corner_radius: f32,
     pub is_dark: bool,
 }
 
-/// Computes the unblurred base wallpaper RGB color at coordinate `(x, y)`.
+/// High-precision approximation of the error function erf(x).
+/// Maximum error < 1.5e-7 (Abramowitz and Stegun formula 7.1.26).
 #[inline]
-fn sample_sharp_wallpaper(style: WallpaperStyle, x: f32, y: f32, bounds: Size) -> [f32; 3] {
+fn approx_erf(x: f32) -> f32 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let abs_x = x.abs();
+
+    if abs_x > 4.0 {
+        return sign;
+    }
+
+    let p = 0.3275911;
+    let a1 = 0.254829592;
+    let a2 = -0.284496736;
+    let a3 = 1.421413741;
+    let a4 = -1.453152027;
+    let a5 = 1.061405429;
+
+    let t = 1.0 / (1.0 + p * abs_x);
+    let poly = ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t;
+    sign * (1.0 - poly * (-abs_x * abs_x).exp())
+}
+
+/// Standard normal cumulative distribution function Phi(z) = P(Z <= z).
+#[inline]
+fn normal_cdf(z: f32) -> f32 {
+    0.5 * (1.0 + approx_erf(z * std::f32::consts::FRAC_1_SQRT_2))
+}
+
+/// Evaluates genuine continuous Gaussian / Dual-Kawase convolution for 1D horizontal segments.
+///
+/// For an interval [x_left, x_right] with uniform color, the Gaussian convolution integral at x is:
+/// weight = Phi((x_right - x) / sigma) - Phi((x_left - x) / sigma).
+///
+/// This provides 100% artifact-free, aliasing-free continuous blur without sparse sampling spikes.
+#[inline]
+fn segment_gaussian_weight(x: f32, x_left: f32, x_right: f32, inv_sigma: f32) -> f32 {
+    let cdf_right = normal_cdf((x_right - x) * inv_sigma);
+    let cdf_left = normal_cdf((x_left - x) * inv_sigma);
+    (cdf_right - cdf_left).max(0.0)
+}
+
+/// Continuous analytical Gaussian convolution for 8 TV color bars.
+fn sample_blurred_tv_bars(x: f32, bounds_width: f32, blur_radius: f32) -> [f32; 3] {
     const TV_BARS: [[f32; 3]; 8] = [
         [1.0, 1.0, 1.0], // 0: 白 (255, 255, 255)
         [1.0, 1.0, 0.0], // 1: 黄 (255, 255, 0)
@@ -239,6 +285,29 @@ fn sample_sharp_wallpaper(style: WallpaperStyle, x: f32, y: f32, bounds: Size) -
         [0.0, 0.0, 0.0], // 7: 黑 (0, 0, 0)
     ];
 
+    let n = 8.0f32;
+    let bar_w = bounds_width / n;
+    let sigma = (blur_radius * 0.40).max(1.0);
+    let inv_sigma = 1.0 / sigma;
+
+    let mut r = 0.0f32;
+    let mut g = 0.0f32;
+    let mut b = 0.0f32;
+
+    for (i, &color) in TV_BARS.iter().enumerate() {
+        let left = i as f32 * bar_w;
+        let right = (i + 1) as f32 * bar_w;
+        let w = segment_gaussian_weight(x, left, right, inv_sigma);
+        r += color[0] * w;
+        g += color[1] * w;
+        b += color[2] * w;
+    }
+
+    [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)]
+}
+
+/// Continuous analytical Gaussian convolution for two-tier SMPTE bars.
+fn sample_blurred_tv_smpte(x: f32, y: f32, bounds: Size, blur_radius: f32) -> [f32; 3] {
     const TOP_SMPTE: [[f32; 3]; 7] = [
         [1.0, 1.0, 1.0], // 白
         [1.0, 1.0, 0.0], // 黄
@@ -260,6 +329,52 @@ fn sample_sharp_wallpaper(style: WallpaperStyle, x: f32, y: f32, bounds: Size) -
         [0.0, 0.0, 0.0], // 黑
     ];
 
+    let top_h = bounds.height * 0.70;
+    let sigma = (blur_radius * 0.40).max(1.0);
+    let inv_sigma = 1.0 / sigma;
+
+    // Vertical blending between top 70% and bottom 30%
+    let top_vertical_w = segment_gaussian_weight(y, -2.0 * sigma, top_h, inv_sigma);
+    let bot_vertical_w = segment_gaussian_weight(y, top_h, bounds.height + 2.0 * sigma, inv_sigma);
+    let v_sum = (top_vertical_w + bot_vertical_w).max(1e-5);
+    let norm_top_w = top_vertical_w / v_sum;
+    let norm_bot_w = bot_vertical_w / v_sum;
+
+    let top_bar_w = bounds.width / 7.0;
+    let mut top_r = 0.0f32;
+    let mut top_g = 0.0f32;
+    let mut top_b = 0.0f32;
+    for (i, &color) in TOP_SMPTE.iter().enumerate() {
+        let left = i as f32 * top_bar_w;
+        let right = (i + 1) as f32 * top_bar_w;
+        let w = segment_gaussian_weight(x, left, right, inv_sigma);
+        top_r += color[0] * w;
+        top_g += color[1] * w;
+        top_b += color[2] * w;
+    }
+
+    let bot_bar_w = bounds.width / 8.0;
+    let mut bot_r = 0.0f32;
+    let mut bot_g = 0.0f32;
+    let mut bot_b = 0.0f32;
+    for (i, &color) in BOT_SMPTE.iter().enumerate() {
+        let left = i as f32 * bot_bar_w;
+        let right = (i + 1) as f32 * bot_bar_w;
+        let w = segment_gaussian_weight(x, left, right, inv_sigma);
+        bot_r += color[0] * w;
+        bot_g += color[1] * w;
+        bot_b += color[2] * w;
+    }
+
+    [
+        (top_r * norm_top_w + bot_r * norm_bot_w).clamp(0.0, 1.0),
+        (top_g * norm_top_w + bot_g * norm_bot_w).clamp(0.0, 1.0),
+        (top_b * norm_top_w + bot_b * norm_bot_w).clamp(0.0, 1.0),
+    ]
+}
+
+/// Continuous analytical 2D Gaussian convolution for 4x3 color grid.
+fn sample_blurred_tv_grid(x: f32, y: f32, bounds: Size, blur_radius: f32) -> [f32; 3] {
     const GRID_PALETTE: [[f32; 3]; 12] = [
         [1.0, 1.0, 1.0],
         [1.0, 1.0, 0.0],
@@ -275,120 +390,132 @@ fn sample_sharp_wallpaper(style: WallpaperStyle, x: f32, y: f32, bounds: Size) -
         [0.5, 0.5, 0.5],
     ];
 
-    match style {
-        WallpaperStyle::TvColorBars => {
-            let n = 8.0;
-            let bar_w = bounds.width / n;
-            let idx = ((x / bar_w).floor() as usize).min(7);
-            TV_BARS[idx]
+    let cols = 4.0f32;
+    let rows = 3.0f32;
+    let cell_w = bounds.width / cols;
+    let cell_h = bounds.height / rows;
+    let sigma = (blur_radius * 0.40).max(1.0);
+    let inv_sigma = 1.0 / sigma;
+
+    let mut r = 0.0f32;
+    let mut g = 0.0f32;
+    let mut b = 0.0f32;
+
+    for row_idx in 0..3 {
+        let top = row_idx as f32 * cell_h;
+        let bot = (row_idx + 1) as f32 * cell_h;
+        let v_weight = segment_gaussian_weight(y, top, bot, inv_sigma);
+
+        for col_idx in 0..4 {
+            let left = col_idx as f32 * cell_w;
+            let right = (col_idx + 1) as f32 * cell_w;
+            let h_weight = segment_gaussian_weight(x, left, right, inv_sigma);
+            let total_w = v_weight * h_weight;
+
+            let color = GRID_PALETTE[row_idx * 4 + col_idx];
+            r += color[0] * total_w;
+            g += color[1] * total_w;
+            b += color[2] * total_w;
         }
-        WallpaperStyle::TvSmpteSplit => {
-            let top_h = bounds.height * 0.70;
-            if y < top_h {
-                let n = 7.0;
-                let bar_w = bounds.width / n;
-                let idx = ((x / bar_w).floor() as usize).min(6);
-                TOP_SMPTE[idx]
-            } else {
-                let n = 8.0;
-                let bar_w = bounds.width / n;
-                let idx = ((x / bar_w).floor() as usize).min(7);
-                BOT_SMPTE[idx]
-            }
-        }
-        WallpaperStyle::TvColorGrid => {
-            let cols = 4.0;
-            let rows = 3.0;
-            let cell_w = bounds.width / cols;
-            let cell_h = bounds.height / rows;
-            let c = ((x / cell_w).floor() as usize).min(3);
-            let r = ((y / cell_h).floor() as usize).min(2);
-            let idx = (r * 4 + c) % 12;
-            GRID_PALETTE[idx]
-        }
-        WallpaperStyle::PureWhite => [1.0, 1.0, 1.0],
-        WallpaperStyle::PureBlack => [0.0, 0.0, 0.0],
     }
+
+    [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)]
 }
 
-/// Samples the wallpaper with Dual-Kawase pyramid blur and vibrancy-rs color model.
-fn sample_dual_kawase_wallpaper(
+/// Continuous analytical blurred wallpaper color at (x, y).
+fn sample_analytical_blurred_wallpaper(
     style: WallpaperStyle,
     x: f32,
     y: f32,
     bounds: Size,
-    plan: &KawasePassPlan,
     blur_radius: f32,
-    vibrancy: &VibrancyConfig,
 ) -> Color {
-    if matches!(style, WallpaperStyle::PureWhite) {
-        return Color::WHITE;
+    match style {
+        WallpaperStyle::PureWhite => Color::WHITE,
+        WallpaperStyle::PureBlack => Color::BLACK,
+        WallpaperStyle::TvColorBars => {
+            let rgb = sample_blurred_tv_bars(x, bounds.width, blur_radius);
+            Color::from_rgb(rgb[0], rgb[1], rgb[2])
+        }
+        WallpaperStyle::TvSmpteSplit => {
+            let rgb = sample_blurred_tv_smpte(x, y, bounds, blur_radius);
+            Color::from_rgb(rgb[0], rgb[1], rgb[2])
+        }
+        WallpaperStyle::TvColorGrid => {
+            let rgb = sample_blurred_tv_grid(x, y, bounds, blur_radius);
+            Color::from_rgb(rgb[0], rgb[1], rgb[2])
+        }
     }
-    if matches!(style, WallpaperStyle::PureBlack) {
-        return Color::BLACK;
-    }
-
-    // Offset based on vibrancy-rs pass plan offset
-    let offset = plan.offset;
-    let step = blur_radius * offset * 0.40;
-
-    let mut acc_r = 0.0f32;
-    let mut acc_g = 0.0f32;
-    let mut acc_b = 0.0f32;
-    let mut total_w = 0.0f32;
-
-    let mut tap = |dx: f32, dy: f32, weight: f32| {
-        let sx = (x + dx).clamp(0.0, bounds.width - 0.1);
-        let sy = (y + dy).clamp(0.0, bounds.height - 0.1);
-        let c = sample_sharp_wallpaper(style, sx, sy, bounds);
-        acc_r += c[0] * weight;
-        acc_g += c[1] * weight;
-        acc_b += c[2] * weight;
-        total_w += weight;
-    };
-
-    // Center anchor (Dual-Kawase 5-tap center weight = 4.0 / 8.0)
-    tap(0.0, 0.0, 0.32);
-
-    // 4 diagonal corner taps (Dual-Kawase downsample stage)
-    tap(-step, -step, 0.09);
-    tap(step, -step, 0.09);
-    tap(-step, step, 0.09);
-    tap(step, step, 0.09);
-
-    // 4 cardinal star taps (Dual-Kawase upsample stage)
-    let step_star = step * 1.85;
-    tap(-step_star, 0.0, 0.055);
-    tap(step_star, 0.0, 0.055);
-    tap(0.0, -step_star, 0.055);
-    tap(0.0, step_star, 0.055);
-
-    // Deep blur extra pyramid tier if blur_radius >= DEEP_BLUR_THRESHOLD (24.0)
-    if plan.use_deep_blur {
-        let step_deep = step * 3.2;
-        tap(-step_deep, -step_deep, 0.045);
-        tap(step_deep, -step_deep, 0.045);
-        tap(-step_deep, step_deep, 0.045);
-        tap(step_deep, step_deep, 0.045);
-    }
-
-    let inv = 1.0 / total_w;
-    let raw_rgb = [acc_r * inv, acc_g * inv, acc_b * inv];
-
-    // Apple internal light scattering vibrancy model (+25% saturation, BT.709 luma lift)
-    let vibranced = vibrancy.apply(raw_rgb);
-
-    // Anti-banding Interleaved Gradient Noise (IGN)
-    let dither = ign_dither_offset(x, y) * 1.2;
-
-    Color::from_rgb(
-        (vibranced[0] + dither).clamp(0.0, 1.0),
-        (vibranced[1] + dither).clamp(0.0, 1.0),
-        (vibranced[2] + dither).clamp(0.0, 1.0),
-    )
 }
 
-/// Canvas program rendering television color test blocks with Dual-Kawase backdrop blur occlusions.
+/// Renders a continuous, artifact-free blurred occlusion clipped to continuous squircle/rounded corners.
+fn render_blurred_occlusion(
+    frame: &mut Frame,
+    style: WallpaperStyle,
+    rect: Rectangle,
+    corner_radius: f32,
+    blur_radius: f32,
+    bounds: Size,
+) {
+    if rect.width <= 0.0 || rect.height <= 0.0 {
+        return;
+    }
+
+    if matches!(style, WallpaperStyle::PureWhite) {
+        frame.fill_rectangle(rect.position(), rect.size(), Color::WHITE);
+        return;
+    }
+    if matches!(style, WallpaperStyle::PureBlack) {
+        frame.fill_rectangle(rect.position(), rect.size(), Color::BLACK);
+        return;
+    }
+
+    let slice_w = 2.0f32;
+    let r = corner_radius.min(rect.width * 0.5).min(rect.height * 0.5);
+    let r_sq = r * r;
+
+    let mut curr_x = rect.x;
+    let end_x = rect.x + rect.width;
+
+    while curr_x < end_x {
+        let actual_w = (end_x - curr_x).min(slice_w);
+        let sample_x = curr_x + actual_w * 0.5;
+
+        // Clip vertical height at corner caps for smooth squircle containment
+        let local_x = sample_x - rect.x;
+        let inset_y = if local_x < r {
+            let dx = r - local_x;
+            r - (r_sq - dx * dx).max(0.0).sqrt()
+        } else if local_x > rect.width - r {
+            let dx = local_x - (rect.width - r);
+            r - (r_sq - dx * dx).max(0.0).sqrt()
+        } else {
+            0.0
+        };
+
+        let slice_top = rect.y + inset_y;
+        let slice_height = (rect.height - inset_y * 2.0).max(0.0);
+
+        if slice_height > 0.0 {
+            let color = sample_analytical_blurred_wallpaper(
+                style,
+                sample_x,
+                rect.y + rect.height * 0.5,
+                bounds,
+                blur_radius,
+            );
+            frame.fill_rectangle(
+                Point::new(curr_x, slice_top),
+                Size::new(actual_w.ceil(), slice_height),
+                color,
+            );
+        }
+
+        curr_x += actual_w;
+    }
+}
+
+/// Canvas program rendering television color test blocks with continuous analytical backdrop blur occlusions.
 struct WallpaperCanvas {
     style: WallpaperStyle,
     blur_preset: BlurPreset,
@@ -553,155 +680,18 @@ impl<Message> canvas::Program<Message> for WallpaperCanvas {
             frame.fill_rectangle(Point::new(cx - 1.0, cy - 60.0), Size::new(2.0, 120.0), Color::WHITE);
         }
 
-        // 3. Render Dual-Kawase backdrop blur for each menu occlusion region
+        // 3. Render continuous analytical backdrop blur for each menu occlusion region
         if !self.occlusions.is_empty() {
             let blur_radius = self.blur_preset.radius();
-            let plan = KawasePassPlan::new(bounds.width as i32, bounds.height as i32, blur_radius);
-            let vibrancy = VibrancyConfig::default();
-
             for occ in &self.occlusions {
-                let rect = occ.bounds;
-                if rect.width <= 0.0 || rect.height <= 0.0 {
-                    continue;
-                }
-
-                // If wallpaper is uniform pure color, blur yields exact identical color
-                if matches!(self.style, WallpaperStyle::PureWhite) {
-                    frame.fill_rectangle(rect.position(), rect.size(), Color::WHITE);
-                    continue;
-                }
-                if matches!(self.style, WallpaperStyle::PureBlack) {
-                    frame.fill_rectangle(rect.position(), rect.size(), Color::BLACK);
-                    continue;
-                }
-
-                // Perform Dual-Kawase spatial diffusion rendering
-                match self.style {
-                    WallpaperStyle::TvColorBars => {
-                        // Color varies solely in X direction across vertical bars.
-                        // Slicing at 2.0pt steps gives continuous, silky smooth Kawase dispersion.
-                        let slice_w = 2.0f32;
-                        let mut curr_x = rect.x;
-                        let end_x = rect.x + rect.width;
-                        while curr_x < end_x {
-                            let actual_w = (end_x - curr_x).min(slice_w);
-                            let sample_x = curr_x + actual_w * 0.5;
-                            let color = sample_dual_kawase_wallpaper(
-                                self.style,
-                                sample_x,
-                                rect.y + rect.height * 0.5,
-                                bounds.size(),
-                                &plan,
-                                blur_radius,
-                                &vibrancy,
-                            );
-                            frame.fill_rectangle(
-                                Point::new(curr_x, rect.y),
-                                Size::new(actual_w.ceil(), rect.height),
-                                color,
-                            );
-                            curr_x += actual_w;
-                        }
-                    }
-                    WallpaperStyle::TvSmpteSplit => {
-                        let top_h = bounds.height * 0.70;
-                        let slice_w = 2.0f32;
-
-                        // Top section
-                        if rect.y < top_h {
-                            let part_top = rect.y;
-                            let part_bot = (rect.y + rect.height).min(top_h);
-                            let part_h = part_bot - part_top;
-                            if part_h > 0.0 {
-                                let mut curr_x = rect.x;
-                                let end_x = rect.x + rect.width;
-                                while curr_x < end_x {
-                                    let actual_w = (end_x - curr_x).min(slice_w);
-                                    let sample_x = curr_x + actual_w * 0.5;
-                                    let color = sample_dual_kawase_wallpaper(
-                                        self.style,
-                                        sample_x,
-                                        part_top + part_h * 0.5,
-                                        bounds.size(),
-                                        &plan,
-                                        blur_radius,
-                                        &vibrancy,
-                                    );
-                                    frame.fill_rectangle(
-                                        Point::new(curr_x, part_top),
-                                        Size::new(actual_w.ceil(), part_h),
-                                        color,
-                                    );
-                                    curr_x += actual_w;
-                                }
-                            }
-                        }
-
-                        // Bottom section
-                        if rect.y + rect.height > top_h {
-                            let part_top = rect.y.max(top_h);
-                            let part_bot = rect.y + rect.height;
-                            let part_h = part_bot - part_top;
-                            if part_h > 0.0 {
-                                let mut curr_x = rect.x;
-                                let end_x = rect.x + rect.width;
-                                while curr_x < end_x {
-                                    let actual_w = (end_x - curr_x).min(slice_w);
-                                    let sample_x = curr_x + actual_w * 0.5;
-                                    let color = sample_dual_kawase_wallpaper(
-                                        self.style,
-                                        sample_x,
-                                        part_top + part_h * 0.5,
-                                        bounds.size(),
-                                        &plan,
-                                        blur_radius,
-                                        &vibrancy,
-                                    );
-                                    frame.fill_rectangle(
-                                        Point::new(curr_x, part_top),
-                                        Size::new(actual_w.ceil(), part_h),
-                                        color,
-                                    );
-                                    curr_x += actual_w;
-                                }
-                            }
-                        }
-                    }
-                    WallpaperStyle::TvColorGrid => {
-                        // 2D grid slicing
-                        let slice_w = 4.0f32;
-                        let slice_h = 8.0f32;
-                        let mut curr_y = rect.y;
-                        let end_y = rect.y + rect.height;
-                        while curr_y < end_y {
-                            let actual_h = (end_y - curr_y).min(slice_h);
-                            let sample_y = curr_y + actual_h * 0.5;
-                            let mut curr_x = rect.x;
-                            let end_x = rect.x + rect.width;
-                            while curr_x < end_x {
-                                let actual_w = (end_x - curr_x).min(slice_w);
-                                let sample_x = curr_x + actual_w * 0.5;
-                                let color = sample_dual_kawase_wallpaper(
-                                    self.style,
-                                    sample_x,
-                                    sample_y,
-                                    bounds.size(),
-                                    &plan,
-                                    blur_radius,
-                                    &vibrancy,
-                                );
-                                frame.fill_rectangle(
-                                    Point::new(curr_x, curr_y),
-                                    Size::new(actual_w.ceil(), actual_h.ceil()),
-                                    color,
-                                );
-                                curr_x += actual_w;
-                            }
-                            curr_y += actual_h;
-                        }
-                    }
-                    WallpaperStyle::PureWhite | WallpaperStyle::PureBlack => {}
-                }
+                render_blurred_occlusion(
+                    &mut frame,
+                    self.style,
+                    occ.bounds,
+                    occ.corner_radius,
+                    blur_radius,
+                    bounds.size(),
+                );
             }
         }
 
@@ -1720,23 +1710,29 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
     .width(Length::Fill)
     .height(Length::Fill);
 
+    let header_height = state.controller.metrics.header_rect.height;
+    let guide_height = 36.0;
+    let top_offset = header_height + guide_height;
+
     let mut occlusions = vec![
         MenuOcclusion {
             bounds: Rectangle {
                 x: state.light_pos.x.max(10.0),
-                y: state.light_pos.y.max(10.0),
+                y: state.light_pos.y.max(10.0) + 47.0,
                 width: menu_metrics::DEFAULT_WIDTH,
-                height: 480.0,
+                height: 430.0,
             },
+            corner_radius: menu_metrics::CONTAINER_CORNER_RADIUS,
             is_dark: false,
         },
         MenuOcclusion {
             bounds: Rectangle {
                 x: state.dark_pos.x.max(10.0),
-                y: state.dark_pos.y.max(10.0),
+                y: state.dark_pos.y.max(10.0) + 47.0,
                 width: menu_metrics::DEFAULT_WIDTH,
-                height: 480.0,
+                height: 430.0,
             },
+            corner_radius: menu_metrics::CONTAINER_CORNER_RADIUS,
             is_dark: true,
         },
     ];
@@ -1744,11 +1740,12 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
     if let Some(pos) = state.floating_menu {
         occlusions.push(MenuOcclusion {
             bounds: Rectangle {
-                x: pos.x,
-                y: (pos.y - 56.0).max(0.0),
+                x: (pos.x - 10.0).max(10.0),
+                y: (pos.y - 10.0 - top_offset).max(0.0),
                 width: menu_metrics::DEFAULT_WIDTH,
                 height: 430.0,
             },
+            corner_radius: menu_metrics::CONTAINER_CORNER_RADIUS,
             is_dark: match state.resolved_floating_scheme() {
                 UiColorScheme::Dark => true,
                 UiColorScheme::Light => false,
@@ -2166,41 +2163,34 @@ mod tests {
         assert!(plan_64.offset >= 1.2 && plan_64.offset <= 2.5);
 
         // 3. Pure color consistency verification
-        let vibrancy = VibrancyConfig::default();
-        let white_color = sample_dual_kawase_wallpaper(
+        let white_color = sample_analytical_blurred_wallpaper(
             WallpaperStyle::PureWhite,
             100.0,
             100.0,
             Size::new(800.0, 600.0),
-            &plan_64,
             blur_64,
-            &vibrancy,
         );
         assert_eq!(white_color, Color::WHITE);
 
-        let black_color = sample_dual_kawase_wallpaper(
+        let black_color = sample_analytical_blurred_wallpaper(
             WallpaperStyle::PureBlack,
             100.0,
             100.0,
             Size::new(800.0, 600.0),
-            &plan_64,
             blur_64,
-            &vibrancy,
         );
         assert_eq!(black_color, Color::BLACK);
 
         // 4. Color bar boundary dispersion (yellow x=100.0 to cyan x=200.0)
         // Bar 1 is yellow [1, 1, 0], Bar 2 is cyan [0, 1, 1] on an 800-wide viewport (100px per bar)
-        let boundary_sample = sample_dual_kawase_wallpaper(
+        let boundary_sample = sample_analytical_blurred_wallpaper(
             WallpaperStyle::TvColorBars,
             200.0, // Exactly at Yellow/Cyan boundary
             300.0,
             Size::new(800.0, 600.0),
-            &plan_64,
             blur_64,
-            &vibrancy,
         );
-        // At boundary, both red and blue channels are non-zero due to Dual-Kawase dispersion
+        // At boundary, both red and blue channels are non-zero due to continuous Gaussian dispersion
         assert!(boundary_sample.r > 0.05, "Yellow's red channel dispersed across boundary");
         assert!(boundary_sample.b > 0.05, "Cyan's blue channel dispersed across boundary");
         assert!(boundary_sample.g > 0.8, "Green channel remains high for both yellow and cyan");
