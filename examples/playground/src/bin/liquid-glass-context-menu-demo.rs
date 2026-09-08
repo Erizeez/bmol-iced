@@ -573,44 +573,54 @@ fn build_popover_squircle_path(
     let bw = arrow.base_width.min(w * 0.45).min(h * 0.45);
     let ha = arrow.height;
     let wb = bw * 0.5;
-    let rt = arrow.tip_radius.clamp(0.5, wb * 0.6);
-    let rf = arrow.base_fillet.clamp(0.5, wb * 0.6);
+    let rt = arrow.tip_radius.clamp(0.5, wb * 0.4);
+    let rf = arrow.base_fillet.clamp(1.0, wb * 0.8);
 
-    // Parametric C1 Bezier control nodes dynamically adapting to tip_radius and base_fillet:
-    let u_apex_ctrl = rt * 0.4;
-    let v_inflect = ha * 0.58;
-    let u_inflect = (rt * 0.7 + wb * 0.25).min(wb * 0.65);
-    let u_base_ctrl = wb - rf * 0.45;
-    let u_lower_slope = u_inflect + (wb - u_inflect) * 0.35;
-    let v_lower_slope = v_inflect * 0.58;
-    let u_upper_slope = u_inflect * 0.65;
-    let v_upper_slope = v_inflect + (ha - v_inflect) * 0.6;
+    // Authentic Apple Concave Flank Geometry:
+    // 1. Apex control horizontal span (compact smooth crest, not a convex bulge)
+    let u_apex_ctrl = rt * 0.45;
+    // 2. High-elevation junction / waist (approx 80-85% height where flank meets apex dome)
+    let v_m = ha - rt * 1.2;
+    let u_m = rt * 1.5;
+
+    // 3. Tangent vector direction at junction (steep slope pointing towards apex)
+    let dir_u = u_m * 0.55;
+    let dir_v = (ha - v_m) * 0.75;
+
+    // 4. Base concave entry control node (sweeps inward along card edge)
+    let u_base_ctrl = wb - rf * 0.75;
+    let p2_u = u_m + dir_u * 3.5;
+    let p2_v = (v_m - dir_v * 3.5).max(ha * 0.25);
+
+    // 5. Apex entry control node
+    let q1_u = u_m - dir_u;
+    let q1_v = v_m + dir_v;
 
     Path::new(move |b| {
         let draw_arrow = |b: &mut iced::widget::canvas::path::Builder, map: &dyn Fn(f32, f32) -> Point| {
             // 1. Line to start of arrow at baseline (-wb, 0.0)
             b.line_to(map(-wb, 0.0));
-            // 2. Base entry fillet: horizontal tangent from straight edge into lower flank
+            // 2. Base concave flared flank: sweeps inwards with genuine concave curvature
             b.bezier_curve_to(
                 map(-u_base_ctrl, 0.0),
-                map(-u_lower_slope, v_lower_slope),
-                map(-u_inflect, v_inflect),
+                map(-p2_u, p2_v),
+                map(-u_m, v_m),
             );
-            // 3. Upper flank into apex dome: smoothly curves towards broad horizontal crest
+            // 3. Compact apex dome: smoothly caps the slender tip at apex (0, ha)
             b.bezier_curve_to(
-                map(-u_upper_slope, v_upper_slope),
+                map(-q1_u, q1_v),
                 map(-u_apex_ctrl, ha),
                 map(0.0, ha),
             );
             // 4. Crest descent into downward flank: perfectly horizontal tangent at apex (0, ha)
             b.bezier_curve_to(
                 map(u_apex_ctrl, ha),
-                map(u_upper_slope, v_upper_slope),
-                map(u_inflect, v_inflect),
+                map(q1_u, q1_v),
+                map(u_m, v_m),
             );
-            // 5. Base exit fillet: smooth C1 tangent transition back to card baseline
+            // 5. Symmetric concave descent back to card baseline
             b.bezier_curve_to(
-                map(u_lower_slope, v_lower_slope),
+                map(p2_u, p2_v),
                 map(u_base_ctrl, 0.0),
                 map(wb, 0.0),
             );
@@ -2999,7 +3009,7 @@ mod tests {
         let cfg_narrow = state.current_arrow_config();
         assert_eq!(cfg_narrow.base_width, 16.0);
         assert_eq!(cfg_narrow.height, 7.0);
-        assert_eq!(cfg_narrow.tip_radius, 2.0);
+        assert_eq!(cfg_narrow.tip_radius, 1.2);
 
         // 2. TooltipNarrow -> AppKitStandard
         let _ = update(&mut state, Message::CycleArrowPreset);
@@ -3007,7 +3017,7 @@ mod tests {
         let cfg_std = state.current_arrow_config();
         assert_eq!(cfg_std.base_width, 27.5);
         assert_eq!(cfg_std.height, 13.0);
-        assert_eq!(cfg_std.tip_radius, 5.0);
+        assert_eq!(cfg_std.tip_radius, 2.0);
 
         // 3. AppKitStandard -> SubtleCompact
         let _ = update(&mut state, Message::CycleArrowPreset);
@@ -3015,6 +3025,7 @@ mod tests {
         let cfg_subtle = state.current_arrow_config();
         assert_eq!(cfg_subtle.base_width, 12.0);
         assert_eq!(cfg_subtle.height, 5.0);
+        assert_eq!(cfg_subtle.tip_radius, 1.0);
 
         // 4. SubtleCompact -> MenuWide
         let _ = update(&mut state, Message::CycleArrowPreset);
@@ -3022,7 +3033,7 @@ mod tests {
         let cfg_wide = state.current_arrow_config();
         assert_eq!(cfg_wide.base_width, 26.0);
         assert_eq!(cfg_wide.height, 10.0);
-        assert_eq!(cfg_wide.tip_radius, 5.0);
+        assert_eq!(cfg_wide.tip_radius, 1.8);
     }
 
     #[test]
