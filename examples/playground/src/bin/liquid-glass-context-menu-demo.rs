@@ -221,11 +221,30 @@ pub enum Message {
     ToggleColorScheme,
     ToggleCalibrationGrid,
     SetPopoverArrow(PopoverArrowEdge),
+    ToggleMenuPreset,
 
     // Draggable menu cards
     StartDragCard(DragTarget),
     EndDragCard,
     ResetCardPositions,
+}
+
+/// Menu layout preset: full showcase vs. 1:1 pixel-perfect user reference dock menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MenuContentPreset {
+    FullShowcase,
+    #[default]
+    DockReference1To1,
+}
+
+impl MenuContentPreset {
+    #[must_use]
+    pub const fn menu_size(self) -> (f32, f32) {
+        match self {
+            Self::FullShowcase => (demo_metrics::MENU_WIDTH, demo_metrics::MENU_HEIGHT),
+            Self::DockReference1To1 => (demo_metrics::DOCK_REF_WIDTH, demo_metrics::DOCK_REF_HEIGHT),
+        }
+    }
 }
 
 /// Layout metrics strictly governing the context menu cards and floating popups in the demo.
@@ -241,13 +260,13 @@ pub mod demo_metrics {
     /// Vertical distance from card position (top-left of drag handle) to the menu container.
     pub const MENU_Y_INSET: f32 = DRAG_HEADER_HEIGHT + HEADER_MENU_GAP;
 
-    /// Fixed width of the context menu container (220.0 pt).
+    /// Fixed width of the full showcase context menu container (220.0 pt).
     pub const MENU_WIDTH: f32 = menu_metrics::DEFAULT_WIDTH;
 
     /// Corner radius of the context menu container (strictly 12.0 pt continuous squircle).
     pub const MENU_CORNER_RADIUS: f32 = menu_metrics::CONTAINER_CORNER_RADIUS;
 
-    /// Context menu exact physical height:
+    /// Full showcase context menu exact physical height:
     /// - 5 Section headers: 5 * 18.0 = 90.0 pt
     /// - 13 Action/Check/Submenu items: 13 * 24.0 = 312.0 pt
     /// - 4 Separators: 4 * (1.0 + 5.0 * 2) = 44.0 pt
@@ -255,6 +274,20 @@ pub mod demo_metrics {
     /// - Container top & bottom padding: 5.0 * 2 = 10.0 pt
     /// - Total exact height: 90 + 312 + 44 + 21 + 10 = 477.0 pt.
     pub const MENU_HEIGHT: f32 = 477.0;
+
+    /// 1:1 macOS Dock reference menu width matching user screenshot: 154.0 pt (308 px @2x).
+    pub const DOCK_REF_WIDTH: f32 = 154.0;
+
+    /// 1:1 macOS Dock reference menu exact physical height matching ContextMenu layout geometry (121.0 pt):
+    /// - 4 Items (选项, 显示所有窗口, 隐藏, 退出): 4 * 24.0 = 96.0 pt
+    /// - 1 Separator: 1.0 + 5.0 * 2 = 11.0 pt
+    /// - 4 item gaps (Column spacing 1.0): 4 * 1.0 = 4.0 pt
+    /// - Container top & bottom padding: 5.0 * 2 = 10.0 pt
+    /// - Total exact height: 96 + 11 + 4 + 10 = 121.0 pt.
+    pub const DOCK_REF_HEIGHT: f32 = 121.0;
+
+    /// 1:1 macOS Dock reference arrow left anchor offset: 27.0 pt / 154.0 pt ≈ 0.175.
+    pub const DOCK_REF_ARROW_OFFSET: f32 = 27.0 / 154.0;
 }
 
 /// An occlusion region where a context menu card or popup overlays the wallpaper,
@@ -536,54 +569,39 @@ fn build_popover_squircle_path(
     let rx = rect.x;
     let ry = rect.y;
 
-    let bw = arrow.base_width.min(w * 0.4).min(h * 0.4);
-    let wb = bw * 0.5;
+    let bw = arrow.base_width.min(w * 0.45).min(h * 0.45);
     let ha = arrow.height;
-    let fw = arrow.base_fillet.min(wb * 0.6);
-    let fh = fw * 0.42;
-    let tw = arrow.tip_radius.min(ha * 0.6);
-    let th = tw * 0.55;
+    let ku = (bw * 0.5) / 13.0;
+    let kv = ha / 10.0;
+    let wb = 13.0 * ku;
 
     Path::new(move |b| {
         let draw_arrow = |b: &mut iced::widget::canvas::path::Builder, map: &dyn Fn(f32, f32) -> Point| {
-            b.line_to(map(-wb, 0.0));
-            // 1. Tangent base entry fillet: horizontal zero-derivative transition into sloped flank
+            // 1. Line to start of arrow at baseline (-13.0, 0.0)
+            b.line_to(map(-13.0 * ku, 0.0));
+            // 2. Base entry fillet: horizontal tangent from straight edge into lower flank
             b.bezier_curve_to(
-                map(-wb + fw * 0.45, 0.0),
-                map(-wb + fw * 0.85, fh * 0.35),
-                map(-wb + fw, fh),
+                map(-10.5 * ku, 0.0),
+                map(-7.5 * ku, 3.5 * kv),
+                map(-5.5 * ku, 6.0 * kv),
             );
-            // 2. Smooth curved upward flank
-            let p1_u = -wb + fw;
-            let p1_v = fh;
-            let p2_u = -tw;
-            let p2_v = ha - th;
+            // 3. Upper flank into apex dome: smoothly curves towards broad horizontal crest
             b.bezier_curve_to(
-                map(p1_u + (p2_u - p1_u) * 0.35, p1_v + (p2_v - p1_v) * 0.38),
-                map(p1_u + (p2_u - p1_u) * 0.68, p1_v + (p2_v - p1_v) * 0.72),
-                map(p2_u, p2_v),
+                map(-3.5 * ku, 8.5 * kv),
+                map(-2.0 * ku, 10.0 * kv),
+                map(0.0, 10.0 * kv),
             );
-            // 3. Broad gentle rounded dome apex: completely horizontal tangent at crest
+            // 4. Crest descent into downward flank: perfectly horizontal tangent at apex (0, 10)
             b.bezier_curve_to(
-                map(-tw * 0.45, ha),
-                map(tw * 0.45, ha),
-                map(tw, ha - th),
+                map(2.0 * ku, 10.0 * kv),
+                map(3.5 * ku, 8.5 * kv),
+                map(5.5 * ku, 6.0 * kv),
             );
-            // 4. Smooth curved downward flank
-            let p3_u = tw;
-            let p3_v = ha - th;
-            let p4_u = wb - fw;
-            let p4_v = fh;
+            // 5. Base exit fillet: smooth C1 tangent transition back to card baseline
             b.bezier_curve_to(
-                map(p3_u + (p4_u - p3_u) * 0.32, p3_v + (p4_v - p3_v) * 0.28),
-                map(p3_u + (p4_u - p3_u) * 0.65, p3_v + (p4_v - p3_v) * 0.62),
-                map(p4_u, p4_v),
-            );
-            // 5. Tangent base exit fillet: smooth landing back to straight edge
-            b.bezier_curve_to(
-                map(wb - fw * 0.85, fh * 0.35),
-                map(wb - fw * 0.45, 0.0),
-                map(wb, 0.0),
+                map(7.5 * ku, 3.5 * kv),
+                map(10.5 * ku, 0.0),
+                map(13.0 * ku, 0.0),
             );
         };
 
@@ -824,7 +842,7 @@ fn render_blurred_occlusion(
     let end_x = rect.x + rect.width + extra_right;
 
     let arrow_center_x = rect.x + rect.width * arrow.offset;
-    let arrow_half_w = arrow.base_width * 0.5 + arrow.base_fillet;
+    let arrow_half_w = arrow.base_width * 0.5;
 
     while curr_x < end_x {
         let actual_w = (end_x - curr_x).min(slice_w);
@@ -1131,6 +1149,8 @@ pub struct State {
     pub active_drag: Option<(DragTarget, Point)>,
     pub top_card: DragTarget,
     pub popover_arrow_edge: PopoverArrowEdge,
+    pub arrow_offset: f32,
+    pub menu_preset: MenuContentPreset,
 }
 
 impl Default for State {
@@ -1168,7 +1188,9 @@ impl Default for State {
             dark_pos: Point::new(450.0, 50.0),
             active_drag: None,
             top_card: DragTarget::DarkCard,
-            popover_arrow_edge: PopoverArrowEdge::Top,
+            popover_arrow_edge: PopoverArrowEdge::Bottom,
+            arrow_offset: demo_metrics::DOCK_REF_ARROW_OFFSET,
+            menu_preset: MenuContentPreset::DockReference1To1,
         }
     }
 }
@@ -1462,6 +1484,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::SetPopoverArrow(edge) => {
             state.popover_arrow_edge = edge;
+            state.arrow_offset = if state.menu_preset == MenuContentPreset::DockReference1To1 && edge == PopoverArrowEdge::Bottom {
+                demo_metrics::DOCK_REF_ARROW_OFFSET
+            } else {
+                0.5
+            };
             state.last_action = Some(format!(
                 "卡片触角形态: {}",
                 match edge {
@@ -1472,6 +1499,23 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     PopoverArrowEdge::Right => "▶ 右侧触角 (Right)",
                 }
             ));
+            Task::none()
+        }
+        Message::ToggleMenuPreset => {
+            state.menu_preset = match state.menu_preset {
+                MenuContentPreset::FullShowcase => {
+                    state.popover_arrow_edge = PopoverArrowEdge::Bottom;
+                    state.arrow_offset = demo_metrics::DOCK_REF_ARROW_OFFSET;
+                    state.last_action = Some("已切换为: 🍎 1:1 原生 macOS Dock 菜单模式 (偏左圆润触角)".into());
+                    MenuContentPreset::DockReference1To1
+                }
+                MenuContentPreset::DockReference1To1 => {
+                    state.arrow_offset = 0.5;
+                    state.last_action = Some("已切换为: 📑 完整全功能展示菜单模式".into());
+                    MenuContentPreset::FullShowcase
+                }
+            };
+            state.rebuild_menus();
             Task::none()
         }
     }
@@ -1512,6 +1556,30 @@ pub fn app_theme(state: &State) -> Theme {
 
 /// Builds the comprehensive Apple-style Context Menu.
 fn build_demo_menu(state: &State) -> ContextMenu<Message> {
+    if state.menu_preset == MenuContentPreset::DockReference1To1 {
+        return ContextMenu::new()
+            .width(demo_metrics::DOCK_REF_WIDTH)
+            .with_border(false)
+            .with_transparent_background(true)
+            .item(
+                MenuItem::submenu("选项")
+                    .on_press(Message::TriggerAction(MenuAction::OpenSettings)),
+            )
+            .item(MenuItem::separator())
+            .item(
+                MenuItem::action("显示所有窗口")
+                    .on_press(Message::TriggerAction(MenuAction::QuickLook)),
+            )
+            .item(
+                MenuItem::action("隐藏")
+                    .on_press(Message::TriggerAction(MenuAction::Cut)),
+            )
+            .item(
+                MenuItem::action("退出")
+                    .on_press(Message::WindowControl(ControlAction::Close)),
+            );
+    }
+
     ContextMenu::new()
         .width(menu_metrics::DEFAULT_WIDTH)
         .with_border(false)
@@ -1909,6 +1977,46 @@ fn view_top_header<'a>(
     let wallpaper_picker = view_wallpaper_picker(state, palette, is_dark);
     let blur_picker = view_blur_preset_picker(state, palette, is_dark);
 
+    let preset_btn = button(
+        text(match state.menu_preset {
+            MenuContentPreset::DockReference1To1 => "🍎 1:1参考图模式",
+            MenuContentPreset::FullShowcase => "📑 全功能模式",
+        })
+        .size(10.5)
+        .font(font::ui_font(Weight::Semibold))
+        .color(if state.menu_preset == MenuContentPreset::DockReference1To1 {
+            Color::WHITE
+        } else {
+            palette.text_primary
+        }),
+    )
+    .padding(Padding {
+        top: 4.0,
+        right: 8.0,
+        bottom: 4.0,
+        left: 8.0,
+    })
+    .style(move |_theme, _status| {
+        if state.menu_preset == MenuContentPreset::DockReference1To1 {
+            button::Style {
+                background: Some(Background::Color(Color::from_rgb(0.18, 0.55, 0.95))),
+                border: Border::default().rounded(6.0),
+                ..button::Style::default()
+            }
+        } else {
+            button::Style {
+                background: Some(Background::Color(if is_dark {
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                } else {
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.06)
+                })),
+                border: Border::default().rounded(6.0),
+                ..button::Style::default()
+            }
+        }
+    })
+    .on_press(Message::ToggleMenuPreset);
+
     let theme_btn = button(
         text(if is_dark { "☀️ Light" } else { "🌙 Dark" })
             .size(11.0)
@@ -1936,6 +2044,8 @@ fn view_top_header<'a>(
         traffic_lights,
         title_text,
         space().width(Length::Fill),
+        preset_btn,
+        space().width(8.0),
         arrow_picker,
         space().width(8.0),
         wallpaper_picker,
@@ -1981,6 +2091,8 @@ struct MenuCardConfig {
     badge_title: &'static str,
     badge_sub: &'static str,
     is_dark_card: bool,
+    card_width: f32,
+    card_height: f32,
 }
 
 /// Builds a draggable menu showcase card with grip bar and transparent background.
@@ -1993,38 +2105,38 @@ fn view_menu_card<'a>(
 ) -> Element<'a, Message, Theme, iced::Renderer> {
     let grip_pill = row![
         text("⠿")
-            .size(15.0)
+            .size(14.0)
             .font(font::ui_font(Weight::Bold))
             .color(palette.accent),
         column![
             text(config.badge_title)
-                .size(12.0)
+                .size(11.0)
                 .font(font::ui_font(Weight::Bold))
                 .color(palette.text_primary),
             text(config.badge_sub)
-                .size(10.0)
+                .size(9.5)
                 .font(font::ui_font(Weight::Normal))
                 .color(palette.text_secondary),
         ]
         .spacing(1.0),
         space().width(Length::Fill),
-        text(if is_dragging { "松开固定" } else { "按住拖拽" })
-            .size(10.0)
+        text(if is_dragging { "松开" } else { "拖拽" })
+            .size(9.5)
             .font(font::ui_font(Weight::Medium))
             .color(if is_dragging { palette.accent } else { palette.text_tertiary }),
     ]
-    .spacing(8.0)
+    .spacing(6.0)
     .align_y(Alignment::Center);
 
     let drag_header = iced::widget::mouse_area(
         container(grip_pill)
-            .width(Length::Fixed(demo_metrics::MENU_WIDTH))
+            .width(Length::Fixed(config.card_width))
             .height(Length::Fixed(demo_metrics::DRAG_HEADER_HEIGHT))
             .padding(Padding {
                 top: 4.0,
-                right: 10.0,
+                right: 8.0,
                 bottom: 4.0,
-                left: 10.0,
+                left: 8.0,
             })
             .style(move |_theme| container::Style {
                 background: Some(Background::Color(if config.is_dark_card {
@@ -2058,12 +2170,12 @@ fn view_menu_card<'a>(
     .on_press(Message::StartDragCard(config.target));
 
     let menu_element = container(menu.view::<iced::Renderer>(theme))
-        .width(Length::Fixed(demo_metrics::MENU_WIDTH))
-        .height(Length::Fixed(demo_metrics::MENU_HEIGHT));
+        .width(Length::Fixed(config.card_width))
+        .height(Length::Fixed(config.card_height));
 
     let card_box = column![drag_header, menu_element]
         .spacing(demo_metrics::HEADER_MENU_GAP)
-        .width(Length::Fixed(demo_metrics::MENU_WIDTH));
+        .width(Length::Fixed(config.card_width));
 
     container(card_box).into()
 }
@@ -2143,12 +2255,24 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
     let is_light_dragging = matches!(state.active_drag, Some((DragTarget::LightCard, _)));
     let is_dark_dragging = matches!(state.active_drag, Some((DragTarget::DarkCard, _)));
 
+    let (card_w, card_h) = state.menu_preset.menu_size();
+    let (light_title, light_sub) = match state.menu_preset {
+        MenuContentPreset::DockReference1To1 => ("☀️ 1:1 Dock 菜单 (浅色)", "参考截图 1:1 还原: 154×117 pt"),
+        MenuContentPreset::FullShowcase => ("☀️ Light Mode Menu", "校准值: 白255 | 黑185 (α=72.5%)"),
+    };
+    let (dark_title, dark_sub) = match state.menu_preset {
+        MenuContentPreset::DockReference1To1 => ("🌙 1:1 Dock 菜单 (深色)", "参考截图 1:1 还原: 154×117 pt"),
+        MenuContentPreset::FullShowcase => ("🌙 Dark Mode Menu", "校准值: 白86 | 黑33 (α=79.2%)"),
+    };
+
     let light_card = view_menu_card(
         MenuCardConfig {
             target: DragTarget::LightCard,
-            badge_title: "☀️ Light Mode Menu",
-            badge_sub: "校准值: 白255 | 黑185 (α=72.5%)",
+            badge_title: light_title,
+            badge_sub: light_sub,
             is_dark_card: false,
+            card_width: card_w,
+            card_height: card_h,
         },
         &state.light_menu,
         is_light_dragging,
@@ -2159,9 +2283,11 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
     let dark_card = view_menu_card(
         MenuCardConfig {
             target: DragTarget::DarkCard,
-            badge_title: "🌙 Dark Mode Menu",
-            badge_sub: "校准值: 白86 | 黑33 (α=79.2%)",
+            badge_title: dark_title,
+            badge_sub: dark_sub,
             is_dark_card: true,
+            card_width: card_w,
+            card_height: card_h,
         },
         &state.dark_menu,
         is_dark_dragging,
@@ -2201,27 +2327,30 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
     let guide_height = 36.0;
     let top_offset = header_height + guide_height;
 
+    let arrow_cfg = PopoverArrowConfig::new(state.popover_arrow_edge)
+        .with_offset(state.arrow_offset);
+
     let mut occlusions = vec![
         MenuOcclusion {
             bounds: Rectangle {
                 x: state.light_pos.x.max(10.0),
                 y: state.light_pos.y.max(10.0) + demo_metrics::MENU_Y_INSET,
-                width: demo_metrics::MENU_WIDTH,
-                height: demo_metrics::MENU_HEIGHT,
+                width: card_w,
+                height: card_h,
             },
             corner_radius: demo_metrics::MENU_CORNER_RADIUS,
-            arrow: PopoverArrowConfig::new(state.popover_arrow_edge),
+            arrow: arrow_cfg,
             is_dark: false,
         },
         MenuOcclusion {
             bounds: Rectangle {
                 x: state.dark_pos.x.max(10.0),
                 y: state.dark_pos.y.max(10.0) + demo_metrics::MENU_Y_INSET,
-                width: demo_metrics::MENU_WIDTH,
-                height: demo_metrics::MENU_HEIGHT,
+                width: card_w,
+                height: card_h,
             },
             corner_radius: demo_metrics::MENU_CORNER_RADIUS,
-            arrow: PopoverArrowConfig::new(state.popover_arrow_edge),
+            arrow: arrow_cfg,
             is_dark: true,
         },
     ];
@@ -2231,11 +2360,11 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
             bounds: Rectangle {
                 x: (pos.x - 10.0).max(10.0),
                 y: (pos.y - 10.0 - top_offset).max(0.0),
-                width: demo_metrics::MENU_WIDTH,
-                height: demo_metrics::MENU_HEIGHT,
+                width: card_w,
+                height: card_h,
             },
             corner_radius: demo_metrics::MENU_CORNER_RADIUS,
-            arrow: PopoverArrowConfig::new(state.popover_arrow_edge),
+            arrow: arrow_cfg,
             is_dark: match state.resolved_floating_scheme() {
                 UiColorScheme::Dark => true,
                 UiColorScheme::Light => false,
@@ -2458,6 +2587,9 @@ mod tests {
         assert_eq!(state.light_pos, Point::new(70.0, 50.0));
         assert_eq!(state.dark_pos, Point::new(450.0, 50.0));
         assert_eq!(state.active_drag, None);
+        assert_eq!(state.menu_preset, MenuContentPreset::DockReference1To1);
+        assert_eq!(state.popover_arrow_edge, PopoverArrowEdge::Bottom);
+        assert_eq!(state.arrow_offset, demo_metrics::DOCK_REF_ARROW_OFFSET);
     }
 
     #[test]
@@ -2570,19 +2702,25 @@ mod tests {
     fn test_demo_menu_building_and_rendering() {
         let mut state = State::default();
         state.rebuild_menus();
-        let menu = build_demo_menu(&state);
-        assert!(!menu.is_empty());
-        assert!(menu.len() >= 10);
+        let menu_dock = build_demo_menu(&state);
+        assert_eq!(menu_dock.len(), 5);
 
         let theme_dark = app_theme(&state);
-        let elem_dark = menu.view::<iced::Renderer>(&theme_dark);
+        let elem_dark = menu_dock.view::<iced::Renderer>(&theme_dark);
         drop(elem_dark);
+
+        // Switch to full showcase and verify rendering
+        let _ = update(&mut state, Message::ToggleMenuPreset);
+        state.rebuild_menus();
+        let menu_full = build_demo_menu(&state);
+        assert_eq!(menu_full.len(), 22);
 
         let mut light_state = State::default();
         light_state.controller.set_dark_mode(false);
+        let _ = update(&mut light_state, Message::ToggleMenuPreset);
         light_state.rebuild_menus();
         let theme_light = app_theme(&light_state);
-        let elem_light = menu.view::<iced::Renderer>(&theme_light);
+        let elem_light = menu_full.view::<iced::Renderer>(&theme_light);
         drop(elem_light);
     }
 
@@ -2692,18 +2830,45 @@ mod tests {
 
     #[test]
     fn test_demo_menu_height_geometry_exactness() {
+        // 1. Verify Dock 1:1 Reference Preset
         let state = State::default();
-        let menu = build_demo_menu(&state);
-        let items = menu.items_slice();
+        let menu_dock = build_demo_menu(&state);
+        let items_dock = menu_dock.items_slice();
+        assert_eq!(items_dock.len(), 5, "Dock 1:1 reference menu must have exactly 5 items");
 
-        // 1. Verify item composition matches expected count
-        assert_eq!(items.len(), 22, "Demo menu must have exactly 22 items");
+        let mut dock_actions = 0;
+        let mut dock_separators = 0;
+        for item in items_dock {
+            match item {
+                MenuItem::Separator => dock_separators += 1,
+                MenuItem::Action { .. } | MenuItem::Submenu { .. } => dock_actions += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(dock_actions, 4);
+        assert_eq!(dock_separators, 1);
+
+        let dock_items_height = dock_actions as f32 * menu_metrics::ITEM_HEIGHT;
+        let dock_separators_height = dock_separators as f32 * (menu_metrics::SEPARATOR_HEIGHT + menu_metrics::SEPARATOR_MARGIN_V * 2.0);
+        let dock_gaps = (items_dock.len() - 1) as f32 * 1.0;
+        let dock_padding = menu_metrics::CONTAINER_PADDING * 2.0;
+        let dock_total = dock_items_height + dock_separators_height + dock_gaps + dock_padding;
+        assert_eq!(dock_total, demo_metrics::DOCK_REF_HEIGHT);
+
+        // 2. Verify Full Showcase Preset
+        let mut full_state = State::default();
+        let _ = update(&mut full_state, Message::ToggleMenuPreset);
+        assert_eq!(full_state.menu_preset, MenuContentPreset::FullShowcase);
+
+        let menu_full = build_demo_menu(&full_state);
+        let items_full = menu_full.items_slice();
+        assert_eq!(items_full.len(), 22, "Full showcase menu must have exactly 22 items");
 
         let mut section_count = 0;
         let mut separator_count = 0;
         let mut action_count = 0;
 
-        for item in items {
+        for item in items_full {
             match item {
                 MenuItem::Section(_) => section_count += 1,
                 MenuItem::Separator => separator_count += 1,
@@ -2717,11 +2882,10 @@ mod tests {
         assert_eq!(separator_count, 4);
         assert_eq!(action_count, 13);
 
-        // 2. Compute exact height mathematically:
         let expected_sections = section_count as f32 * menu_metrics::SECTION_HEADER_HEIGHT;
         let expected_items = action_count as f32 * menu_metrics::ITEM_HEIGHT;
         let expected_separators = separator_count as f32 * (menu_metrics::SEPARATOR_HEIGHT + menu_metrics::SEPARATOR_MARGIN_V * 2.0);
-        let expected_gaps = (items.len() - 1) as f32 * 1.0;
+        let expected_gaps = (items_full.len() - 1) as f32 * 1.0;
         let container_padding = menu_metrics::CONTAINER_PADDING * 2.0;
         let total_exact = expected_sections + expected_items + expected_separators + expected_gaps + container_padding;
 
@@ -2732,6 +2896,25 @@ mod tests {
         );
         assert_eq!(demo_metrics::MENU_HEIGHT, 477.0);
         assert_eq!(demo_metrics::MENU_Y_INSET, 44.0);
+    }
+
+    #[test]
+    fn test_toggle_menu_preset() {
+        let mut state = State::default();
+        assert_eq!(state.menu_preset, MenuContentPreset::DockReference1To1);
+        assert_eq!(state.popover_arrow_edge, PopoverArrowEdge::Bottom);
+        assert_eq!(state.arrow_offset, demo_metrics::DOCK_REF_ARROW_OFFSET);
+
+        // 1. Toggle to FullShowcase
+        let _ = update(&mut state, Message::ToggleMenuPreset);
+        assert_eq!(state.menu_preset, MenuContentPreset::FullShowcase);
+        assert_eq!(state.arrow_offset, 0.5);
+
+        // 2. Toggle back to DockReference1To1
+        let _ = update(&mut state, Message::ToggleMenuPreset);
+        assert_eq!(state.menu_preset, MenuContentPreset::DockReference1To1);
+        assert_eq!(state.popover_arrow_edge, PopoverArrowEdge::Bottom);
+        assert_eq!(state.arrow_offset, demo_metrics::DOCK_REF_ARROW_OFFSET);
     }
 
     #[test]
@@ -2774,14 +2957,14 @@ mod tests {
     #[test]
     fn test_set_popover_arrow_message_handling() {
         let mut state = State::default();
-        assert_eq!(state.popover_arrow_edge, PopoverArrowEdge::Top);
+        assert_eq!(state.popover_arrow_edge, PopoverArrowEdge::Bottom);
 
         let edges = [
-            (PopoverArrowEdge::Bottom, "▼ 底部触角 (Bottom)"),
+            (PopoverArrowEdge::Top, "▲ 顶部触角 (Top)"),
             (PopoverArrowEdge::Left, "◀ 左侧触角 (Left)"),
             (PopoverArrowEdge::Right, "▶ 右侧触角 (Right)"),
             (PopoverArrowEdge::None, "无触角"),
-            (PopoverArrowEdge::Top, "▲ 顶部触角 (Top)"),
+            (PopoverArrowEdge::Bottom, "▼ 底部触角 (Bottom)"),
         ];
 
         for (edge, expected_text) in edges {
