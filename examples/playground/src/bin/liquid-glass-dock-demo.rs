@@ -38,9 +38,10 @@ use iced::{
     },
     window,
 };
-use bmol_designs::menu_metrics;
+use bmol_designs::{dock_metrics, menu_metrics};
 use bmol_window_shell::{
-    WindowChromeConfig, WindowShellController, is_system_dark_mode, traffic_lights, window_metrics,
+    TrafficLightsViewConfig, WindowChromeConfig, WindowControlAction, WindowShellController,
+    app_icon_png, is_system_dark_mode, view_traffic_lights, window_metrics,
 };
 use liquid_glass::{
     ContextMenu, ControlAction, MenuItem, TrafficLightsState, UiColorScheme, UiIcon, UiTheme,
@@ -859,6 +860,22 @@ impl DockApp {
             ),
         }
     }
+
+    /// Returns the authentic macOS on-disk application bundle path for Scheme A.
+    #[must_use]
+    pub const fn system_app_path(self) -> &'static str {
+        match self {
+            Self::Finder => "/System/Library/CoreServices/Finder.app",
+            Self::Safari => "/Applications/Safari.app",
+            Self::Messages => "/System/Applications/Messages.app",
+            Self::Mail => "/System/Applications/Mail.app",
+            Self::Music => "/System/Applications/Music.app",
+            Self::Photos => "/System/Applications/Photos.app",
+            Self::Terminal => "/System/Applications/Utilities/Terminal.app",
+            Self::Settings => "/System/Applications/System Settings.app",
+            Self::Trash => "named:NSTrashEmpty",
+        }
+    }
 }
 
 /// Unified, mathematically guaranteed layout geometry for the entire stage.
@@ -893,22 +910,16 @@ impl LayoutMetrics {
             height: search_h,
         };
 
-        // --- Concentric Geometric Proportion System ---
-        // 1. Icon Geometry (10:20:10 curvature ratio, 40px width/height):
-        //    - Corner radius: 10px (10/40 = 0.25)
-        //    - Straight edge: 20px (20/40 = 0.50)
-        //    - Corner radius: 10px (10/40 = 0.25)
-        //    - Total width/height: 40px
-        let base_icon_size = 40.0f32;
-        let icon_radius = base_icon_size * (10.0 / 40.0); // 10.0pt
-        let icon_gap = 13.0f32;                           // 13.0pt
-        let dock_padding = 13.0f32;                       // 13.0pt
+        // --- Concentric Geometric Proportion System (SSOT: bmol_designs::dock_metrics) ---
+        let base_icon_size = dock_metrics::BASE_ICON_SIZE;
+        let icon_radius = dock_metrics::icon_corner_radius(base_icon_size);
+        let icon_gap = dock_metrics::icon_gap(base_icon_size);
+        let dock_padding = dock_metrics::dock_padding(base_icon_size);
 
-        // 2. Dock Geometry (Strict Concentric Radius: Dock R = Padding + Icon R = 13px + 10px = 23px):
-        let dock_radius = dock_padding + icon_radius;     // 23.0pt (13px + 10px)
-        let dock_h = base_icon_size + dock_padding * 2.0; // 40 + 13 * 2 = 66.0pt
-        let total_icons_w = 9.0 * base_icon_size + 8.0 * icon_gap; // 9*40 + 8*13 = 464.0pt
-        let dock_w = (total_icons_w + dock_padding * 2.0).min(window_size.width - 40.0); // 490.0pt
+        let dock_radius = dock_metrics::concentric_dock_radius(icon_radius, dock_padding);
+        let dock_h = dock_metrics::dock_height(base_icon_size);
+        let dock_w = dock_metrics::dock_width(DockApp::ALL.len(), base_icon_size)
+            .min(window_size.width - 40.0);
 
         let dock_y = (window_size.height - status_h - 16.0 - dock_h).max(header_h + 120.0);
         let dock_x = (window_size.width - dock_w) * 0.5;
@@ -1201,6 +1212,7 @@ struct LiquidGlassForegroundCanvas {
     is_dark: bool,
     transparency: GlassTransparency,
     floating_menu_rect: Option<Rectangle>,
+    app_icons: [Option<iced::widget::image::Handle>; 9],
 }
 
 impl<Message> canvas::Program<Message> for LiquidGlassForegroundCanvas {
@@ -1252,6 +1264,7 @@ impl<Message> canvas::Program<Message> for LiquidGlassForegroundCanvas {
                 self.is_dark,
                 self.enable_highlight,
                 self.enable_dark_rim,
+                self.app_icons[i].as_ref(),
             );
 
             // macOS authentic active app indicator dot
@@ -1363,9 +1376,10 @@ fn draw_apple_icon(
     is_dark: bool,
     enable_highlight: bool,
     enable_dark_rim: bool,
+    icon_image: Option<&iced::widget::image::Handle>,
 ) {
-    // 10:20:10 Curvature Ratio: 10px corner radius, 20px straight edge for 40px icon (r = width * 0.25)
-    let r = rect.width * 0.25;
+    // 10:20:10 Curvature Ratio (SSOT: bmol_designs::dock_metrics)
+    let r = dock_metrics::icon_corner_radius(rect.width);
 
     // 0. Soft physical contact drop shadow underneath the icon onto the dock shelf
     let shadow_color_1 = Color::from_rgba(0.0, 0.0, 0.0, 0.16);
@@ -1393,20 +1407,23 @@ fn draw_apple_icon(
         shadow_color_2,
     );
 
-    // 1. Icon Base Squircle Plate with continuous Apple gradient
-    let path = build_squircle_path(rect, r);
-    let (c_top, c_bot) = app.gradient_colors();
-    let grad = Linear::new(Point::new(rect.x, rect.y), Point::new(rect.x, rect.y + rect.height))
-        .add_stop(0.0, c_top)
-        .add_stop(1.0, c_bot);
-    frame.fill(&path, grad);
+    if let Some(handle) = icon_image {
+        // Authentic Scheme A: Real macOS system App icon processed through squircle-icon-rs
+        frame.draw_image(rect, canvas::Image::new(handle.clone()));
+    } else {
+        // Fallback: Standalone vector squircle plate & glyph illustration
+        let path = build_squircle_path(rect, r);
+        let (c_top, c_bot) = app.gradient_colors();
+        let grad = Linear::new(Point::new(rect.x, rect.y), Point::new(rect.x, rect.y + rect.height))
+            .add_stop(0.0, c_top)
+            .add_stop(1.0, c_bot);
+        frame.fill(&path, grad);
 
-    // 2. Icon Vector Glyph Artwork
-    let cx = rect.x + rect.width * 0.5;
-    let cy = rect.y + rect.height * 0.5;
-    let s = rect.width;
+        let cx = rect.x + rect.width * 0.5;
+        let cy = rect.y + rect.height * 0.5;
+        let s = rect.width;
 
-    match app {
+        match app {
         DockApp::Finder => {
             // Authentic Finder split face dividing line & nose
             let nose = Path::new(|b| {
@@ -1564,6 +1581,7 @@ fn draw_apple_icon(
             frame.fill_rectangle(Point::new(cx - s * 0.06, cy - s * 0.12), Size::new(2.0, s * 0.30), Color::WHITE);
             frame.fill_rectangle(Point::new(cx + s * 0.06, cy - s * 0.12), Size::new(2.0, s * 0.30), Color::WHITE);
         }
+    }
     }
 
     // 4. THE SIGNATURE APPLE LIQUID GLASS BEVEL & OPTICS RIGHT ON THE SQUIRCLE ICON!
@@ -1948,6 +1966,30 @@ pub struct State {
     pub system_wallpaper: Arc<WallpaperBuffer>,
     pub dock_frosted_texture: Option<iced::widget::image::Handle>,
     pub search_frosted_texture: Option<iced::widget::image::Handle>,
+    pub app_icons: [Option<iced::widget::image::Handle>; 9],
+}
+
+/// Loads authentic macOS application icons directly from disk and processes
+/// them through `squircle-icon-rs` with 10:20:10 curvature and Apple HIG squircle plates.
+fn load_real_app_icons() -> [Option<iced::widget::image::Handle>; 9] {
+    let mut icons: [Option<iced::widget::image::Handle>; 9] = Default::default();
+    for (i, app) in DockApp::ALL.iter().enumerate() {
+        let path = app.system_app_path();
+        if let Some(png_bytes) = app_icon_png(path) {
+            if let Ok(pixmap) = squircle_icon_rs::rasterize_image_data(&png_bytes, 128, 128) {
+                let plated = squircle_icon_rs::apply_squircle_plate(
+                    &pixmap,
+                    squircle_icon_rs::PlateOptions::default(),
+                );
+                let plated_bm = squircle_icon_rs::IconBitmap::from_pixmap(plated);
+                let w = plated_bm.width();
+                let h = plated_bm.height();
+                let rgba = plated_bm.to_straight_rgba();
+                icons[i] = Some(iced::widget::image::Handle::from_rgba(w, h, rgba));
+            }
+        }
+    }
+    icons
 }
 
 impl Default for State {
@@ -1962,6 +2004,7 @@ impl Default for State {
         };
         let theme = UiTheme::new(scheme).iced_theme();
         let system_wallpaper = load_or_create_wallpaper(1240, 820);
+        let app_icons = load_real_app_icons();
 
         let mut s = Self {
             controller,
@@ -1988,6 +2031,7 @@ impl Default for State {
             system_wallpaper,
             dock_frosted_texture: None,
             search_frosted_texture: None,
+            app_icons,
         };
         s.regenerate_frosted_textures();
         s
@@ -2233,7 +2277,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     Task::none()
                 }
             }
-            ControlAction::Expand => {
+            ControlAction::Expand | ControlAction::Zoom => {
                 if let Some(id) = state.controller.window_id {
                     window::toggle_maximize(id)
                 } else {
@@ -2426,6 +2470,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
         is_dark,
         transparency: state.transparency,
         floating_menu_rect,
+        app_icons: state.app_icons.clone(),
     })
     .width(Length::Fill)
     .height(Length::Fill);
@@ -2519,7 +2564,23 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
 
 /// Builds the top titlebar with macOS Traffic Lights, Title, and Tuning Bar.
 fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced::Renderer> {
-    let traffic_lights = view_traffic_lights_group(state, 8.0);
+    let tl_config = TrafficLightsViewConfig::from_state(
+        &state.traffic_lights,
+        state.controller.is_focused,
+        is_dark,
+    );
+
+    let traffic_lights = view_traffic_lights(
+        tl_config,
+        |action| match action {
+            WindowControlAction::Close => Message::WindowControl(ControlAction::Close),
+            WindowControlAction::Minimize => Message::WindowControl(ControlAction::Minimize),
+            WindowControlAction::Zoom | WindowControlAction::Expand => {
+                Message::WindowControl(ControlAction::Expand)
+            }
+        },
+        Message::TrafficLightsHover,
+    );
 
     let title_text = container(
         text("Liquid Glass Optics & Dock Showcase")
@@ -2812,124 +2873,6 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
         Message::DragWindow,
         Some(Message::WindowControl(ControlAction::Expand)),
     )
-}
-
-/// Builds the traffic lights group matching authentic macOS styling and animations.
-fn view_traffic_lights_group(
-    state: &State,
-    _margin: f32,
-) -> Element<'_, Message, Theme, iced::Renderer> {
-    let is_focused = state.controller.is_focused;
-    let hover_amount = state.traffic_lights.hover_progress;
-    let is_dark = state.controller.is_dark;
-
-    let build_btn = |action: ControlAction,
-                     index: usize,
-                     base_color: Color,
-                     hover_color: Color,
-                     press_color: Color,
-                     border_color: Color,
-                     glyph_char: &'static str| {
-        let is_animating = state.traffic_lights.press_targets[index] > 0.0;
-        let scale = state.traffic_lights.press_springs[index].value();
-        let size = traffic_lights::DIAMETER * scale;
-
-        let fill_color = if !is_focused && hover_amount < 0.05 {
-            if is_dark {
-                Color::from_rgb8(0x4C, 0x4C, 0x50)
-            } else {
-                Color::from_rgb8(0xD1, 0xD1, 0xD6)
-            }
-        } else if is_animating {
-            press_color
-        } else if hover_amount > 0.5 {
-            hover_color
-        } else {
-            base_color
-        };
-
-        let glyph_text = text(glyph_char)
-            .size(if action == ControlAction::Close { 8.0 } else { 7.0 })
-            .font(font::ui_font(Weight::Bold))
-            .color(Color {
-                a: hover_amount * if is_dark { 0.85 } else { 0.75 },
-                ..match action {
-                    ControlAction::Close => Color::from_rgb8(0x4C, 0x00, 0x00),
-                    ControlAction::Minimize => Color::from_rgb8(0x5A, 0x36, 0x00),
-                    ControlAction::Expand => Color::from_rgb8(0x0A, 0x38, 0x00),
-                }
-            });
-
-        let btn_content = container(glyph_text)
-            .width(Length::Fixed(size))
-            .height(Length::Fixed(size))
-            .center_x(Length::Fixed(size))
-            .center_y(Length::Fixed(size));
-
-        button(btn_content)
-            .padding(0)
-            .style(move |_theme, _status| button::Style {
-                background: Some(Background::Color(fill_color)),
-                border: Border::default()
-                    .rounded(size * 0.5)
-                    .width(0.5)
-                    .color(border_color),
-                shadow: Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.12),
-                    offset: Vector::new(0.0, 0.5),
-                    blur_radius: 1.0,
-                },
-                ..Default::default()
-            })
-            .on_press(Message::WindowControl(action))
-    };
-
-    let red = build_btn(
-        ControlAction::Close,
-        0,
-        Color::from_rgb8(0xFF, 0x5F, 0x56),
-        Color::from_rgb8(0xFF, 0x6E, 0x67),
-        Color::from_rgb8(0xD3, 0x3B, 0x36),
-        Color::from_rgb8(0xE0, 0x44, 0x3E),
-        "✕",
-    );
-
-    let yellow = build_btn(
-        ControlAction::Minimize,
-        1,
-        Color::from_rgb8(0xFF, 0xBD, 0x2E),
-        Color::from_rgb8(0xFF, 0xC8, 0x47),
-        Color::from_rgb8(0xD7, 0x96, 0x1E),
-        Color::from_rgb8(0xDE, 0xA1, 0x23),
-        "─",
-    );
-
-    let green = build_btn(
-        ControlAction::Expand,
-        2,
-        Color::from_rgb8(0x27, 0xC9, 0x3F),
-        Color::from_rgb8(0x32, 0xD8, 0x4D),
-        Color::from_rgb8(0x19, 0xA0, 0x23),
-        Color::from_rgb8(0x1A, 0xAB, 0x29),
-        "⤢",
-    );
-
-    let slop = traffic_lights::control_hover_slop(traffic_lights::DIAMETER);
-    let controls_row = row![red, yellow, green]
-        .spacing(traffic_lights::SPACING)
-        .align_y(Alignment::Center);
-
-    let tracking_area = container(controls_row).padding(Padding {
-        top: slop,
-        right: slop,
-        bottom: slop,
-        left: slop,
-    });
-
-    iced::widget::mouse_area(tracking_area)
-        .on_enter(Message::TrafficLightsHover(true))
-        .on_exit(Message::TrafficLightsHover(false))
-        .into()
 }
 
 /// Builds the search input widget positioned exactly over `search_rect`.
@@ -3479,6 +3422,17 @@ mod tests {
 
         assert_ne!(format!("{:?}", handle_0pt), "");
         assert_ne!(format!("{:?}", handle_16pt), "");
+    }
+
+    #[test]
+    fn test_scheme_a_squircle_icon_integration() {
+        let state = State::default();
+        #[cfg(target_os = "macos")]
+        {
+            // At least Finder and Safari should be resolved and processed via squircle-icon-rs
+            assert!(state.app_icons[0].is_some(), "Finder icon should be loaded");
+            assert!(state.app_icons[1].is_some(), "Safari icon should be loaded");
+        }
     }
 }
 

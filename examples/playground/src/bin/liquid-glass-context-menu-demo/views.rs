@@ -7,139 +7,15 @@ use iced::{
     widget::{button, column, container, row, space, text},
 };
 use bmol_designs::popover_metrics::{PopoverArrowEdge, PopoverArrowPreset};
-use bmol_window_shell::traffic_lights;
+use bmol_window_shell::{
+    TrafficLightsViewConfig, WindowControlAction, traffic_lights, view_traffic_lights,
+};
 use liquid_glass::{ContextMenu, ControlAction, UiPalette, ui::font};
 use vibrancy_rs::KawasePassPlan;
 
 use crate::menu_content::{demo_metrics, MenuContentPreset};
 use crate::state::{DragTarget, Message, State};
 use crate::vibrancy::{BlurPreset, WallpaperStyle};
-
-/// Builds the authentic Apple Traffic Lights button row with dynamic symmetric margins.
-#[must_use]
-pub fn view_traffic_lights_group(
-    state: &State,
-    symmetric_margin: f32,
-) -> Element<'_, Message, Theme, iced::Renderer> {
-    let is_focused = state.controller.is_focused;
-    let hover_amount = state.traffic_lights.hover_progress;
-    let is_dark = state.controller.is_dark;
-
-    let build_btn = |action: ControlAction,
-                     index: usize,
-                     base_color: Color,
-                     hover_color: Color,
-                     press_color: Color,
-                     border_color: Color,
-                     glyph_char: &'static str| {
-        let is_animating = state.traffic_lights.press_targets[index] > 0.0;
-        let scale = state.traffic_lights.press_springs[index].value();
-        let size = traffic_lights::DIAMETER * scale;
-
-        let fill_color = if !is_focused && hover_amount < 0.05 {
-            if is_dark {
-                Color::from_rgb8(0x4C, 0x4C, 0x50)
-            } else {
-                Color::from_rgb8(0xD1, 0xD1, 0xD6)
-            }
-        } else if is_animating {
-            press_color
-        } else if hover_amount > 0.5 {
-            hover_color
-        } else {
-            base_color
-        };
-
-        let glyph_text = text(glyph_char)
-            .size(if action == ControlAction::Close { 8.0 } else { 7.0 })
-            .font(font::ui_font(Weight::Bold))
-            .color(Color {
-                a: hover_amount * if is_dark { 0.85 } else { 0.75 },
-                ..match action {
-                    ControlAction::Close => Color::from_rgb8(0x4C, 0x00, 0x00),
-                    ControlAction::Minimize => Color::from_rgb8(0x5A, 0x36, 0x00),
-                    ControlAction::Expand => Color::from_rgb8(0x0A, 0x38, 0x00),
-                }
-            });
-
-        let btn_content = container(glyph_text)
-            .width(Length::Fixed(size))
-            .height(Length::Fixed(size))
-            .center_x(Length::Fixed(size))
-            .center_y(Length::Fixed(size));
-
-        button(btn_content)
-            .padding(0)
-            .style(move |_theme, _status| button::Style {
-                background: Some(Background::Color(fill_color)),
-                border: Border::default()
-                    .rounded(size * 0.5)
-                    .width(0.5)
-                    .color(border_color),
-                shadow: Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.12),
-                    offset: Vector::new(0.0, 0.5),
-                    blur_radius: 1.0,
-                },
-                ..button::Style::default()
-            })
-            .on_press(Message::WindowControl(action))
-    };
-
-    let red = build_btn(
-        ControlAction::Close,
-        0,
-        Color::from_rgb8(0xFF, 0x5F, 0x56),
-        Color::from_rgb8(0xFF, 0x6E, 0x67),
-        Color::from_rgb8(0xD3, 0x3B, 0x36),
-        Color::from_rgb8(0xE0, 0x44, 0x3E),
-        "✕",
-    );
-
-    let yellow = build_btn(
-        ControlAction::Minimize,
-        1,
-        Color::from_rgb8(0xFF, 0xBD, 0x2E),
-        Color::from_rgb8(0xFF, 0xC8, 0x47),
-        Color::from_rgb8(0xD7, 0x96, 0x1E),
-        Color::from_rgb8(0xDE, 0xA1, 0x23),
-        "─",
-    );
-
-    let green = build_btn(
-        ControlAction::Expand,
-        2,
-        Color::from_rgb8(0x27, 0xC9, 0x3F),
-        Color::from_rgb8(0x32, 0xD8, 0x4D),
-        Color::from_rgb8(0x19, 0xA0, 0x23),
-        Color::from_rgb8(0x1A, 0xAB, 0x29),
-        "⤢",
-    );
-
-    let slop = traffic_lights::control_hover_slop(traffic_lights::DIAMETER);
-    let controls_row = row![red, yellow, green]
-        .spacing(traffic_lights::SPACING)
-        .align_y(Alignment::Center);
-
-    let tracking_area = container(controls_row).padding(Padding {
-        top: slop,
-        right: slop,
-        bottom: slop,
-        left: slop,
-    });
-
-    let interactive_group = iced::widget::mouse_area(tracking_area)
-        .on_enter(Message::TrafficLightsHover(true))
-        .on_exit(Message::TrafficLightsHover(false));
-
-    let spacer_left = (symmetric_margin - slop).max(0.0);
-    row![
-        space().width(Length::Fixed(spacer_left)),
-        interactive_group,
-    ]
-    .align_y(Alignment::Center)
-    .into()
-}
 
 /// Builds the wallpaper style picker.
 #[must_use]
@@ -323,8 +199,30 @@ pub fn view_top_header<'a>(
 ) -> Element<'a, Message, Theme, iced::Renderer> {
     let header_height = state.controller.metrics.header_rect.height;
     let symmetric_margin = ((header_height - traffic_lights::DIAMETER) * 0.5).max(4.0);
+    let slop = traffic_lights::control_hover_slop(traffic_lights::DIAMETER);
+    let spacer_left = (symmetric_margin - slop).max(0.0);
 
-    let traffic_lights = view_traffic_lights_group(state, symmetric_margin);
+    let tl_config = TrafficLightsViewConfig::from_state(
+        &state.traffic_lights,
+        state.controller.is_focused,
+        is_dark,
+    );
+
+    let traffic_lights = row![
+        space().width(Length::Fixed(spacer_left)),
+        view_traffic_lights(
+            tl_config,
+            |action| match action {
+                WindowControlAction::Close => Message::WindowControl(ControlAction::Close),
+                WindowControlAction::Minimize => Message::WindowControl(ControlAction::Minimize),
+                WindowControlAction::Zoom | WindowControlAction::Expand => {
+                    Message::WindowControl(ControlAction::Expand)
+                }
+            },
+            Message::TrafficLightsHover,
+        ),
+    ]
+    .align_y(Alignment::Center);
 
     let title_text = row![
         space().width(Length::Fixed(traffic_lights::TITLE_CLEARANCE)),

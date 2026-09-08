@@ -255,7 +255,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     Task::none()
                 }
             }
-            ControlAction::Expand => {
+            ControlAction::Expand | ControlAction::Zoom => {
                 if let Some(id) = state.controller.window_id {
                     window::toggle_maximize(id)
                 } else {

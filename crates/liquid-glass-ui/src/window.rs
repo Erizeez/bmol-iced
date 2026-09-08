@@ -13,12 +13,6 @@ pub use bmol_window_shell::{
     loyal_drag_bar, setup_native_window, wrap_border_resizer, wrap_window_rim,
 };
 
-pub use crate::traffic_lights::{
-    ControlAction, ControlAction as TrafficLightsAction, ControlGroup, TrafficLightsState,
-    WINDOW_CONTROL_GAP, WINDOW_CONTROL_LARGE_GAP, WINDOW_CONTROL_LARGE_SIZE,
-    WINDOW_CONTROL_NATIVE_IDS, WINDOW_CONTROL_NATIVE_SIZE, control_group, view_traffic_lights,
-    window_control,
-};
 
 use iced::{Element, Subscription, Task, window};
 

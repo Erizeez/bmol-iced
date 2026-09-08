@@ -184,7 +184,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 let command = match action {
                     ControlAction::Close => WindowCommand::Close,
                     ControlAction::Minimize => WindowCommand::Minimize,
-                    ControlAction::Expand => state.window_policy.expand_command(),
+                    ControlAction::Expand | ControlAction::Zoom => state.window_policy.expand_command(),
                 };
                 return state.window.task(command);
             }
@@ -818,17 +818,22 @@ fn control_group(
     expand_behavior: WindowExpandBehavior,
     press_scales: [f32; 3],
 ) -> AppElement<'static> {
+    let shell_expand = if expand_behavior == WindowExpandBehavior::Fullscreen {
+        window_controls::WindowExpandBehavior::Fullscreen
+    } else {
+        window_controls::WindowExpandBehavior::Maximize
+    };
     window_controls::control_group(
         ids,
         size,
         gap,
-        scheme,
+        scheme == UiColorScheme::Dark,
         show_glyphs,
         close_disabled,
         interactive,
         group == ControlGroup::Inactive,
         hover_amount,
-        expand_behavior,
+        shell_expand,
         press_scales,
         move |id, action| Message::ControlPressed { id, action, execute: interactive },
         move |id| Message::ControlPressStarted { id },
@@ -889,13 +894,13 @@ mod tests {
     #[test]
     fn inactive_window_glyphs_use_a_separate_pale_tone() {
         let active_light =
-            window_control_glyph_color(UiColorScheme::Light, ControlAction::Close, false, 1.0);
+            window_control_glyph_color(false, ControlAction::Close, false, 1.0);
         let inactive_light =
-            window_control_glyph_color(UiColorScheme::Light, ControlAction::Close, true, 0.0);
+            window_control_glyph_color(false, ControlAction::Close, true, 0.0);
         let active_dark =
-            window_control_glyph_color(UiColorScheme::Dark, ControlAction::Close, false, 1.0);
+            window_control_glyph_color(true, ControlAction::Close, false, 1.0);
         let inactive_dark =
-            window_control_glyph_color(UiColorScheme::Dark, ControlAction::Close, true, 0.0);
+            window_control_glyph_color(true, ControlAction::Close, true, 0.0);
 
         assert!(inactive_light.r > active_light.r);
         assert!(inactive_light.g > active_light.g);

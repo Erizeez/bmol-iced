@@ -22,6 +22,7 @@ wgpu = { version = "27.0.1", features = ["noop"] }
 window-vibrancy = "0.8.0"
 winit = "0.30.12"
 vibrancy-rs = { path = "../../../vibrancy-rs", version = "0.1.0" }
+squircle-icon-rs = { path = "../../../squircle-icon-rs", version = "0.1.0" }
 
 [lints]
 workspace = true

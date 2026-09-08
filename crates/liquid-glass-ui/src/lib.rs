@@ -14,7 +14,6 @@ pub mod icon;
 pub mod popover;
 pub mod scroll_view;
 mod theme;
-pub mod traffic_lights;
 pub mod window;
 
 pub use context_menu::{ContextMenu, MenuItem, view_context_menu};
@@ -28,12 +27,6 @@ pub use scroll_view::{
     spring_scroll_view_with_config,
 };
 pub use theme::{GlassChrome, GlassRole, UiColorScheme, UiCornerStyle, UiPalette, UiTheme};
-pub use traffic_lights::{
-    ControlAction, ControlAction as TrafficLightsAction, ControlGroup, TrafficLightsState,
-    WINDOW_CONTROL_GAP, WINDOW_CONTROL_LARGE_GAP, WINDOW_CONTROL_LARGE_SIZE,
-    WINDOW_CONTROL_NATIVE_IDS, WINDOW_CONTROL_NATIVE_SIZE, control_group, positioned_control_group,
-    view_traffic_lights, window_control,
-};
 pub use window::{
     DEFAULT_WINDOW_CORNER_RADIUS, IcedWindowController, IcedWindowPolicy, WindowCommand,
     WindowDragArea, WindowExpandBehavior,

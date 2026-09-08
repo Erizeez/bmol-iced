@@ -8,9 +8,12 @@ use iced::{
 use iced_backend::{
     FUSED_TOP_BAR_HEIGHT, Renderer, SIDEBAR_CONTENT_INSET, SIDEBAR_CONTENT_WIDTH,
     SIDEBAR_LIST_BOTTOM_INSET, SIDEBAR_SCROLLBAR_BOTTOM_INSET, SIDEBAR_SEARCH_HEIGHT,
-    SIDEBAR_SEARCH_TOP, SIDEBAR_WIDTH, TOP_BAR_BUTTON_SIZE,
+    SIDEBAR_SEARCH_TOP, SIDEBAR_WIDTH, TOP_BAR_BUTTON_SIZE, WINDOW_CONTROL_NATIVE_IDS,
 };
-use bmol_window_shell::{window_metrics, window_rim};
+use bmol_window_shell::{
+    traffic_lights::{self, WINDOW_CONTROL_GAP, WINDOW_CONTROL_NATIVE_SIZE},
+    window_metrics, window_rim,
+};
 use liquid_glass::{
     GlassAccessibility, GlassId, Rect, ScrollbarConfig, UiColorScheme, UiIcon, UiTheme,
     ui::{components, font, spring_scroll_view_with_config},
@@ -187,7 +190,7 @@ fn boot() -> (State, Task<Message>) {
     let state = State::default();
     let is_dark = state.color_scheme() == UiColorScheme::Dark;
     let rim_insets: f32 = window_rim::rim_thickness(is_dark);
-    let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
+    let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
     let origin_x = rim_insets + symmetric_margin;
     let origin_y = rim_insets + symmetric_margin;
     iced_backend::set_window_control_origin(origin_x, origin_y);
@@ -283,25 +286,27 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                     task = match action {
                         liquid_glass::ControlAction::Close => iced::window::close(id),
                         liquid_glass::ControlAction::Minimize => iced::window::minimize(id, true),
-                        liquid_glass::ControlAction::Expand => iced::window::toggle_maximize(id),
+                        liquid_glass::ControlAction::Expand | liquid_glass::ControlAction::Zoom => {
+                            iced::window::toggle_maximize(id)
+                        }
                     };
                 }
             }
         }
         Message::ControlPressStarted { id } => {
-            if let Some(index) = liquid_glass::traffic_lights::slot_index(id) {
+            if let Some(index) = WINDOW_CONTROL_NATIVE_IDS.iter().position(|&x| x == id) {
                 state.traffic_lights.on_press_start(index);
                 iced_backend::set_window_control_press_progress(id, 1.0);
             }
         }
         Message::ControlPressVisualCancelled { id } => {
-            if let Some(index) = liquid_glass::traffic_lights::slot_index(id) {
+            if let Some(index) = WINDOW_CONTROL_NATIVE_IDS.iter().position(|&x| x == id) {
                 state.traffic_lights.on_press_cancel(index);
                 iced_backend::set_window_control_press_progress(id, 0.0);
             }
         }
         Message::ControlPressEnded { id } => {
-            if let Some(index) = liquid_glass::traffic_lights::slot_index(id) {
+            if let Some(index) = WINDOW_CONTROL_NATIVE_IDS.iter().position(|&x| x == id) {
                 state.traffic_lights.on_press_end(index);
                 iced_backend::set_window_control_press_progress(id, 0.0);
             }
@@ -312,13 +317,11 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::AnimationTick => {
             state.traffic_lights.step(std::time::Instant::now());
-            for &id in &liquid_glass::WINDOW_CONTROL_NATIVE_IDS {
-                if let Some(index) = liquid_glass::traffic_lights::slot_index(id) {
-                    iced_backend::set_window_control_scale(
-                        id,
-                        state.traffic_lights.press_springs[index].value(),
-                    );
-                }
+            for (index, &id) in WINDOW_CONTROL_NATIVE_IDS.iter().enumerate() {
+                iced_backend::set_window_control_scale(
+                    id,
+                    state.traffic_lights.press_springs[index].value(),
+                );
             }
             iced_backend::set_window_control_group_progress(
                 0,
@@ -357,7 +360,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         let scheme = state.color_scheme();
         let is_dark = scheme == UiColorScheme::Dark;
         let rim_insets: f32 = window_rim::rim_thickness(is_dark);
-        let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
+        let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
         let origin_x = rim_insets + symmetric_margin;
         let origin_y = rim_insets + symmetric_margin;
         iced_backend::set_window_control_origin(origin_x, origin_y);
@@ -511,8 +514,8 @@ fn view(state: &State) -> AppElement<'_> {
 
     let is_dark = state.color_scheme() == UiColorScheme::Dark;
     let rim_insets: f32 = window_rim::rim_thickness(is_dark);
-    let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
-    let slop = liquid_glass::traffic_lights::control_hover_slop(liquid_glass::WINDOW_CONTROL_NATIVE_SIZE);
+    let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
+    let slop = traffic_lights::control_hover_slop(WINDOW_CONTROL_NATIVE_SIZE);
     let leading_spacer_w = (symmetric_margin - slop).max(0.0);
     let origin_x = rim_insets + symmetric_margin;
     let origin_y = rim_insets + symmetric_margin;
@@ -520,11 +523,11 @@ fn view(state: &State) -> AppElement<'_> {
 
     let traffic_lights = row![
         column![].width(Length::Fixed(leading_spacer_w)),
-        liquid_glass::control_group(
-            liquid_glass::WINDOW_CONTROL_NATIVE_IDS,
-            liquid_glass::WINDOW_CONTROL_NATIVE_SIZE,
-            liquid_glass::WINDOW_CONTROL_GAP,
-            state.color_scheme(),
+        traffic_lights::control_group(
+            WINDOW_CONTROL_NATIVE_IDS,
+            WINDOW_CONTROL_NATIVE_SIZE,
+            WINDOW_CONTROL_GAP,
+            is_dark,
             true,
             false,
             true,
