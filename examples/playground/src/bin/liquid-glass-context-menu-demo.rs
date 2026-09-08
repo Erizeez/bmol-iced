@@ -40,10 +40,8 @@ use iced::{
 use bmol_designs::{
     menu_metrics,
     popover_metrics::{
-        popover_arrow_profile_height, PopoverArrowConfig, PopoverArrowEdge,
-        PopoverArrowPreset, ARROW_SPLINE_APEX_CTRL_U, ARROW_SPLINE_BASE_CTRL_U,
-        ARROW_SPLINE_INFLECTION_U, ARROW_SPLINE_INFLECTION_V, ARROW_SPLINE_LOWER_FLANK_U,
-        ARROW_SPLINE_LOWER_FLANK_V, ARROW_SPLINE_UPPER_FLANK_U, ARROW_SPLINE_UPPER_FLANK_V,
+        popover_arrow_profile_height_with_spline, PopoverArrowConfig, PopoverArrowEdge,
+        PopoverArrowPreset,
     },
 };
 use bmol_window_shell::{
@@ -584,14 +582,14 @@ fn build_popover_squircle_path(
     // Consists of two C1-continuous cubic Bézier curves on each symmetrical half:
     // - Base flank: Concave sweep from horizontal card edge into the inflection waist
     // - Apex dome: Smooth convex transition capping the apex with horizontal tangent
-    let u_base_ctrl = ARROW_SPLINE_BASE_CTRL_U * wb;
-    let u_lower_flank = ARROW_SPLINE_LOWER_FLANK_U * wb;
-    let v_lower_flank = ARROW_SPLINE_LOWER_FLANK_V * ha;
-    let u_inf = ARROW_SPLINE_INFLECTION_U * wb;
-    let v_inf = ARROW_SPLINE_INFLECTION_V * ha;
-    let u_upper_flank = ARROW_SPLINE_UPPER_FLANK_U * wb;
-    let v_upper_flank = ARROW_SPLINE_UPPER_FLANK_V * ha;
-    let u_apex_ctrl = ARROW_SPLINE_APEX_CTRL_U * wb;
+    let u_base_ctrl = arrow.spline.base_ctrl_u * wb;
+    let u_lower_flank = arrow.spline.lower_flank_u * wb;
+    let v_lower_flank = arrow.spline.lower_flank_v * ha;
+    let u_inf = arrow.spline.inflection_u * wb;
+    let v_inf = arrow.spline.inflection_v * ha;
+    let u_upper_flank = arrow.spline.upper_flank_u * wb;
+    let v_upper_flank = arrow.spline.upper_flank_v * ha;
+    let u_apex_ctrl = arrow.spline.apex_ctrl_u * wb;
 
     Path::new(move |b| {
         let draw_arrow = |b: &mut iced::widget::canvas::path::Builder, map: &dyn Fn(f32, f32) -> Point| {
@@ -885,14 +883,14 @@ fn render_blurred_occlusion(
 
         let top_extension = if arrow.edge == PopoverArrowEdge::Top && (sample_x - arrow_center_x).abs() < arrow_half_w {
             let dist = ((sample_x - arrow_center_x).abs() / arrow_half_w).clamp(0.0, 1.0);
-            popover_arrow_profile_height(dist) * arrow.height
+            popover_arrow_profile_height_with_spline(&arrow.spline, dist) * arrow.height
         } else {
             0.0
         };
 
         let bottom_extension = if arrow.edge == PopoverArrowEdge::Bottom && (sample_x - arrow_center_x).abs() < arrow_half_w {
             let dist = ((sample_x - arrow_center_x).abs() / arrow_half_w).clamp(0.0, 1.0);
-            popover_arrow_profile_height(dist) * arrow.height
+            popover_arrow_profile_height_with_spline(&arrow.spline, dist) * arrow.height
         } else {
             0.0
         };
@@ -907,7 +905,7 @@ fn render_blurred_occlusion(
             } else {
                 (sample_x - (rect.x + rect.width)) / arrow.height
             };
-            let bell = popover_arrow_profile_height(dist_x.clamp(0.0, 1.0));
+            let bell = popover_arrow_profile_height_with_spline(&arrow.spline, dist_x.clamp(0.0, 1.0));
             let current_half_w = arrow_half_w * bell;
             (arrow_center_y - current_half_w, current_half_w * 2.0)
         } else {
@@ -1546,19 +1544,19 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::CycleArrowPreset => {
             state.arrow_preset = match state.arrow_preset {
                 PopoverArrowPreset::MenuWide => {
-                    state.last_action = Some("已切换触角预设: 🎯 细窄 Hover / Tooltip 气泡 (16×7 pt, R2.0 挺拔)".into());
+                    state.last_action = Some("已切换触角预设: 🎯 原生 Dock 气泡细触角 (21×6.2 pt, 细腰紧凑温润)".into());
                     PopoverArrowPreset::TooltipNarrow
                 }
                 PopoverArrowPreset::TooltipNarrow => {
-                    state.last_action = Some("已切换触角预设: 📐 系统原生 AppKit NSPopover (27.5×13 pt, R5.0)".into());
+                    state.last_action = Some("已切换触角预设: 📐 系统原生 AppKit NSPopover (27.5×13 pt, 标准挑角)".into());
                     PopoverArrowPreset::AppKitStandard
                 }
                 PopoverArrowPreset::AppKitStandard => {
-                    state.last_action = Some("已切换触角预设: 🔹 微型提示指针 (12×5 pt, R1.5 超紧凑)".into());
+                    state.last_action = Some("已切换触角预设: 🔹 微型提示指针 (12×5 pt, 超紧凑)".into());
                     PopoverArrowPreset::SubtleCompact
                 }
                 PopoverArrowPreset::SubtleCompact => {
-                    state.last_action = Some("已切换触角预设: 🍎 宽型菜单穹顶气泡 (26×10 pt, R5.0 饱满圆润)".into());
+                    state.last_action = Some("已切换触角预设: 🍎 原生 Dock 菜单宽触角 (27×10 pt, 宽穹顶内凹腰线)".into());
                     PopoverArrowPreset::MenuWide
                 }
             };
@@ -3004,9 +3002,9 @@ mod tests {
         let _ = update(&mut state, Message::CycleArrowPreset);
         assert_eq!(state.arrow_preset, PopoverArrowPreset::TooltipNarrow);
         let cfg_narrow = state.current_arrow_config();
-        assert_eq!(cfg_narrow.base_width, 16.0);
-        assert_eq!(cfg_narrow.height, 7.0);
-        assert_eq!(cfg_narrow.tip_radius, 1.2);
+        assert_eq!(cfg_narrow.base_width, 21.0);
+        assert_eq!(cfg_narrow.height, 6.2);
+        assert_eq!(cfg_narrow.tip_radius, 1.0);
 
         // 2. TooltipNarrow -> AppKitStandard
         let _ = update(&mut state, Message::CycleArrowPreset);
