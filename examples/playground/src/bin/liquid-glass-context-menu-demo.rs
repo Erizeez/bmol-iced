@@ -37,7 +37,10 @@ use iced::{
     },
     window,
 };
-use bmol_designs::menu_metrics;
+use bmol_designs::{
+    menu_metrics,
+    popover_metrics::{PopoverArrowConfig, PopoverArrowEdge},
+};
 use bmol_window_shell::{
     WindowChromeConfig, WindowShellController, is_system_dark_mode, traffic_lights, window_metrics,
 };
@@ -217,6 +220,7 @@ pub enum Message {
     SetFloatingAppearance(FloatingAppearance),
     ToggleColorScheme,
     ToggleCalibrationGrid,
+    SetPopoverArrow(PopoverArrowEdge),
 
     // Draggable menu cards
     StartDragCard(DragTarget),
@@ -259,6 +263,7 @@ pub mod demo_metrics {
 pub struct MenuOcclusion {
     pub bounds: Rectangle,
     pub corner_radius: f32,
+    pub arrow: PopoverArrowConfig,
     pub is_dark: bool,
 }
 
@@ -504,46 +509,301 @@ fn build_squircle_path(rect: Rectangle, radius: f32) -> Path {
     })
 }
 
-/// Fills an authentic Apple squircle on the frame using our continuous curvature library (`squircle-rs`).
-fn fill_squircle(frame: &mut Frame, rect: Rectangle, radius: f32, color: Color) {
+/// Builds an authentic Apple continuous curvature squircle path with an integrated smooth
+/// popover arrow / beak (触角) on the designated edge.
+///
+/// If `arrow.edge == PopoverArrowEdge::None` or `!arrow.is_visible()`, strictly defaults
+/// to standard `build_squircle_path`.
+fn build_popover_squircle_path(
+    rect: Rectangle,
+    radius: f32,
+    arrow: PopoverArrowConfig,
+) -> Path {
+    if !arrow.is_visible() {
+        return build_squircle_path(rect, radius);
+    }
+
+    let r = radius.min(rect.width * 0.5).min(rect.height * 0.5);
+    let params = SquircleParams::new(rect.width, rect.height, r)
+        .with_smoothing(APPLE_CORNER_SMOOTHING);
+    let commands = squircle_path_commands(&params);
+
+    let w = rect.width;
+    let h = rect.height;
+    let rx = rect.x;
+    let ry = rect.y;
+
+    let bw_half = (arrow.base_width * 0.5).min(w * 0.35);
+    let ha = arrow.height;
+    let rf = arrow.base_fillet.min(bw_half * 0.5);
+    let rt = arrow.tip_radius.min(ha * 0.5);
+
+    Path::new(move |b| {
+        match arrow.edge {
+            PopoverArrowEdge::Top => {
+                let xc = (rx + w * arrow.offset).clamp(
+                    rx + r + rf + bw_half,
+                    rx + w - r - rf - bw_half,
+                );
+                for (i, cmd) in commands.iter().enumerate() {
+                    if i == commands.len() - 1 {
+                        b.line_to(Point::new(xc - bw_half - rf, ry));
+                        b.bezier_curve_to(
+                            Point::new(xc - bw_half - rf * 0.5, ry),
+                            Point::new(xc - bw_half - rf * 0.1, ry - rf * 0.25),
+                            Point::new(xc - bw_half + rf * 0.25, ry - rf * 0.55),
+                        );
+                        b.line_to(Point::new(xc - rt * 0.75, ry - ha + rt * 0.55));
+                        b.bezier_curve_to(
+                            Point::new(xc - rt * 0.35, ry - ha),
+                            Point::new(xc + rt * 0.35, ry - ha),
+                            Point::new(xc + rt * 0.75, ry - ha + rt * 0.55),
+                        );
+                        b.line_to(Point::new(xc + bw_half - rf * 0.25, ry - rf * 0.55));
+                        b.bezier_curve_to(
+                            Point::new(xc + bw_half + rf * 0.1, ry - rf * 0.25),
+                            Point::new(xc + bw_half + rf * 0.5, ry),
+                            Point::new(xc + bw_half + rf, ry),
+                        );
+                        if let PathCommand::MoveTo(pt) = commands[0] {
+                            b.line_to(Point::new(rx + pt.x, ry + pt.y));
+                        }
+                        b.close();
+                    } else {
+                        match *cmd {
+                            PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
+                            PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
+                            PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
+                                Point::new(rx + c0.x, ry + c0.y),
+                                Point::new(rx + c1.x, ry + c1.y),
+                                Point::new(rx + to.x, ry + to.y),
+                            ),
+                            PathCommand::Close => b.close(),
+                        }
+                    }
+                }
+            }
+            PopoverArrowEdge::Bottom => {
+                let xc = (rx + w * arrow.offset).clamp(
+                    rx + r + rf + bw_half,
+                    rx + w - r - rf - bw_half,
+                );
+                let bot_y = ry + h;
+                for cmd in &commands {
+                    if let PathCommand::LineTo(pt) = *cmd {
+                        if (pt.y - h).abs() < 0.1 && pt.x < w * 0.5 {
+                            b.line_to(Point::new(xc + bw_half + rf, bot_y));
+                            b.bezier_curve_to(
+                                Point::new(xc + bw_half + rf * 0.5, bot_y),
+                                Point::new(xc + bw_half + rf * 0.1, bot_y + rf * 0.25),
+                                Point::new(xc + bw_half - rf * 0.25, bot_y + rf * 0.55),
+                            );
+                            b.line_to(Point::new(xc + rt * 0.75, bot_y + ha - rt * 0.55));
+                            b.bezier_curve_to(
+                                Point::new(xc + rt * 0.35, bot_y + ha),
+                                Point::new(xc - rt * 0.35, bot_y + ha),
+                                Point::new(xc - rt * 0.75, bot_y + ha - rt * 0.55),
+                            );
+                            b.line_to(Point::new(xc - bw_half + rf * 0.25, bot_y + rf * 0.55));
+                            b.bezier_curve_to(
+                                Point::new(xc - bw_half - rf * 0.1, bot_y + rf * 0.25),
+                                Point::new(xc - bw_half - rf * 0.5, bot_y),
+                                Point::new(xc - bw_half - rf, bot_y),
+                            );
+                            b.line_to(Point::new(rx + pt.x, ry + pt.y));
+                            continue;
+                        }
+                    }
+                    match *cmd {
+                        PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
+                        PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
+                        PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
+                            Point::new(rx + c0.x, ry + c0.y),
+                            Point::new(rx + c1.x, ry + c1.y),
+                            Point::new(rx + to.x, ry + to.y),
+                        ),
+                        PathCommand::Close => b.close(),
+                    }
+                }
+            }
+            PopoverArrowEdge::Left => {
+                let yc = (ry + h * arrow.offset).clamp(
+                    ry + r + rf + bw_half,
+                    ry + h - r - rf - bw_half,
+                );
+                for cmd in &commands {
+                    if let PathCommand::LineTo(pt) = *cmd {
+                        if pt.x.abs() < 0.1 && pt.y < h * 0.5 {
+                            b.line_to(Point::new(rx, yc + bw_half + rf));
+                            b.bezier_curve_to(
+                                Point::new(rx, yc + bw_half + rf * 0.5),
+                                Point::new(rx - rf * 0.25, yc + bw_half + rf * 0.1),
+                                Point::new(rx - rf * 0.55, yc + bw_half - rf * 0.25),
+                            );
+                            b.line_to(Point::new(rx - ha + rt * 0.55, yc + rt * 0.75));
+                            b.bezier_curve_to(
+                                Point::new(rx - ha, yc + rt * 0.35),
+                                Point::new(rx - ha, yc - rt * 0.35),
+                                Point::new(rx - ha + rt * 0.55, yc - rt * 0.75),
+                            );
+                            b.line_to(Point::new(rx - rf * 0.55, yc - bw_half + rf * 0.25));
+                            b.bezier_curve_to(
+                                Point::new(rx - rf * 0.25, yc - bw_half - rf * 0.1),
+                                Point::new(rx, yc - bw_half - rf * 0.5),
+                                Point::new(rx, yc - bw_half - rf),
+                            );
+                            b.line_to(Point::new(rx + pt.x, ry + pt.y));
+                            continue;
+                        }
+                    }
+                    match *cmd {
+                        PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
+                        PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
+                        PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
+                            Point::new(rx + c0.x, ry + c0.y),
+                            Point::new(rx + c1.x, ry + c1.y),
+                            Point::new(rx + to.x, ry + to.y),
+                        ),
+                        PathCommand::Close => b.close(),
+                    }
+                }
+            }
+            PopoverArrowEdge::Right => {
+                let yc = (ry + h * arrow.offset).clamp(
+                    ry + r + rf + bw_half,
+                    ry + h - r - rf - bw_half,
+                );
+                let right_x = rx + w;
+                for cmd in &commands {
+                    if let PathCommand::LineTo(pt) = *cmd {
+                        if (pt.x - w).abs() < 0.1 && pt.y > h * 0.5 {
+                            b.line_to(Point::new(right_x, yc - bw_half - rf));
+                            b.bezier_curve_to(
+                                Point::new(right_x, yc - bw_half - rf * 0.5),
+                                Point::new(right_x + rf * 0.25, yc - bw_half - rf * 0.1),
+                                Point::new(right_x + rf * 0.55, yc - bw_half + rf * 0.25),
+                            );
+                            b.line_to(Point::new(right_x + ha - rt * 0.55, yc - rt * 0.75));
+                            b.bezier_curve_to(
+                                Point::new(right_x + ha, yc - rt * 0.35),
+                                Point::new(right_x + ha, yc + rt * 0.35),
+                                Point::new(right_x + ha - rt * 0.55, yc + rt * 0.75),
+                            );
+                            b.line_to(Point::new(right_x + rf * 0.55, yc + bw_half - rf * 0.25));
+                            b.bezier_curve_to(
+                                Point::new(right_x + rf * 0.25, yc + bw_half + rf * 0.1),
+                                Point::new(right_x, yc + bw_half + rf * 0.5),
+                                Point::new(right_x, yc + bw_half + rf),
+                            );
+                            b.line_to(Point::new(rx + pt.x, ry + pt.y));
+                            continue;
+                        }
+                    }
+                    match *cmd {
+                        PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
+                        PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
+                        PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
+                            Point::new(rx + c0.x, ry + c0.y),
+                            Point::new(rx + c1.x, ry + c1.y),
+                            Point::new(rx + to.x, ry + to.y),
+                        ),
+                        PathCommand::Close => b.close(),
+                    }
+                }
+            }
+            PopoverArrowEdge::None => {
+                for cmd in &commands {
+                    match *cmd {
+                        PathCommand::MoveTo(pt) => b.move_to(Point::new(rx + pt.x, ry + pt.y)),
+                        PathCommand::LineTo(pt) => b.line_to(Point::new(rx + pt.x, ry + pt.y)),
+                        PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
+                            Point::new(rx + c0.x, ry + c0.y),
+                            Point::new(rx + c1.x, ry + c1.y),
+                            Point::new(rx + to.x, ry + to.y),
+                        ),
+                        PathCommand::Close => b.close(),
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Fills an authentic Apple squircle/popover on the frame using continuous curvature.
+fn fill_popover(
+    frame: &mut Frame,
+    rect: Rectangle,
+    radius: f32,
+    arrow: PopoverArrowConfig,
+    color: Color,
+) {
     if rect.width <= 0.0 || rect.height <= 0.0 || color.a <= 0.001 {
         return;
     }
-    let path = build_squircle_path(rect, radius);
+    let path = build_popover_squircle_path(rect, radius, arrow);
     frame.fill(&path, color);
 }
 
-/// Renders authentic Apple macOS multi-tier soft backdrop drop shadow on the wallpaper canvas
-/// using genuine continuous squircle paths from `squircle-rs`.
-fn render_soft_menu_shadow(
+/// Strokes a continuous 1px fine edge highlight around the entire popover squircle + arrow rim.
+fn stroke_popover_rim(
     frame: &mut Frame,
     rect: Rectangle,
-    corner_radius: f32,
-    is_dark: bool,
+    radius: f32,
+    arrow: PopoverArrowConfig,
+    color: Color,
+    width: f32,
 ) {
-    if rect.width <= 0.0 || rect.height <= 0.0 {
+    if rect.width <= 0.0 || rect.height <= 0.0 || color.a <= 0.001 {
         return;
     }
+    let path = build_popover_squircle_path(rect, radius, arrow);
+    frame.stroke(
+        &path,
+        canvas::Stroke::default()
+            .with_color(color)
+            .with_width(width),
+    );
+}
 
-    // 1. Ambient Contact Shadow: Close-in subtle occlusion around all 4 edges
+/// Renders multi-layer soft drop shadows matching macOS Popover Window shadow geometry,
+/// continuously wrapping both the squircle menu body and the popover arrow (触角).
+fn render_soft_menu_shadow(
+    frame: &mut Frame,
+    occ: &MenuOcclusion,
+) {
+    let rect = occ.bounds;
+    let corner_radius = occ.corner_radius;
+    let arrow = occ.arrow;
+    let is_dark = occ.is_dark;
+
+    // 1. Ambient Contact Shadow: Tight, soft ground contact (macOS HIG elevation = 4pt)
     let ambient_tiers = 8;
-    let ambient_max_spread = 8.0f32;
-    let base_ambient_alpha = if is_dark { 0.050 } else { 0.040 };
+    let ambient_max_spread = 10.0f32;
+    let base_ambient_alpha = if is_dark { 0.048 } else { 0.038 };
 
     for i in (0..ambient_tiers).rev() {
         let t = (i + 1) as f32 / ambient_tiers as f32;
         let spread = ambient_max_spread * t;
-        let alpha = base_ambient_alpha * (1.0 - t * 0.85).powi(2);
+        let alpha = base_ambient_alpha * (1.0 - t).powi(2);
         let shadow_rect = Rectangle {
-            x: rect.x - spread,
-            y: rect.y - spread + 1.5 * t,
-            width: rect.width + spread * 2.0,
-            height: rect.height + spread * 2.0,
+            x: rect.x - spread * 0.5,
+            y: rect.y - spread * 0.25,
+            width: rect.width + spread,
+            height: rect.height + spread * 1.1,
         };
-        fill_squircle(
+        let shadow_arrow = if arrow.is_visible() {
+            arrow.with_size(
+                arrow.base_width + spread * 1.2,
+                arrow.height + spread * 0.8,
+            )
+        } else {
+            arrow
+        };
+        fill_popover(
             frame,
             shadow_rect,
             corner_radius + spread,
+            shadow_arrow,
             Color::from_rgba(0.0, 0.0, 0.0, alpha),
         );
     }
@@ -565,34 +825,48 @@ fn render_soft_menu_shadow(
             width: rect.width + spread * 1.5,
             height: rect.height + spread * 1.35,
         };
-        fill_squircle(
+        let shadow_arrow = if arrow.is_visible() {
+            arrow.with_size(
+                arrow.base_width + spread * 1.2,
+                arrow.height + spread * 0.8,
+            )
+        } else {
+            arrow
+        };
+        fill_popover(
             frame,
             shadow_rect,
             corner_radius + spread,
+            shadow_arrow,
             Color::from_rgba(0.0, 0.0, 0.0, alpha),
         );
     }
 }
 
-/// Renders a continuous, artifact-free blurred occlusion clipped to continuous squircle/rounded corners.
+/// Renders a continuous, artifact-free blurred occlusion clipped to continuous squircle/rounded corners
+/// and integrated popover arrow (触角).
 fn render_blurred_occlusion(
     frame: &mut Frame,
     style: WallpaperStyle,
-    rect: Rectangle,
-    corner_radius: f32,
+    occ: &MenuOcclusion,
     blur_radius: f32,
     bounds: Size,
 ) {
+    let rect = occ.bounds;
+    let corner_radius = occ.corner_radius;
+    let arrow = occ.arrow;
+    let is_dark = occ.is_dark;
+
     if rect.width <= 0.0 || rect.height <= 0.0 {
         return;
     }
 
     if matches!(style, WallpaperStyle::PureWhite) {
-        fill_squircle(frame, rect, corner_radius, Color::WHITE);
+        fill_popover(frame, rect, corner_radius, arrow, Color::WHITE);
         return;
     }
     if matches!(style, WallpaperStyle::PureBlack) {
-        fill_squircle(frame, rect, corner_radius, Color::BLACK);
+        fill_popover(frame, rect, corner_radius, arrow, Color::BLACK);
         return;
     }
 
@@ -604,29 +878,61 @@ fn render_blurred_occlusion(
     let inv_exp_n = 1.0 / exp_n;
     let r_pow_n = r.powf(exp_n);
 
-    let mut curr_x = rect.x;
-    let end_x = rect.x + rect.width;
+    let extra_left = if arrow.edge == PopoverArrowEdge::Left { arrow.height } else { 0.0 };
+    let extra_right = if arrow.edge == PopoverArrowEdge::Right { arrow.height } else { 0.0 };
+
+    let mut curr_x = rect.x - extra_left;
+    let end_x = rect.x + rect.width + extra_right;
+
+    let arrow_center_x = rect.x + rect.width * arrow.offset;
+    let arrow_half_w = arrow.base_width * 0.5 + arrow.base_fillet;
 
     while curr_x < end_x {
         let actual_w = (end_x - curr_x).min(slice_w);
         let sample_x = curr_x + actual_w * 0.5;
 
-        // Clip vertical height at corner caps using authentic Apple Squircle SDF superellipse formula
         let local_x = sample_x - rect.x;
-        let inset_y = if local_x < r {
-            let dx = r - local_x;
-            let dy = (r_pow_n - dx.powf(exp_n)).max(0.0).powf(inv_exp_n);
-            r - dy
-        } else if local_x > rect.width - r {
-            let dx = local_x - (rect.width - r);
-            let dy = (r_pow_n - dx.powf(exp_n)).max(0.0).powf(inv_exp_n);
-            r - dy
+        let inset_y = if local_x >= 0.0 && local_x < rect.width {
+            if local_x < r {
+                let dx = r - local_x;
+                let dy = (r_pow_n - dx.powf(exp_n)).max(0.0).powf(inv_exp_n);
+                r - dy
+            } else if local_x > rect.width - r {
+                let dx = local_x - (rect.width - r);
+                let dy = (r_pow_n - dx.powf(exp_n)).max(0.0).powf(inv_exp_n);
+                r - dy
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
 
-        let slice_top = rect.y + inset_y;
-        let slice_height = (rect.height - inset_y * 2.0).max(0.0);
+        let top_extension = if arrow.edge == PopoverArrowEdge::Top && (sample_x - arrow_center_x).abs() < arrow_half_w {
+            let frac = 1.0 - ((sample_x - arrow_center_x).abs() / arrow_half_w).clamp(0.0, 1.0);
+            frac * arrow.height
+        } else {
+            0.0
+        };
+
+        let bottom_extension = if arrow.edge == PopoverArrowEdge::Bottom && (sample_x - arrow_center_x).abs() < arrow_half_w {
+            let frac = 1.0 - ((sample_x - arrow_center_x).abs() / arrow_half_w).clamp(0.0, 1.0);
+            frac * arrow.height
+        } else {
+            0.0
+        };
+
+        let is_in_side_arrow = (arrow.edge == PopoverArrowEdge::Left && sample_x < rect.x)
+            || (arrow.edge == PopoverArrowEdge::Right && sample_x > rect.x + rect.width);
+
+        let (slice_top, slice_height) = if is_in_side_arrow {
+            let arrow_center_y = rect.y + rect.height * arrow.offset;
+            (arrow_center_y - arrow_half_w * 0.5, arrow_half_w)
+        } else {
+            let top = rect.y + inset_y - top_extension;
+            let height = (rect.height - inset_y * 2.0 + top_extension + bottom_extension).max(0.0);
+            (top, height)
+        };
 
         if slice_height > 0.0 {
             let color = sample_analytical_blurred_wallpaper(
@@ -645,6 +951,22 @@ fn render_blurred_occlusion(
 
         curr_x += actual_w;
     }
+
+    // Physical glass base tint overlay over the entire unified squircle+arrow
+    let (base_r, base_g, base_b, base_a) = if is_dark {
+        menu_metrics::DARK_MENU_BASE_RGBA_F32
+    } else {
+        menu_metrics::LIGHT_MENU_BASE_RGBA_F32
+    };
+    fill_popover(frame, rect, corner_radius, arrow, Color::from_rgba(base_r, base_g, base_b, base_a));
+
+    // 1px fine rim highlight tracing the complete unified silhouette
+    let rim_color = if is_dark {
+        Color::from_rgba(1.0, 1.0, 1.0, 0.18)
+    } else {
+        Color::from_rgba(0.0, 0.0, 0.0, 0.12)
+    };
+    stroke_popover_rim(frame, rect, corner_radius, arrow, rim_color, 1.0);
 }
 
 /// Canvas program rendering television color test blocks with continuous analytical backdrop blur occlusions.
@@ -818,21 +1140,15 @@ impl<Message> canvas::Program<Message> for WallpaperCanvas {
 
             // Step 3a: Soft ambient contact shadow & elevation drop shadow behind each menu card
             for occ in &self.occlusions {
-                render_soft_menu_shadow(
-                    &mut frame,
-                    occ.bounds,
-                    occ.corner_radius,
-                    occ.is_dark,
-                );
+                render_soft_menu_shadow(&mut frame, occ);
             }
 
-            // Step 3b: Continuous analytical backdrop blur inside each menu container squircle
+            // Step 3b: Continuous analytical backdrop blur inside each menu container squircle + arrow
             for occ in &self.occlusions {
                 render_blurred_occlusion(
                     &mut frame,
                     self.style,
-                    occ.bounds,
-                    occ.corner_radius,
+                    occ,
                     blur_radius,
                     bounds.size(),
                 );
@@ -868,6 +1184,7 @@ pub struct State {
     pub dark_pos: Point,
     pub active_drag: Option<(DragTarget, Point)>,
     pub top_card: DragTarget,
+    pub popover_arrow_edge: PopoverArrowEdge,
 }
 
 impl Default for State {
@@ -905,6 +1222,7 @@ impl Default for State {
             dark_pos: Point::new(450.0, 50.0),
             active_drag: None,
             top_card: DragTarget::DarkCard,
+            popover_arrow_edge: PopoverArrowEdge::Top,
         }
     }
 }
@@ -1196,6 +1514,20 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             ));
             Task::none()
         }
+        Message::SetPopoverArrow(edge) => {
+            state.popover_arrow_edge = edge;
+            state.last_action = Some(format!(
+                "卡片触角形态: {}",
+                match edge {
+                    PopoverArrowEdge::None => "无触角",
+                    PopoverArrowEdge::Top => "▲ 顶部触角 (Top)",
+                    PopoverArrowEdge::Bottom => "▼ 底部触角 (Bottom)",
+                    PopoverArrowEdge::Left => "◀ 左侧触角 (Left)",
+                    PopoverArrowEdge::Right => "▶ 右侧触角 (Right)",
+                }
+            ));
+            Task::none()
+        }
     }
 }
 
@@ -1236,6 +1568,8 @@ pub fn app_theme(state: &State) -> Theme {
 fn build_demo_menu(state: &State) -> ContextMenu<Message> {
     ContextMenu::new()
         .width(menu_metrics::DEFAULT_WIDTH)
+        .with_border(false)
+        .with_transparent_background(true)
         .item(MenuItem::section("FILE"))
         .item(
             MenuItem::action("New Window")
@@ -1543,6 +1877,68 @@ fn view_blur_preset_picker<'a>(
     picker.into()
 }
 
+/// Builds the popover arrow / beak (触角) edge selector.
+fn view_popover_arrow_picker<'a>(
+    state: &'a State,
+    palette: &'a liquid_glass::UiPalette,
+    is_dark: bool,
+) -> Element<'a, Message, Theme, iced::Renderer> {
+    const EDGES: [(PopoverArrowEdge, &str); 5] = [
+        (PopoverArrowEdge::None, "无触角"),
+        (PopoverArrowEdge::Top, "▲ 顶"),
+        (PopoverArrowEdge::Bottom, "▼ 底"),
+        (PopoverArrowEdge::Left, "◀ 左"),
+        (PopoverArrowEdge::Right, "▶ 右"),
+    ];
+
+    let mut picker = row![].spacing(3.0).align_y(Alignment::Center);
+    for &(edge, label) in &EDGES {
+        let is_selected = state.popover_arrow_edge == edge;
+        let btn = button(
+            text(label)
+                .size(10.5)
+                .font(font::ui_font(if is_selected {
+                    Weight::Semibold
+                } else {
+                    Weight::Normal
+                }))
+                .color(if is_selected {
+                    Color::WHITE
+                } else {
+                    palette.text_secondary
+                }),
+        )
+        .padding(Padding {
+            top: 3.5,
+            right: 7.0,
+            bottom: 3.5,
+            left: 7.0,
+        })
+        .style(move |_theme, _status| {
+            if is_selected {
+                button::Style {
+                    background: Some(Background::Color(palette.accent)),
+                    border: Border::default().rounded(5.0),
+                    ..button::Style::default()
+                }
+            } else {
+                button::Style {
+                    background: Some(Background::Color(if is_dark {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                    } else {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.06)
+                    })),
+                    border: Border::default().rounded(5.0),
+                    ..button::Style::default()
+                }
+            }
+        })
+        .on_press(Message::SetPopoverArrow(edge));
+        picker = picker.push(btn);
+    }
+    picker.into()
+}
+
 /// Builds the top fused header bar managed by `loyal_drag_bar`.
 fn view_top_header<'a>(
     state: &'a State,
@@ -1557,17 +1953,13 @@ fn view_top_header<'a>(
     let title_text = row![
         space().width(Length::Fixed(traffic_lights::TITLE_CLEARANCE)),
         text("Liquid Glass Context Menu")
-            .size(14.0)
+            .size(13.5)
             .font(font::ui_font(Weight::Semibold))
             .color(palette.text_primary),
-        space().width(8.0),
-        text("Heavy 64pt Blur · Dual Light & Dark")
-            .size(11.5)
-            .font(font::ui_font(Weight::Normal))
-            .color(palette.text_secondary),
     ]
     .align_y(Alignment::Center);
 
+    let arrow_picker = view_popover_arrow_picker(state, palette, is_dark);
     let wallpaper_picker = view_wallpaper_picker(state, palette, is_dark);
     let blur_picker = view_blur_preset_picker(state, palette, is_dark);
 
@@ -1598,6 +1990,8 @@ fn view_top_header<'a>(
         traffic_lights,
         title_text,
         space().width(Length::Fill),
+        arrow_picker,
+        space().width(8.0),
         wallpaper_picker,
         space().width(8.0),
         blur_picker,
@@ -1870,6 +2264,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
                 height: demo_metrics::MENU_HEIGHT,
             },
             corner_radius: demo_metrics::MENU_CORNER_RADIUS,
+            arrow: PopoverArrowConfig::new(state.popover_arrow_edge),
             is_dark: false,
         },
         MenuOcclusion {
@@ -1880,6 +2275,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
                 height: demo_metrics::MENU_HEIGHT,
             },
             corner_radius: demo_metrics::MENU_CORNER_RADIUS,
+            arrow: PopoverArrowConfig::new(state.popover_arrow_edge),
             is_dark: true,
         },
     ];
@@ -1893,6 +2289,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
                 height: demo_metrics::MENU_HEIGHT,
             },
             corner_radius: demo_metrics::MENU_CORNER_RADIUS,
+            arrow: PopoverArrowConfig::new(state.popover_arrow_edge),
             is_dark: match state.resolved_floating_scheme() {
                 UiColorScheme::Dark => true,
                 UiColorScheme::Light => false,
@@ -2427,4 +2824,67 @@ mod tests {
         // In G2 squircle, inset_mid is significantly smoother than circle
         assert!(inset_mid > 0.0 && inset_mid < r * 0.5);
     }
+
+    #[test]
+    fn test_set_popover_arrow_message_handling() {
+        let mut state = State::default();
+        assert_eq!(state.popover_arrow_edge, PopoverArrowEdge::Top);
+
+        let edges = [
+            (PopoverArrowEdge::Bottom, "▼ 底部触角 (Bottom)"),
+            (PopoverArrowEdge::Left, "◀ 左侧触角 (Left)"),
+            (PopoverArrowEdge::Right, "▶ 右侧触角 (Right)"),
+            (PopoverArrowEdge::None, "无触角"),
+            (PopoverArrowEdge::Top, "▲ 顶部触角 (Top)"),
+        ];
+
+        for (edge, expected_text) in edges {
+            let _ = update(&mut state, Message::SetPopoverArrow(edge));
+            assert_eq!(state.popover_arrow_edge, edge);
+            assert!(
+                state.last_action.as_ref().unwrap().contains(expected_text),
+                "Status should describe {:?}",
+                edge
+            );
+        }
+    }
+
+    #[test]
+    fn test_popover_arrow_path_geometry() {
+        let rect = Rectangle {
+            x: 100.0,
+            y: 100.0,
+            width: demo_metrics::MENU_WIDTH,
+            height: demo_metrics::MENU_HEIGHT,
+        };
+        let r = demo_metrics::MENU_CORNER_RADIUS;
+
+        let all_edges = [
+            PopoverArrowEdge::None,
+            PopoverArrowEdge::Top,
+            PopoverArrowEdge::Bottom,
+            PopoverArrowEdge::Left,
+            PopoverArrowEdge::Right,
+        ];
+
+        for edge in all_edges {
+            let config = PopoverArrowConfig::new(edge);
+            if edge == PopoverArrowEdge::None {
+                assert!(!config.is_visible());
+            } else {
+                assert!(config.is_visible());
+            }
+
+            let path = build_popover_squircle_path(rect, r, config);
+            drop(path);
+
+            // Verify with modified shadow spread size
+            let shadow_config = config.with_size(config.base_width + 10.0, config.height + 5.0);
+            assert_eq!(shadow_config.base_width, config.base_width + 10.0);
+            assert_eq!(shadow_config.height, config.height + 5.0);
+            let shadow_path = build_popover_squircle_path(rect, r + 5.0, shadow_config);
+            drop(shadow_path);
+        }
+    }
 }
+

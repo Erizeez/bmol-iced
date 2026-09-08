@@ -167,6 +167,8 @@ pub struct ContextMenu<Message> {
     width: Option<f32>,
     min_width: f32,
     scheme_override: Option<UiColorScheme>,
+    show_border: bool,
+    transparent_background: bool,
 }
 
 impl<Message: Clone + 'static> Default for ContextMenu<Message> {
@@ -184,6 +186,8 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
             width: Some(menu_metrics::DEFAULT_WIDTH),
             min_width: menu_metrics::MIN_WIDTH,
             scheme_override: None,
+            show_border: true,
+            transparent_background: false,
         }
     }
 
@@ -219,6 +223,25 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
     #[must_use]
     pub const fn with_scheme(mut self, scheme: UiColorScheme) -> Self {
         self.scheme_override = Some(scheme);
+        self
+    }
+
+    /// Toggles whether the outer container border and shadow should be drawn.
+    ///
+    /// Setting to `false` allows embedding the context menu inside custom canvas
+    /// shapes (e.g. popover cards with protruding arrows) without conflicting border outlines.
+    #[must_use]
+    pub const fn with_border(mut self, show_border: bool) -> Self {
+        self.show_border = show_border;
+        self
+    }
+
+    /// Toggles whether the container background should be transparent.
+    ///
+    /// Useful when the physical glass material is rendered by an underlying canvas layer.
+    #[must_use]
+    pub const fn with_transparent_background(mut self, transparent: bool) -> Self {
+        self.transparent_background = transparent;
         self
     }
 
@@ -440,6 +463,9 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
 
         let container_w = self.width.unwrap_or(menu_metrics::DEFAULT_WIDTH).max(self.min_width);
 
+        let show_border = self.show_border;
+        let transparent_bg = self.transparent_background;
+
         container(list)
             .width(Length::Fixed(container_w))
             .padding(Padding::from([
@@ -449,32 +475,60 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
             .style(move |_theme| {
                 if is_dark {
                     let (r, g, b, a) = menu_metrics::DARK_MENU_BASE_RGBA_F32;
+                    let background = if transparent_bg {
+                        None
+                    } else {
+                        Some(Background::Color(Color::from_rgba(r, g, b, a)))
+                    };
+                    let (border, shadow) = if show_border {
+                        (
+                            Border::default()
+                                .rounded(menu_metrics::CONTAINER_CORNER_RADIUS)
+                                .width(1.0)
+                                .color(Color::from_rgba(1.0, 1.0, 1.0, 0.18)),
+                            Shadow {
+                                color: Color::from_rgba(0.0, 0.0, 0.0, 0.65),
+                                offset: Vector::new(0.0, 14.0),
+                                blur_radius: 36.0,
+                            },
+                        )
+                    } else {
+                        (Border::default(), Shadow::default())
+                    };
+
                     container::Style {
-                        background: Some(Background::Color(Color::from_rgba(r, g, b, a))),
-                        border: Border::default()
-                            .rounded(menu_metrics::CONTAINER_CORNER_RADIUS)
-                            .width(1.0)
-                            .color(Color::from_rgba(1.0, 1.0, 1.0, 0.18)),
-                        shadow: Shadow {
-                            color: Color::from_rgba(0.0, 0.0, 0.0, 0.65),
-                            offset: Vector::new(0.0, 14.0),
-                            blur_radius: 36.0,
-                        },
+                        background,
+                        border,
+                        shadow,
                         ..container::Style::default()
                     }
                 } else {
                     let (r, g, b, a) = menu_metrics::LIGHT_MENU_BASE_RGBA_F32;
+                    let background = if transparent_bg {
+                        None
+                    } else {
+                        Some(Background::Color(Color::from_rgba(r, g, b, a)))
+                    };
+                    let (border, shadow) = if show_border {
+                        (
+                            Border::default()
+                                .rounded(menu_metrics::CONTAINER_CORNER_RADIUS)
+                                .width(1.0)
+                                .color(Color::from_rgba(0.0, 0.0, 0.0, 0.12)),
+                            Shadow {
+                                color: Color::from_rgba(0.0, 0.0, 0.0, 0.22),
+                                offset: Vector::new(0.0, 12.0),
+                                blur_radius: 32.0,
+                            },
+                        )
+                    } else {
+                        (Border::default(), Shadow::default())
+                    };
+
                     container::Style {
-                        background: Some(Background::Color(Color::from_rgba(r, g, b, a))),
-                        border: Border::default()
-                            .rounded(menu_metrics::CONTAINER_CORNER_RADIUS)
-                            .width(1.0)
-                            .color(Color::from_rgba(0.0, 0.0, 0.0, 0.12)),
-                        shadow: Shadow {
-                            color: Color::from_rgba(0.0, 0.0, 0.0, 0.22),
-                            offset: Vector::new(0.0, 12.0),
-                            blur_radius: 32.0,
-                        },
+                        background,
+                        border,
+                        shadow,
                         ..container::Style::default()
                     }
                 }
