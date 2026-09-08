@@ -11,7 +11,7 @@ repository.workspace = true
 [dependencies]
 liquid-rs = { path = "../../../liquid-rs/crates/liquid-rs", version = "0.1.0" }
 liquid-glass-animation = { path = "../../../liquid-rs/crates/liquid-glass-animation", version = "0.1.0" }
-liquid-glass-geometry = { path = "../../../liquid-rs/crates/liquid-glass-geometry", version = "0.1.0" }
+squircle-rs = { path = "../../../squircle-rs", version = "0.1.1" }
 liquid-glass-render = { path = "../../../liquid-rs/crates/liquid-glass-render", version = "0.1.0" }
 liquid-glass-scene = { path = "../../../liquid-rs/crates/liquid-glass-scene", version = "0.1.0" }
 bmol-window-shell = { path = "../../../bmol-window-shell/crates/bmol-window-shell", version = "0.1.0" }

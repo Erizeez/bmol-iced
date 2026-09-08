@@ -304,7 +304,7 @@ name = "bmol-designs"
 version = "0.1.0"
 dependencies = [
  "liquid-rs",
- "squircle-rs",
+ "squircle-rs 0.1.1 (git+https://github.com/Erizeez/squircle-rs?tag=v0.1.1)",
 ]
 
 [[package]]
@@ -316,11 +316,11 @@ dependencies = [
  "bmol-window-platform",
  "bmol-window-shell",
  "liquid-glass-animation",
- "liquid-glass-geometry",
  "liquid-glass-render",
  "liquid-glass-scene",
  "liquid-glass-ui",
  "liquid-rs",
+ "squircle-rs 0.1.1",
 ]
 
 [[package]]
@@ -1656,7 +1656,7 @@ version = "0.1.0"
 name = "liquid-glass-geometry"
 version = "0.1.0"
 dependencies = [
- "squircle-rs",
+ "squircle-rs 0.1.1 (git+https://github.com/Erizeez/squircle-rs?tag=v0.1.1)",
 ]
 
 [[package]]
@@ -1706,6 +1706,7 @@ dependencies = [
  "iced",
  "liquid-glass-scene",
  "spring-rs",
+ "squircle-rs 0.1.1",
  "vibrancy-rs 0.1.0",
 ]
 
@@ -3004,6 +3005,10 @@ dependencies = [
 name = "spring-rs"
 version = "0.1.0"
 source = "git+https://github.com/Erizeez/spring-rs.git?tag=v0.1.0#49d92fe9ee2539c7b75799aef445388a4d580229"
+
+[[package]]
+name = "squircle-rs"
+version = "0.1.1"
 
 [[package]]
 name = "squircle-rs"

@@ -4,7 +4,7 @@
 
 pub use liquid_rs as render_core;
 pub use liquid_glass_animation as animation;
-pub use liquid_glass_geometry as geometry;
+pub use squircle_rs as geometry;
 pub use liquid_glass_render as render;
 pub use liquid_glass_scene as scene;
 pub use liquid_glass_ui as ui;
@@ -47,6 +47,7 @@ pub use ui::{
     WINDOW_CONTROL_NATIVE_IDS, WINDOW_CONTROL_NATIVE_SIZE, WindowCommand, WindowDragArea,
     WindowExpandBehavior, control_group, positioned_control_group, spring_scroll_view,
     spring_scroll_view_with_config, traffic_lights, view_context_menu, view_traffic_lights, window_control,
+    popover,
 };
 
 pub use bmol_window_shell::{

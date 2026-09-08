@@ -11,12 +11,17 @@ pub mod components;
 pub mod context_menu;
 pub mod font;
 pub mod icon;
+pub mod popover;
 pub mod scroll_view;
 mod theme;
 pub mod traffic_lights;
 pub mod window;
 
 pub use context_menu::{ContextMenu, MenuItem, view_context_menu};
+pub use popover::{
+    align_arrow_to_target, build_popover_path, fill_popover, render_popover_shadow, stroke_popover_rim,
+    PopoverArrowConfig, PopoverArrowEdge, PopoverArrowPreset, PopoverArrowSide,
+};
 pub use icon::UiIcon;
 pub use scroll_view::{
     ScrollbarConfig, SpringScrollState, SpringScrollView, spring_scroll_view,
