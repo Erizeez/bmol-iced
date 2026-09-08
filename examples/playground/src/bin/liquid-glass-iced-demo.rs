@@ -8,7 +8,7 @@ use iced::{
 use iced_backend::{
     FUSED_TOP_BAR_HEIGHT, Renderer, SIDEBAR_CONTENT_INSET, SIDEBAR_CONTENT_WIDTH,
     SIDEBAR_LIST_BOTTOM_INSET, SIDEBAR_SCROLLBAR_BOTTOM_INSET, SIDEBAR_SEARCH_HEIGHT,
-    SIDEBAR_SEARCH_TOP, SIDEBAR_WIDTH, TOP_BAR_BUTTON_SIZE, WINDOW_CONTROL_NATIVE_X,
+    SIDEBAR_SEARCH_TOP, SIDEBAR_WIDTH, TOP_BAR_BUTTON_SIZE,
 };
 use liquid_glass::{
     GlassAccessibility, GlassId, Rect, ScrollbarConfig, UiColorScheme, UiIcon, UiTheme,
@@ -186,8 +186,10 @@ fn boot() -> (State, Task<Message>) {
     let state = State::default();
     let is_dark = state.color_scheme() == UiColorScheme::Dark;
     let rim_insets: f32 = if is_dark { 2.0 } else { 1.0 };
-    let origin_y = rim_insets + (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
-    iced_backend::set_window_control_origin(WINDOW_CONTROL_NATIVE_X, origin_y);
+    let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
+    let origin_x = rim_insets + symmetric_margin;
+    let origin_y = rim_insets + symmetric_margin;
+    iced_backend::set_window_control_origin(origin_x, origin_y);
     iced_backend::set_color_scheme(state.color_scheme());
     iced_backend::set_accessibility(state.accessibility());
     iced_backend::set_window_inactive(!state.window_focused);
@@ -354,8 +356,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         let scheme = state.color_scheme();
         let is_dark = scheme == UiColorScheme::Dark;
         let rim_insets: f32 = if is_dark { 2.0 } else { 1.0 };
-        let origin_y = rim_insets + (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
-        iced_backend::set_window_control_origin(WINDOW_CONTROL_NATIVE_X, origin_y);
+        let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
+        let origin_x = rim_insets + symmetric_margin;
+        let origin_y = rim_insets + symmetric_margin;
+        iced_backend::set_window_control_origin(origin_x, origin_y);
         iced_backend::set_color_scheme(scheme);
         if let Some(id) = state.window_id {
             let options = liquid_glass::NativeWindowOptions::new()
@@ -506,9 +510,11 @@ fn view(state: &State) -> AppElement<'_> {
 
     let is_dark = state.color_scheme() == UiColorScheme::Dark;
     let rim_insets: f32 = if is_dark { 2.0 } else { 1.0 };
-    let leading_spacer_w = (4.0_f32 - rim_insets).max(0.0);
-    let origin_y = rim_insets + (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
-    iced_backend::set_window_control_origin(WINDOW_CONTROL_NATIVE_X, origin_y);
+    let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - liquid_glass::WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
+    let leading_spacer_w = (symmetric_margin - 6.0).max(0.0);
+    let origin_x = rim_insets + symmetric_margin;
+    let origin_y = rim_insets + symmetric_margin;
+    iced_backend::set_window_control_origin(origin_x, origin_y);
 
     let traffic_lights = row![
         column![].width(Length::Fixed(leading_spacer_w)),
