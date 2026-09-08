@@ -448,8 +448,9 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
             ]))
             .style(move |_theme| {
                 if is_dark {
+                    let (r, g, b, a) = menu_metrics::DARK_MENU_BASE_RGBA_F32;
                     container::Style {
-                        background: Some(Background::Color(Color::from_rgba(0.12, 0.12, 0.15, 0.88))),
+                        background: Some(Background::Color(Color::from_rgba(r, g, b, a))),
                         border: Border::default()
                             .rounded(menu_metrics::CONTAINER_CORNER_RADIUS)
                             .width(1.0)
@@ -462,8 +463,9 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
                         ..container::Style::default()
                     }
                 } else {
+                    let (r, g, b, a) = menu_metrics::LIGHT_MENU_BASE_RGBA_F32;
                     container::Style {
-                        background: Some(Background::Color(Color::from_rgba(0.96, 0.96, 0.98, 0.92))),
+                        background: Some(Background::Color(Color::from_rgba(r, g, b, a))),
                         border: Border::default()
                             .rounded(menu_metrics::CONTAINER_CORNER_RADIUS)
                             .width(1.0)
@@ -745,5 +747,16 @@ mod tests {
         let forced_menu = menu.clone().with_scheme(UiColorScheme::Light);
         let forced_light: Element<'_, TestMsg, Theme, Renderer> = forced_menu.view(&Theme::Dark);
         drop(forced_light);
+    }
+
+    #[test]
+    fn test_context_menu_calibrated_colors() {
+        let (dark_r, _, _, dark_a) = menu_metrics::DARK_MENU_BASE_RGBA_F32;
+        assert_eq!((dark_r * 255.0 * dark_a).round() as u8, 33);
+        assert_eq!((dark_r * 255.0 * dark_a + 255.0 * (1.0 - dark_a)).round() as u8, 86);
+
+        let (light_r, _, _, light_a) = menu_metrics::LIGHT_MENU_BASE_RGBA_F32;
+        assert_eq!((light_r * 255.0 * light_a).round() as u8, 185);
+        assert_eq!((light_r * 255.0 * light_a + 255.0 * (1.0 - light_a)).round() as u8, 255);
     }
 }

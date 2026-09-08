@@ -239,9 +239,9 @@ impl UiTheme {
                 (2.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.06), 0.06)
             }
             (UiColorScheme::Light, GlassRole::ContextMenu) => {
-                // Apple context menus and popovers use an ultra-heavy 64pt blur
-                // to completely dissolve high-frequency background details.
-                (64.0, GlassColor::rgba(1.0, 1.0, 1.0, 0.42), 0.88)
+                // Apple context menus: calibrated white (255, 255, 255) with 185/255 opacity
+                let (r, g, b, a) = bmol_designs::menu_metrics::LIGHT_MENU_BASE_RGBA_F32;
+                (64.0, GlassColor::rgba(r, g, b, a), 1.0)
             }
             (UiColorScheme::Dark, GlassRole::Sidebar) => {
                 (32.0, GlassColor::rgba(0.12, 0.16, 0.25, 0.14), 0.36)
@@ -259,8 +259,9 @@ impl UiTheme {
                 (2.0, GlassColor::rgba(0.17, 0.22, 0.34, 0.10), 0.05)
             }
             (UiColorScheme::Dark, GlassRole::ContextMenu) => {
-                // Dark mode context menu with 56pt heavy blur and deep charcoal tint.
-                (56.0, GlassColor::rgba(0.08, 0.10, 0.14, 0.32), 0.22)
+                // Apple context menus: calibrated base (42, 42, 42) with 202/255 opacity
+                let (r, g, b, a) = bmol_designs::menu_metrics::DARK_MENU_BASE_RGBA_F32;
+                (56.0, GlassColor::rgba(r, g, b, a), 42.0 / 255.0)
             }
         }
     }
@@ -326,8 +327,8 @@ impl UiTheme {
                 UiColorScheme::Dark => 0.76,
             },
             GlassRole::ContextMenu => match self.scheme {
-                UiColorScheme::Light => 0.94,
-                UiColorScheme::Dark => 0.88,
+                UiColorScheme::Light => bmol_designs::menu_metrics::LIGHT_MENU_OPACITY,
+                UiColorScheme::Dark => bmol_designs::menu_metrics::DARK_MENU_OPACITY,
             },
             // Keep the neutral layer present, but leave enough of the
             // compositor backdrop visible to read as glass on a transparent

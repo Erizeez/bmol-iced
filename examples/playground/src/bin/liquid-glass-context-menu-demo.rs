@@ -44,10 +44,19 @@ pub enum WallpaperStyle {
     Sunset,
     Oceanic,
     Tahoe,
+    PureWhite,
+    PureBlack,
 }
 
 impl WallpaperStyle {
-    pub const ALL: [Self; 4] = [Self::Aurora, Self::Sunset, Self::Oceanic, Self::Tahoe];
+    pub const ALL: [Self; 6] = [
+        Self::Aurora,
+        Self::Sunset,
+        Self::Oceanic,
+        Self::Tahoe,
+        Self::PureWhite,
+        Self::PureBlack,
+    ];
 
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -56,6 +65,8 @@ impl WallpaperStyle {
             Self::Sunset => "Sunset Flare",
             Self::Oceanic => "Deep Oceanic",
             Self::Tahoe => "Tahoe Sky",
+            Self::PureWhite => "Pure White (255)",
+            Self::PureBlack => "Pure Black (0)",
         }
     }
 }
@@ -211,17 +222,44 @@ impl<Message> canvas::Program<Message> for WallpaperCanvas {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
 
-        let base_bg = match (self.style, self.is_dark) {
-            (WallpaperStyle::Aurora, true) => Color::from_rgb(0.04, 0.03, 0.10),
-            (WallpaperStyle::Aurora, false) => Color::from_rgb(0.92, 0.90, 0.98),
-            (WallpaperStyle::Sunset, true) => Color::from_rgb(0.10, 0.03, 0.06),
-            (WallpaperStyle::Sunset, false) => Color::from_rgb(0.98, 0.91, 0.88),
-            (WallpaperStyle::Oceanic, true) => Color::from_rgb(0.01, 0.05, 0.12),
-            (WallpaperStyle::Oceanic, false) => Color::from_rgb(0.88, 0.95, 0.98),
-            (WallpaperStyle::Tahoe, true) => Color::from_rgb(0.03, 0.07, 0.15),
-            (WallpaperStyle::Tahoe, false) => Color::from_rgb(0.85, 0.92, 0.99),
+        let base_bg = match self.style {
+            WallpaperStyle::PureWhite => Color::WHITE,
+            WallpaperStyle::PureBlack => Color::BLACK,
+            WallpaperStyle::Aurora => {
+                if self.is_dark {
+                    Color::from_rgb(0.04, 0.03, 0.10)
+                } else {
+                    Color::from_rgb(0.92, 0.90, 0.98)
+                }
+            }
+            WallpaperStyle::Sunset => {
+                if self.is_dark {
+                    Color::from_rgb(0.10, 0.03, 0.06)
+                } else {
+                    Color::from_rgb(0.98, 0.91, 0.88)
+                }
+            }
+            WallpaperStyle::Oceanic => {
+                if self.is_dark {
+                    Color::from_rgb(0.01, 0.05, 0.12)
+                } else {
+                    Color::from_rgb(0.88, 0.95, 0.98)
+                }
+            }
+            WallpaperStyle::Tahoe => {
+                if self.is_dark {
+                    Color::from_rgb(0.03, 0.07, 0.15)
+                } else {
+                    Color::from_rgb(0.85, 0.92, 0.99)
+                }
+            }
         };
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), base_bg);
+
+        // For calibration backgrounds, provide an immaculate flat canvas for exact digital colorimeter readings
+        if self.style == WallpaperStyle::PureWhite || self.style == WallpaperStyle::PureBlack {
+            return vec![frame.into_geometry()];
+        }
 
         // 1. Draw large saturated glowing color orbs across the backdrop
         let (w, h) = (bounds.width, bounds.height);
@@ -250,6 +288,7 @@ impl<Message> canvas::Program<Message> for WallpaperCanvas {
                 (Point::new(w * 0.52, h * 0.78), 380.0, Color::from_rgba(0.08, 0.78, 0.72, 0.54)),
                 (Point::new(w * 0.15, h * 0.82), 300.0, Color::from_rgba(0.32, 0.42, 0.90, 0.50)),
             ],
+            WallpaperStyle::PureWhite | WallpaperStyle::PureBlack => &[],
         };
 
         for &(center, radius, color) in orbs {
@@ -345,6 +384,7 @@ impl<Message> canvas::Program<Message> for WallpaperCanvas {
                 WallpaperStyle::Sunset => Color::from_rgba(0.95, 0.35, 0.10, 0.12),
                 WallpaperStyle::Oceanic => Color::from_rgba(0.10, 0.60, 0.90, 0.12),
                 WallpaperStyle::Tahoe => Color::from_rgba(0.20, 0.70, 0.85, 0.12),
+                WallpaperStyle::PureWhite | WallpaperStyle::PureBlack => Color::TRANSPARENT,
             };
             let circle = Path::circle(center, env_radius);
             frame.fill(&circle, glow_color);
@@ -1148,9 +1188,9 @@ fn view_status_bar<'a>(
             .font(font::ui_font(Weight::Normal))
             .color(palette.text_primary),
         space().width(Length::Fill),
-        text("Window Shell Resizer & loyal_drag_bar Active")
+        text("CALIBRATED: Dark(White 86 / Black 33) | Light(White 255 / Black 185)")
             .size(10.5)
-            .font(font::ui_font(Weight::Normal))
+            .font(font::ui_font(Weight::Medium))
             .color(palette.text_secondary),
     ]
     .align_y(Alignment::Center);
@@ -1193,7 +1233,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
         &state.light_menu,
         CardStyle {
             badge_title: "☀️ Light Mode Menu",
-            badge_sub: "64pt Blur · Opal Translucency · 32pt Shadow",
+            badge_sub: "Calibrated: White 255 | Black 185 (α=72.5%)",
             bg: Color::from_rgba(1.0, 1.0, 1.0, 0.28),
             border: Color::from_rgba(1.0, 1.0, 1.0, 0.50),
             shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.24),
@@ -1206,7 +1246,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
         &state.dark_menu,
         CardStyle {
             badge_title: "🌙 Dark Mode Menu",
-            badge_sub: "56pt Blur · Deep Charcoal · 36pt Shadow",
+            badge_sub: "Calibrated: White 86 | Black 33 (α=79.2%)",
             bg: Color::from_rgba(0.0, 0.0, 0.0, 0.40),
             border: Color::from_rgba(1.0, 1.0, 1.0, 0.18),
             shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.55),
@@ -1550,5 +1590,27 @@ mod tests {
         let theme_light = app_theme(&light_state);
         let elem_light = menu.view::<iced::Renderer>(&theme_light);
         drop(elem_light);
+    }
+
+    #[test]
+    fn test_measured_colorimetry_expectations() {
+        let (dark_r, _, _, dark_a) = menu_metrics::DARK_MENU_BASE_RGBA_F32;
+        let (light_r, _, _, light_a) = menu_metrics::LIGHT_MENU_BASE_RGBA_F32;
+
+        // Dark on white: 86
+        let dark_on_white = (dark_r * 255.0 * dark_a + 255.0 * (1.0 - dark_a)).round() as u8;
+        assert_eq!(dark_on_white, 86);
+
+        // Dark on black: 33
+        let dark_on_black = (dark_r * 255.0 * dark_a).round() as u8;
+        assert_eq!(dark_on_black, 33);
+
+        // Light on white: 255
+        let light_on_white = (light_r * 255.0 * light_a + 255.0 * (1.0 - light_a)).round() as u8;
+        assert_eq!(light_on_white, 255);
+
+        // Light on black: 185
+        let light_on_black = (light_r * 255.0 * light_a).round() as u8;
+        assert_eq!(light_on_black, 185);
     }
 }
