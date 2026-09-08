@@ -22,7 +22,7 @@ use iced::{
     mouse,
     widget::{
         button,
-        canvas::{self, Canvas, Frame, Geometry, Path, Stroke},
+        canvas::{self, Canvas, Frame, Geometry},
         column, container, row, space, stack, text,
     },
     window,
@@ -36,24 +36,22 @@ use liquid_glass::{
     ui::font,
 };
 
-/// Colorful gradient wallpaper styles to test glass translucency and edge glare.
+/// Television color block backgrounds and calibration test patterns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WallpaperStyle {
     #[default]
-    Aurora,
-    Sunset,
-    Oceanic,
-    Tahoe,
+    TvColorBars,
+    TvSmpteSplit,
+    TvColorGrid,
     PureWhite,
     PureBlack,
 }
 
 impl WallpaperStyle {
-    pub const ALL: [Self; 6] = [
-        Self::Aurora,
-        Self::Sunset,
-        Self::Oceanic,
-        Self::Tahoe,
+    pub const ALL: [Self; 5] = [
+        Self::TvColorBars,
+        Self::TvSmpteSplit,
+        Self::TvColorGrid,
         Self::PureWhite,
         Self::PureBlack,
     ];
@@ -61,10 +59,9 @@ impl WallpaperStyle {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Aurora => "Aurora Glow",
-            Self::Sunset => "Sunset Flare",
-            Self::Oceanic => "Deep Oceanic",
-            Self::Tahoe => "Tahoe Sky",
+            Self::TvColorBars => "TV 彩条 (8色)",
+            Self::TvSmpteSplit => "SMPTE 双层彩条",
+            Self::TvColorGrid => "彩色网格色块",
             Self::PureWhite => "Pure White (255)",
             Self::PureBlack => "Pure Black (0)",
         }
@@ -173,6 +170,12 @@ impl MenuAction {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragTarget {
+    LightCard,
+    DarkCard,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     // Window Shell integration messages
@@ -199,14 +202,16 @@ pub enum Message {
     SetBlurPreset(BlurPreset),
     SetFloatingAppearance(FloatingAppearance),
     ToggleColorScheme,
+
+    // Draggable menu cards
+    StartDragCard(DragTarget),
+    EndDragCard,
+    ResetCardPositions,
 }
 
-/// Canvas program rendering vibrant wallpapers and physical heavy blur diffusion cores.
+/// Canvas program rendering television color test blocks (SMPTE bars, grid, pure calibration).
 struct WallpaperCanvas {
     style: WallpaperStyle,
-    is_dark: bool,
-    blur_preset: BlurPreset,
-    menu_occlusions: Vec<Rectangle>,
 }
 
 impl<Message> canvas::Program<Message> for WallpaperCanvas {
@@ -222,172 +227,118 @@ impl<Message> canvas::Program<Message> for WallpaperCanvas {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
 
-        let base_bg = match self.style {
-            WallpaperStyle::PureWhite => Color::WHITE,
-            WallpaperStyle::PureBlack => Color::BLACK,
-            WallpaperStyle::Aurora => {
-                if self.is_dark {
-                    Color::from_rgb(0.04, 0.03, 0.10)
-                } else {
-                    Color::from_rgb(0.92, 0.90, 0.98)
+        match self.style {
+            WallpaperStyle::TvColorBars => {
+                // 8 standard TV primary & secondary color bars across screen
+                let colors = [
+                    Color::WHITE,                   // 0: 白 (255, 255, 255)
+                    Color::from_rgb(1.0, 1.0, 0.0), // 1: 黄 (255, 255, 0)
+                    Color::from_rgb(0.0, 1.0, 1.0), // 2: 青 (0, 255, 255)
+                    Color::from_rgb(0.0, 1.0, 0.0), // 3: 绿 (0, 255, 0)
+                    Color::from_rgb(1.0, 0.0, 1.0), // 4: 洋红 (255, 0, 255)
+                    Color::from_rgb(1.0, 0.0, 0.0), // 5: 红 (255, 0, 0)
+                    Color::from_rgb(0.0, 0.0, 1.0), // 6: 蓝 (0, 0, 255)
+                    Color::BLACK,                   // 7: 黑 (0, 0, 0)
+                ];
+                let n = colors.len() as f32;
+                let bar_w = bounds.width / n;
+                for (i, &c) in colors.iter().enumerate() {
+                    let x = i as f32 * bar_w;
+                    let rect_w = if i == colors.len() - 1 {
+                        bounds.width - x
+                    } else {
+                        bar_w.ceil()
+                    };
+                    frame.fill_rectangle(
+                        Point::new(x, 0.0),
+                        Size::new(rect_w, bounds.height),
+                        c,
+                    );
                 }
             }
-            WallpaperStyle::Sunset => {
-                if self.is_dark {
-                    Color::from_rgb(0.10, 0.03, 0.06)
-                } else {
-                    Color::from_rgb(0.98, 0.91, 0.88)
+            WallpaperStyle::TvSmpteSplit => {
+                let top_h = bounds.height * 0.70;
+                let bot_h = bounds.height - top_h;
+
+                let top_colors = [
+                    Color::WHITE,                   // 白
+                    Color::from_rgb(1.0, 1.0, 0.0), // 黄
+                    Color::from_rgb(0.0, 1.0, 1.0), // 青
+                    Color::from_rgb(0.0, 1.0, 0.0), // 绿
+                    Color::from_rgb(1.0, 0.0, 1.0), // 洋红
+                    Color::from_rgb(1.0, 0.0, 0.0), // 红
+                    Color::from_rgb(0.0, 0.0, 1.0), // 蓝
+                ];
+                let top_n = top_colors.len() as f32;
+                let top_bar_w = bounds.width / top_n;
+                for (i, &c) in top_colors.iter().enumerate() {
+                    let x = i as f32 * top_bar_w;
+                    frame.fill_rectangle(
+                        Point::new(x, 0.0),
+                        Size::new(top_bar_w.ceil(), top_h),
+                        c,
+                    );
+                }
+
+                let bot_colors = [
+                    Color::from_rgb(0.0, 0.0, 1.0), // 蓝
+                    Color::BLACK,                   // 黑
+                    Color::from_rgb(1.0, 0.0, 1.0), // 洋红
+                    Color::BLACK,                   // 黑
+                    Color::from_rgb(0.0, 1.0, 1.0), // 青
+                    Color::BLACK,                   // 黑
+                    Color::WHITE,                   // 白
+                    Color::BLACK,                   // 黑
+                ];
+                let bot_n = bot_colors.len() as f32;
+                let bot_bar_w = bounds.width / bot_n;
+                for (i, &c) in bot_colors.iter().enumerate() {
+                    let x = i as f32 * bot_bar_w;
+                    frame.fill_rectangle(
+                        Point::new(x, top_h),
+                        Size::new(bot_bar_w.ceil(), bot_h),
+                        c,
+                    );
                 }
             }
-            WallpaperStyle::Oceanic => {
-                if self.is_dark {
-                    Color::from_rgb(0.01, 0.05, 0.12)
-                } else {
-                    Color::from_rgb(0.88, 0.95, 0.98)
-                }
-            }
-            WallpaperStyle::Tahoe => {
-                if self.is_dark {
-                    Color::from_rgb(0.03, 0.07, 0.15)
-                } else {
-                    Color::from_rgb(0.85, 0.92, 0.99)
-                }
-            }
-        };
-        frame.fill_rectangle(Point::ORIGIN, bounds.size(), base_bg);
-
-        // For calibration backgrounds, provide an immaculate flat canvas for exact digital colorimeter readings
-        if self.style == WallpaperStyle::PureWhite || self.style == WallpaperStyle::PureBlack {
-            return vec![frame.into_geometry()];
-        }
-
-        // 1. Draw large saturated glowing color orbs across the backdrop
-        let (w, h) = (bounds.width, bounds.height);
-        let orbs: &[(Point, f32, Color)] = match self.style {
-            WallpaperStyle::Aurora => &[
-                (Point::new(w * 0.22, h * 0.35), 360.0, Color::from_rgba(0.60, 0.12, 0.98, 0.65)),
-                (Point::new(w * 0.68, h * 0.40), 400.0, Color::from_rgba(0.00, 0.88, 0.96, 0.58)),
-                (Point::new(w * 0.46, h * 0.65), 380.0, Color::from_rgba(0.98, 0.18, 0.65, 0.60)),
-                (Point::new(w * 0.85, h * 0.80), 320.0, Color::from_rgba(0.18, 0.45, 1.00, 0.55)),
-            ],
-            WallpaperStyle::Sunset => &[
-                (Point::new(w * 0.20, h * 0.35), 380.0, Color::from_rgba(0.98, 0.42, 0.05, 0.68)),
-                (Point::new(w * 0.65, h * 0.32), 360.0, Color::from_rgba(0.95, 0.10, 0.38, 0.62)),
-                (Point::new(w * 0.48, h * 0.72), 400.0, Color::from_rgba(1.00, 0.76, 0.10, 0.58)),
-                (Point::new(w * 0.82, h * 0.68), 320.0, Color::from_rgba(0.70, 0.10, 0.65, 0.50)),
-            ],
-            WallpaperStyle::Oceanic => &[
-                (Point::new(w * 0.28, h * 0.35), 400.0, Color::from_rgba(0.05, 0.82, 0.85, 0.65)),
-                (Point::new(w * 0.72, h * 0.45), 370.0, Color::from_rgba(0.10, 0.48, 0.98, 0.60)),
-                (Point::new(w * 0.42, h * 0.80), 350.0, Color::from_rgba(0.04, 0.90, 0.55, 0.55)),
-                (Point::new(w * 0.85, h * 0.25), 290.0, Color::from_rgba(0.38, 0.20, 0.92, 0.48)),
-            ],
-            WallpaperStyle::Tahoe => &[
-                (Point::new(w * 0.25, h * 0.38), 390.0, Color::from_rgba(0.15, 0.58, 0.98, 0.62)),
-                (Point::new(w * 0.70, h * 0.35), 350.0, Color::from_rgba(0.42, 0.82, 1.00, 0.58)),
-                (Point::new(w * 0.52, h * 0.78), 380.0, Color::from_rgba(0.08, 0.78, 0.72, 0.54)),
-                (Point::new(w * 0.15, h * 0.82), 300.0, Color::from_rgba(0.32, 0.42, 0.90, 0.50)),
-            ],
-            WallpaperStyle::PureWhite | WallpaperStyle::PureBlack => &[],
-        };
-
-        for &(center, radius, color) in orbs {
-            let num_rings = 8;
-            for i in (1..=num_rings).rev() {
-                let r = radius * (i as f32 / num_rings as f32);
-                let alpha_scale = (1.0 - (i as f32 / (num_rings as f32 + 1.0))).powf(1.5);
-                let ring_color = Color {
-                    a: color.a * alpha_scale * if self.is_dark { 0.85 } else { 0.65 },
-                    ..color
-                };
-                let circle = Path::circle(center, r);
-                frame.fill(&circle, ring_color);
-            }
-        }
-
-        // 2. High-frequency backdrop grid (demonstrates how heavy blur eliminates sharp detail)
-        let grid_spacing = 32.0;
-        let grid_stroke = Stroke::default().with_color(if self.is_dark {
-            Color::from_rgba(1.0, 1.0, 1.0, 0.04)
-        } else {
-            Color::from_rgba(0.0, 0.0, 0.0, 0.04)
-        }).with_width(1.0);
-
-        let mut x = grid_spacing;
-        while x < bounds.width {
-            let mut skip_line = false;
-            if self.blur_preset.radius() >= 48.0 {
-                for rect in &self.menu_occlusions {
-                    if x >= rect.x - 8.0 && x <= rect.x + rect.width + 8.0 {
-                        skip_line = true;
-                        break;
+            WallpaperStyle::TvColorGrid => {
+                let cols = 4;
+                let rows = 3;
+                let cell_w = bounds.width / cols as f32;
+                let cell_h = bounds.height / rows as f32;
+                let palette = [
+                    Color::WHITE,
+                    Color::from_rgb(1.0, 1.0, 0.0),
+                    Color::from_rgb(0.0, 1.0, 1.0),
+                    Color::from_rgb(0.0, 1.0, 0.0),
+                    Color::from_rgb(1.0, 0.0, 1.0),
+                    Color::from_rgb(1.0, 0.0, 0.0),
+                    Color::from_rgb(0.0, 0.0, 1.0),
+                    Color::BLACK,
+                    Color::from_rgb(1.0, 0.5, 0.0),
+                    Color::from_rgb(0.5, 0.0, 0.5),
+                    Color::from_rgb(0.0, 0.5, 0.5),
+                    Color::from_rgb(0.5, 0.5, 0.5),
+                ];
+                for r in 0..rows {
+                    for c in 0..cols {
+                        let idx = r * cols + c;
+                        let x = c as f32 * cell_w;
+                        let y = r as f32 * cell_h;
+                        frame.fill_rectangle(
+                            Point::new(x, y),
+                            Size::new(cell_w.ceil(), cell_h.ceil()),
+                            palette[idx % palette.len()],
+                        );
                     }
                 }
             }
-            if !skip_line {
-                let path = Path::line(Point::new(x, 0.0), Point::new(x, bounds.height));
-                frame.stroke(&path, grid_stroke);
+            WallpaperStyle::PureWhite => {
+                frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::WHITE);
             }
-            x += grid_spacing;
-        }
-
-        let mut y = grid_spacing;
-        while y < bounds.height {
-            let mut skip_line = false;
-            if self.blur_preset.radius() >= 48.0 {
-                for rect in &self.menu_occlusions {
-                    if y >= rect.y - 8.0 && y <= rect.y + rect.height + 8.0 {
-                        skip_line = true;
-                        break;
-                    }
-                }
+            WallpaperStyle::PureBlack => {
+                frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::BLACK);
             }
-            if !skip_line {
-                let path = Path::line(Point::new(0.0, y), Point::new(bounds.width, y));
-                frame.stroke(&path, grid_stroke);
-            }
-            y += grid_spacing;
-        }
-
-        // 3. Physical heavy blur diffusion cores underneath context menus
-        let blur_r = self.blur_preset.radius();
-        for rect in &self.menu_occlusions {
-            let center = Point::new(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
-            let passes = if blur_r >= 48.0 { 6 } else { 3 };
-            for p in 0..passes {
-                let expand = blur_r * (p as f32 / passes as f32);
-                let alpha = (0.28 / (passes as f32)) * (1.0 - (p as f32 / passes as f32) * 0.4);
-                let halo_rect = Rectangle {
-                    x: (rect.x - expand).max(0.0),
-                    y: (rect.y - expand).max(0.0),
-                    width: rect.width + expand * 2.0,
-                    height: rect.height + expand * 2.0,
-                };
-                let halo_path = Path::rounded_rectangle(
-                    Point::new(halo_rect.x, halo_rect.y),
-                    halo_rect.size(),
-                    (menu_metrics::CONTAINER_CORNER_RADIUS + expand * 0.5).into(),
-                );
-
-                let halo_tint = if self.is_dark {
-                    Color::from_rgba(0.08, 0.10, 0.16, alpha)
-                } else {
-                    Color::from_rgba(1.0, 1.0, 1.0, alpha * 1.5)
-                };
-                frame.fill(&halo_path, halo_tint);
-            }
-
-            // Radial environmental diffuse glow
-            let env_radius = (rect.width * 0.5 + blur_r * 1.2).max(120.0);
-            let glow_color = match self.style {
-                WallpaperStyle::Aurora => Color::from_rgba(0.55, 0.20, 0.90, 0.12),
-                WallpaperStyle::Sunset => Color::from_rgba(0.95, 0.35, 0.10, 0.12),
-                WallpaperStyle::Oceanic => Color::from_rgba(0.10, 0.60, 0.90, 0.12),
-                WallpaperStyle::Tahoe => Color::from_rgba(0.20, 0.70, 0.85, 0.12),
-                WallpaperStyle::PureWhite | WallpaperStyle::PureBlack => Color::TRANSPARENT,
-            };
-            let circle = Path::circle(center, env_radius);
-            frame.fill(&circle, glow_color);
         }
 
         vec![frame.into_geometry()]
@@ -412,6 +363,12 @@ pub struct State {
     pub light_menu: ContextMenu<Message>,
     pub dark_menu: ContextMenu<Message>,
     pub floating_menu_cached: ContextMenu<Message>,
+
+    // Draggable card positions
+    pub light_pos: Point,
+    pub dark_pos: Point,
+    pub active_drag: Option<(DragTarget, Point)>,
+    pub top_card: DragTarget,
 }
 
 impl Default for State {
@@ -432,7 +389,7 @@ impl Default for State {
             traffic_lights: TrafficLightsState::new(),
             theme,
             palette,
-            wallpaper: WallpaperStyle::Aurora,
+            wallpaper: WallpaperStyle::TvColorBars,
             blur_preset: BlurPreset::UltraHeavy64,
             floating_appearance: FloatingAppearance::FollowTheme,
             show_status_bar: true,
@@ -444,6 +401,10 @@ impl Default for State {
             light_menu: ContextMenu::new(),
             dark_menu: ContextMenu::new(),
             floating_menu_cached: ContextMenu::new(),
+            light_pos: Point::new(70.0, 50.0),
+            dark_pos: Point::new(450.0, 50.0),
+            active_drag: None,
+            top_card: DragTarget::DarkCard,
         }
     }
 }
@@ -512,6 +473,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     bmol_window_shell::ShellEvent::Focused
                     | bmol_window_shell::ShellEvent::Unfocused => {
                         state.traffic_lights.on_group_hover(false);
+                        state.active_drag = None;
                     }
                     bmol_window_shell::ShellEvent::CloseRequested => {
                         if let Some(id) = state.controller.window_id {
@@ -597,6 +559,62 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::CursorMoved(point) => {
             state.cursor_pos = point;
+            if let Some((target, offset)) = state.active_drag {
+                let new_x = (point.x - offset.x).max(10.0);
+                let new_y = (point.y - offset.y).max(10.0);
+                match target {
+                    DragTarget::LightCard => {
+                        state.light_pos = Point::new(new_x, new_y);
+                    }
+                    DragTarget::DarkCard => {
+                        state.dark_pos = Point::new(new_x, new_y);
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::StartDragCard(target) => {
+            let origin = match target {
+                DragTarget::LightCard => state.light_pos,
+                DragTarget::DarkCard => state.dark_pos,
+            };
+            let offset = Point::new(
+                state.cursor_pos.x - origin.x,
+                state.cursor_pos.y - origin.y,
+            );
+            state.active_drag = Some((target, offset));
+            state.top_card = target;
+            state.last_action = Some(format!(
+                "拖拽中: {} (移动到各色彩条上方测色)",
+                match target {
+                    DragTarget::LightCard => "浅色模式菜单",
+                    DragTarget::DarkCard => "深色模式菜单",
+                }
+            ));
+            Task::none()
+        }
+        Message::EndDragCard => {
+            if let Some((target, _)) = state.active_drag.take() {
+                let pos = match target {
+                    DragTarget::LightCard => state.light_pos,
+                    DragTarget::DarkCard => state.dark_pos,
+                };
+                state.last_action = Some(format!(
+                    "已固定 {} 至 ({:.0}, {:.0})",
+                    match target {
+                        DragTarget::LightCard => "浅色模式菜单",
+                        DragTarget::DarkCard => "深色模式菜单",
+                    },
+                    pos.x, pos.y
+                ));
+            }
+            Task::none()
+        }
+        Message::ResetCardPositions => {
+            state.light_pos = Point::new(70.0, 50.0);
+            state.dark_pos = Point::new(450.0, 50.0);
+            state.active_drag = None;
+            state.last_action = Some("已重置菜单示例位置".to_string());
             Task::none()
         }
         Message::DismissFloatingMenu => {
@@ -679,6 +697,9 @@ pub fn subscription(state: &State) -> Subscription<Message> {
             }
             iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 Some(Message::RightClicked)
+            }
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                Some(Message::EndDragCard)
             }
             iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 Some(Message::CursorMoved(position))
@@ -1101,70 +1122,95 @@ fn view_top_header<'a>(
     )
 }
 
-/// Visual styling configuration for side-by-side showcase cards.
+/// Visual and metadata configuration for draggable showcase menu cards.
 #[derive(Debug, Clone, Copy)]
-struct CardStyle {
+struct MenuCardConfig {
+    target: DragTarget,
     badge_title: &'static str,
     badge_sub: &'static str,
-    bg: Color,
-    border: Color,
-    shadow: Color,
+    is_dark_card: bool,
 }
 
-/// Builds a side-by-side menu comparison card.
+/// Builds a draggable menu showcase card with grip bar and transparent background.
 fn view_menu_card<'a>(
+    config: MenuCardConfig,
     menu: &'a ContextMenu<Message>,
-    style: CardStyle,
+    is_dragging: bool,
     theme: &'a Theme,
     palette: &'a liquid_glass::UiPalette,
 ) -> Element<'a, Message, Theme, iced::Renderer> {
-    let header_badge = container(
+    let grip_pill = row![
+        text("⠿")
+            .size(15.0)
+            .font(font::ui_font(Weight::Bold))
+            .color(palette.accent),
         column![
-            text(style.badge_title)
-                .size(13.0)
+            text(config.badge_title)
+                .size(12.0)
                 .font(font::ui_font(Weight::Bold))
                 .color(palette.text_primary),
-            text(style.badge_sub)
-                .size(10.5)
+            text(config.badge_sub)
+                .size(10.0)
                 .font(font::ui_font(Weight::Normal))
                 .color(palette.text_secondary),
         ]
-        .spacing(2.0)
-        .align_x(Alignment::Center),
+        .spacing(1.0),
+        space().width(Length::Fill),
+        text(if is_dragging { "松开固定" } else { "按住拖拽" })
+            .size(10.0)
+            .font(font::ui_font(Weight::Medium))
+            .color(if is_dragging { palette.accent } else { palette.text_tertiary }),
+    ]
+    .spacing(8.0)
+    .align_y(Alignment::Center);
+
+    let drag_header = iced::widget::mouse_area(
+        container(grip_pill)
+            .width(Length::Fill)
+            .padding(Padding {
+                top: 6.0,
+                right: 10.0,
+                bottom: 6.0,
+                left: 10.0,
+            })
+            .style(move |_theme| container::Style {
+                background: Some(Background::Color(if config.is_dark_card {
+                    Color::from_rgba(0.12, 0.12, 0.16, 0.90)
+                } else {
+                    Color::from_rgba(0.96, 0.96, 0.98, 0.92)
+                })),
+                border: Border::default()
+                    .rounded(8.0)
+                    .width(1.0)
+                    .color(if is_dragging {
+                        palette.accent
+                    } else if config.is_dark_card {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.22)
+                    } else {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.15)
+                    }),
+                shadow: Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, if is_dragging { 0.35 } else { 0.18 }),
+                    offset: Vector::new(0.0, 4.0),
+                    blur_radius: 12.0,
+                },
+                ..container::Style::default()
+            }),
     )
-    .width(Length::Fill)
-    .center_x(Length::Fill)
-    .padding(Padding {
-        top: 6.0,
-        right: 12.0,
-        bottom: 8.0,
-        left: 12.0,
-    });
+    .interaction(if is_dragging {
+        mouse::Interaction::Grabbing
+    } else {
+        mouse::Interaction::Grab
+    })
+    .on_press(Message::StartDragCard(config.target));
 
     let menu_element = menu.view::<iced::Renderer>(theme);
 
-    let card_box = container(column![header_badge, menu_element].spacing(8.0).align_x(Alignment::Center))
-        .padding(Padding {
-            top: 8.0,
-            right: 8.0,
-            bottom: 12.0,
-            left: 8.0,
-        })
-        .style(move |_theme| container::Style {
-            background: Some(Background::Color(style.bg)),
-            border: Border::default()
-                .rounded(14.0)
-                .width(1.0)
-                .color(style.border),
-            shadow: Shadow {
-                color: style.shadow,
-                offset: Vector::new(0.0, 16.0),
-                blur_radius: 36.0,
-            },
-            ..container::Style::default()
-        });
+    let card_box = column![drag_header, menu_element]
+        .spacing(6.0)
+        .width(Length::Fixed(menu_metrics::DEFAULT_WIDTH));
 
-    card_box.into()
+    container(card_box).into()
 }
 
 /// Builds the bottom status bar.
@@ -1176,7 +1222,7 @@ fn view_status_bar<'a>(
     let status_text = state
         .last_action
         .as_deref()
-        .unwrap_or("Ready. Right-click anywhere to summon Liquid Glass Context Menu.");
+        .unwrap_or("就绪。可按住顶部手柄拖拽浅色/深色菜单至各色彩条上方，通过数码测色计校准");
 
     let status_content = row![
         text("STATUS: ")
@@ -1188,7 +1234,7 @@ fn view_status_bar<'a>(
             .font(font::ui_font(Weight::Normal))
             .color(palette.text_primary),
         space().width(Length::Fill),
-        text("CALIBRATED: Dark(White 86 / Black 33) | Light(White 255 / Black 185)")
+        text("CALIBRATED: 白底(深86/浅255) | 黑底(深33/浅185) | 黄底(深[86,86,33]/浅[255,255,185]) | 蓝底(深[33,33,86]/浅[185,185,255])")
             .size(10.5)
             .font(font::ui_font(Weight::Medium))
             .color(palette.text_secondary),
@@ -1228,150 +1274,66 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
     // 1. Top fused header bar
     let draggable_header = view_top_header(state, palette, is_dark);
 
-    // 2. Stage with side-by-side Light & Dark menu cards
+    // 2. Draggable Light & Dark menu cards over television color test blocks
+    let is_light_dragging = matches!(state.active_drag, Some((DragTarget::LightCard, _)));
+    let is_dark_dragging = matches!(state.active_drag, Some((DragTarget::DarkCard, _)));
+
     let light_card = view_menu_card(
-        &state.light_menu,
-        CardStyle {
+        MenuCardConfig {
+            target: DragTarget::LightCard,
             badge_title: "☀️ Light Mode Menu",
-            badge_sub: "Calibrated: White 255 | Black 185 (α=72.5%)",
-            bg: Color::from_rgba(1.0, 1.0, 1.0, 0.28),
-            border: Color::from_rgba(1.0, 1.0, 1.0, 0.50),
-            shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.24),
+            badge_sub: "校准值: 白255 | 黑185 (α=72.5%)",
+            is_dark_card: false,
         },
+        &state.light_menu,
+        is_light_dragging,
         theme,
         palette,
     );
 
     let dark_card = view_menu_card(
-        &state.dark_menu,
-        CardStyle {
+        MenuCardConfig {
+            target: DragTarget::DarkCard,
             badge_title: "🌙 Dark Mode Menu",
-            badge_sub: "Calibrated: White 86 | Black 33 (α=79.2%)",
-            bg: Color::from_rgba(0.0, 0.0, 0.0, 0.40),
-            border: Color::from_rgba(1.0, 1.0, 1.0, 0.18),
-            shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.55),
+            badge_sub: "校准值: 白86 | 黑33 (α=79.2%)",
+            is_dark_card: true,
         },
+        &state.dark_menu,
+        is_dark_dragging,
         theme,
         palette,
     );
 
-    let stage_menus_row = row![light_card, dark_card]
-        .spacing(48.0)
-        .align_y(Alignment::Center);
-
-    let floating_opts_bar = row![
-        text("Floating Right-Click Menu Appearance: ")
-            .size(11.5)
-            .font(font::ui_font(Weight::Medium))
-            .color(palette.text_primary),
-        row(FloatingAppearance::ALL.iter().map(|&app| {
-            let selected = state.floating_appearance == app;
-            button(
-                text(app.label())
-                    .size(11.0)
-                    .font(font::ui_font(if selected {
-                        Weight::Semibold
-                    } else {
-                        Weight::Normal
-                    }))
-                    .color(if selected {
-                        Color::WHITE
-                    } else {
-                        palette.text_secondary
-                    }),
-            )
-            .padding(Padding {
-                top: 3.0,
-                right: 8.0,
-                bottom: 3.0,
-                left: 8.0,
-            })
-            .style(move |_theme, _status| {
-                if selected {
-                    button::Style {
-                        background: Some(Background::Color(palette.accent)),
-                        border: Border::default().rounded(5.0),
-                        ..button::Style::default()
-                    }
-                } else {
-                    button::Style {
-                        background: Some(Background::Color(if is_dark {
-                            Color::from_rgba(1.0, 1.0, 1.0, 0.08)
-                        } else {
-                            Color::from_rgba(0.0, 0.0, 0.0, 0.06)
-                        })),
-                        border: Border::default().rounded(5.0),
-                        ..button::Style::default()
-                    }
-                }
-            })
-            .on_press(Message::SetFloatingAppearance(app))
-            .into()
-        }))
-        .spacing(4.0),
-        space().width(Length::Fill),
-        text("💡 Right-click anywhere to pop up dynamic menu at cursor")
-            .size(11.0)
-            .font(font::ui_font(Weight::Normal))
-            .color(palette.text_secondary),
-    ]
-    .align_y(Alignment::Center)
-    .padding(Padding {
-        top: 6.0,
-        right: 14.0,
-        bottom: 6.0,
-        left: 14.0,
-    });
-
-    let floating_opts_container = container(floating_opts_bar)
-        .style(move |_theme| container::Style {
-            background: Some(Background::Color(if is_dark {
-                Color::from_rgba(0.12, 0.12, 0.15, 0.70)
-            } else {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.65)
-            })),
-            border: Border::default().rounded(8.0).width(0.5).color(if is_dark {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.12)
-            } else {
-                Color::from_rgba(0.0, 0.0, 0.0, 0.10)
-            }),
-            ..container::Style::default()
-        });
-
-    let stage_content = column![
-        floating_opts_container,
-        stage_menus_row,
-    ]
-    .spacing(24.0)
-    .align_x(Alignment::Center);
-
-    let stage_centered = container(stage_content)
+    let positioned_light = container(light_card)
+        .padding(Padding {
+            top: state.light_pos.y.max(10.0),
+            left: state.light_pos.x.max(10.0),
+            right: 0.0,
+            bottom: 0.0,
+        })
         .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill);
+        .height(Length::Fill);
 
-    // Approximate occlusion rectangles for heavy blur diffusion core
-    let menu_occlusions = vec![
-        Rectangle {
-            x: 200.0,
-            y: 140.0,
-            width: 240.0,
-            height: 480.0,
-        },
-        Rectangle {
-            x: 520.0,
-            y: 140.0,
-            width: 240.0,
-            height: 480.0,
-        },
-    ];
+    let positioned_dark = container(dark_card)
+        .padding(Padding {
+            top: state.dark_pos.y.max(10.0),
+            left: state.dark_pos.x.max(10.0),
+            right: 0.0,
+            bottom: 0.0,
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    let cards_stack = if state.top_card == DragTarget::LightCard {
+        stack![positioned_dark, positioned_light]
+    } else {
+        stack![positioned_light, positioned_dark]
+    }
+    .width(Length::Fill)
+    .height(Length::Fill);
 
     let wallpaper_canvas = Canvas::new(WallpaperCanvas {
         style: state.wallpaper,
-        is_dark,
-        blur_preset: state.blur_preset,
-        menu_occlusions,
     })
     .width(Length::Fill)
     .height(Length::Fill);
@@ -1380,18 +1342,78 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let stage_stack = stack![wallpaper_layer, stage_centered]
+    let stage_stack = stack![wallpaper_layer, cards_stack]
         .width(Length::Fill)
         .height(Length::Fill);
+
+    // Calibration guide and reset toolbar
+    let guide_bar = row![
+        text("📺 电视彩色色块校准台:")
+            .size(11.5)
+            .font(font::ui_font(Weight::Bold))
+            .color(palette.accent),
+        text("按住菜单卡片顶栏 ⠿ 即可自由拖动，移至各色彩条/色块上方取色校验")
+            .size(11.0)
+            .font(font::ui_font(Weight::Normal))
+            .color(palette.text_primary),
+        space().width(Length::Fill),
+        button(
+            text("↺ 重置位置")
+                .size(10.5)
+                .font(font::ui_font(Weight::Medium))
+                .color(palette.text_primary)
+        )
+        .padding(Padding {
+            top: 3.0,
+            right: 8.0,
+            bottom: 3.0,
+            left: 8.0,
+        })
+        .style(move |_theme, _status| button::Style {
+            background: Some(Background::Color(if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.10)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.06)
+            })),
+            border: Border::default().rounded(5.0),
+            ..button::Style::default()
+        })
+        .on_press(Message::ResetCardPositions),
+    ]
+    .spacing(8.0)
+    .align_y(Alignment::Center)
+    .padding(Padding {
+        top: 4.0,
+        right: 14.0,
+        bottom: 4.0,
+        left: 14.0,
+    });
+
+    let guide_container = container(guide_bar)
+        .width(Length::Fill)
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(if is_dark {
+                Color::from_rgba(0.10, 0.10, 0.14, 0.85)
+            } else {
+                Color::from_rgba(0.96, 0.96, 0.98, 0.85)
+            })),
+            border: Border::default().width(0.5).color(if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.10)
+            }),
+            ..container::Style::default()
+        });
 
     let page_content = if state.show_status_bar {
         column![
             draggable_header,
+            guide_container,
             stage_stack,
             view_status_bar(state, palette, is_dark)
         ]
     } else {
-        column![draggable_header, stage_stack]
+        column![draggable_header, guide_container, stage_stack]
     }
     .width(Length::Fill)
     .height(Length::Fill);
@@ -1481,7 +1503,7 @@ mod tests {
     #[test]
     fn test_initial_state_defaults() {
         let state = State::default();
-        assert_eq!(state.wallpaper, WallpaperStyle::Aurora);
+        assert_eq!(state.wallpaper, WallpaperStyle::TvColorBars);
         assert_eq!(state.blur_preset, BlurPreset::UltraHeavy64);
         assert_eq!(state.floating_appearance, FloatingAppearance::FollowTheme);
         assert!(state.show_status_bar);
@@ -1489,6 +1511,9 @@ mod tests {
         assert!(!state.word_wrap);
         assert_eq!(state.floating_menu, None);
         assert_eq!(state.controller.window_id, None);
+        assert_eq!(state.light_pos, Point::new(70.0, 50.0));
+        assert_eq!(state.dark_pos, Point::new(450.0, 50.0));
+        assert_eq!(state.active_drag, None);
     }
 
     #[test]
@@ -1564,12 +1589,37 @@ mod tests {
         let _ = update(&mut state, Message::ToggleColorScheme);
         assert_ne!(state.controller.is_dark, orig_theme);
 
-        let _ = update(&mut state, Message::SetWallpaper(WallpaperStyle::Sunset));
-        assert_eq!(state.wallpaper, WallpaperStyle::Sunset);
+        let _ = update(&mut state, Message::SetWallpaper(WallpaperStyle::TvSmpteSplit));
+        assert_eq!(state.wallpaper, WallpaperStyle::TvSmpteSplit);
 
         let _ = update(&mut state, Message::SetBlurPreset(BlurPreset::Heavy48));
         assert_eq!(state.blur_preset, BlurPreset::Heavy48);
         assert_eq!(state.blur_preset.radius(), 48.0);
+    }
+
+    #[test]
+    fn test_card_dragging_lifecycle() {
+        let mut state = State::default();
+        state.cursor_pos = Point::new(100.0, 80.0);
+
+        // 1. Start dragging light card
+        let _ = update(&mut state, Message::StartDragCard(DragTarget::LightCard));
+        assert!(state.active_drag.is_some());
+        assert_eq!(state.top_card, DragTarget::LightCard);
+
+        // 2. Cursor moved updates position
+        let _ = update(&mut state, Message::CursorMoved(Point::new(160.0, 140.0)));
+        assert_eq!(state.light_pos, Point::new(130.0, 110.0));
+
+        // 3. End drag fixes card in place
+        let _ = update(&mut state, Message::EndDragCard);
+        assert!(state.active_drag.is_none());
+        assert_eq!(state.light_pos, Point::new(130.0, 110.0));
+
+        // 4. Reset positions restores defaults
+        let _ = update(&mut state, Message::ResetCardPositions);
+        assert_eq!(state.light_pos, Point::new(70.0, 50.0));
+        assert_eq!(state.dark_pos, Point::new(450.0, 50.0));
     }
 
     #[test]
@@ -1612,5 +1662,36 @@ mod tests {
         // Light on black: 185
         let light_on_black = (light_r * 255.0 * light_a).round() as u8;
         assert_eq!(light_on_black, 185);
+    }
+
+    #[test]
+    fn test_tv_color_bars_multi_color_calibration() {
+        let (dark_r, _, _, dark_a) = menu_metrics::DARK_MENU_BASE_RGBA_F32;
+        let (light_r, _, _, light_a) = menu_metrics::LIGHT_MENU_BASE_RGBA_F32;
+
+        // 8 TV Color Bars: (Name, [R, G, B])
+        let tv_bars: &[(&str, [u8; 3], [u8; 3], [u8; 3])] = &[
+            // (Bar, Background RGB, Expected Dark Mode RGB, Expected Light Mode RGB)
+            ("Pure White", [255, 255, 255], [86, 86, 86], [255, 255, 255]),
+            ("Yellow",     [255, 255,   0], [86, 86, 33], [255, 255, 185]),
+            ("Cyan",       [  0, 255, 255], [33, 86, 86], [185, 255, 255]),
+            ("Green",      [  0, 255,   0], [33, 86, 33], [185, 255, 185]),
+            ("Magenta",    [255,   0, 255], [86, 33, 86], [255, 185, 255]),
+            ("Red",        [255,   0,   0], [86, 33, 33], [255, 185, 185]),
+            ("Blue",       [  0,   0, 255], [33, 33, 86], [185, 185, 255]),
+            ("Pure Black", [  0,   0,   0], [33, 33, 33], [185, 185, 185]),
+        ];
+
+        for &(name, bg, exp_dark, exp_light) in tv_bars {
+            let calc_dark_r = (dark_r * 255.0 * dark_a + f32::from(bg[0]) * (1.0 - dark_a)).round() as u8;
+            let calc_dark_g = (dark_r * 255.0 * dark_a + f32::from(bg[1]) * (1.0 - dark_a)).round() as u8;
+            let calc_dark_b = (dark_r * 255.0 * dark_a + f32::from(bg[2]) * (1.0 - dark_a)).round() as u8;
+            assert_eq!([calc_dark_r, calc_dark_g, calc_dark_b], exp_dark, "Dark mode on {}", name);
+
+            let calc_light_r = (light_r * 255.0 * light_a + f32::from(bg[0]) * (1.0 - light_a)).round() as u8;
+            let calc_light_g = (light_r * 255.0 * light_a + f32::from(bg[1]) * (1.0 - light_a)).round() as u8;
+            let calc_light_b = (light_r * 255.0 * light_a + f32::from(bg[2]) * (1.0 - light_a)).round() as u8;
+            assert_eq!([calc_light_r, calc_light_g, calc_light_b], exp_light, "Light mode on {}", name);
+        }
     }
 }
