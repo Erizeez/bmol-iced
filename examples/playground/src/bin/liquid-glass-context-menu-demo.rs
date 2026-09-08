@@ -290,8 +290,9 @@ pub mod demo_metrics {
     /// - Total exact height: 96 + 11 + 4 + 10 = 121.0 pt.
     pub const DOCK_REF_HEIGHT: f32 = 121.0;
 
-    /// 1:1 macOS Dock reference arrow left anchor offset: 27.0 pt / 154.0 pt ≈ 0.175.
-    pub const DOCK_REF_ARROW_OFFSET: f32 = 27.0 / 154.0;
+    /// 1:1 macOS Dock reference arrow left anchor offset: 39.5 pt / 154.0 pt ≈ 0.2565.
+    /// (Places arrow apex at measured x = 79.0 px / 39.5 pt, left base at 27.0 pt, seamlessly clearing corner lead p = 19.2 pt)
+    pub const DOCK_REF_ARROW_OFFSET: f32 = 39.5 / 154.0;
 }
 
 /// An occlusion region where a context menu card or popup overlays the wallpaper,
@@ -564,6 +565,7 @@ fn build_popover_squircle_path(
     }
 
     let r = radius.min(rect.width * 0.5).min(rect.height * 0.5);
+    let p = ((1.0 + APPLE_CORNER_SMOOTHING) * r).min(rect.width * 0.5).min(rect.height * 0.5);
     let params = SquircleParams::new(rect.width, rect.height, r)
         .with_smoothing(APPLE_CORNER_SMOOTHING);
     let commands = squircle_path_commands(&params);
@@ -576,6 +578,11 @@ fn build_popover_squircle_path(
     let bw = arrow.base_width.min(w * 0.45).min(h * 0.45);
     let ha = arrow.height;
     let wb = bw * 0.5;
+
+    let min_x = rx + p + wb;
+    let max_x = (rx + w - p - wb).max(min_x);
+    let min_y = ry + p + wb;
+    let max_y = (ry + h - p - wb).max(min_y);
 
     // Authentic Subpixel-Fitted Apple Popover Bézier Spline:
     // (Fitted to native macOS Popover/Dock context menu screenshots with RMSE < 0.1 px)
@@ -623,7 +630,7 @@ fn build_popover_squircle_path(
 
         match arrow.edge {
             PopoverArrowEdge::Top => {
-                let xc = (rx + w * arrow.offset).clamp(rx + r + wb, rx + w - r - wb);
+                let xc = (rx + w * arrow.offset).clamp(min_x, max_x);
                 let map = |u: f32, v: f32| Point::new(xc + u, ry - v);
                 for (i, cmd) in commands.iter().enumerate() {
                     if i == commands.len() - 1 {
@@ -638,7 +645,7 @@ fn build_popover_squircle_path(
                 }
             }
             PopoverArrowEdge::Bottom => {
-                let xc = (rx + w * arrow.offset).clamp(rx + r + wb, rx + w - r - wb);
+                let xc = (rx + w * arrow.offset).clamp(min_x, max_x);
                 let map = |u: f32, v: f32| Point::new(xc - u, ry + h + v);
                 for cmd in &commands {
                     if let PathCommand::LineTo(pt) = *cmd {
@@ -652,7 +659,7 @@ fn build_popover_squircle_path(
                 }
             }
             PopoverArrowEdge::Left => {
-                let yc = (ry + h * arrow.offset).clamp(ry + r + wb, ry + h - r - wb);
+                let yc = (ry + h * arrow.offset).clamp(min_y, max_y);
                 let map = |u: f32, v: f32| Point::new(rx - v, yc - u);
                 for cmd in &commands {
                     if let PathCommand::LineTo(pt) = *cmd {
@@ -666,7 +673,7 @@ fn build_popover_squircle_path(
                 }
             }
             PopoverArrowEdge::Right => {
-                let yc = (ry + h * arrow.offset).clamp(ry + r + wb, ry + h - r - wb);
+                let yc = (ry + h * arrow.offset).clamp(min_y, max_y);
                 let map = |u: f32, v: f32| Point::new(rx + w + v, yc + u);
                 for cmd in &commands {
                     if let PathCommand::LineTo(pt) = *cmd {
@@ -857,8 +864,15 @@ fn render_blurred_occlusion(
     let mut curr_x = rect.x - extra_left;
     let end_x = rect.x + rect.width + extra_right;
 
-    let arrow_center_x = rect.x + rect.width * arrow.offset;
     let arrow_half_w = arrow.base_width * 0.5;
+    let p = ((1.0 + APPLE_CORNER_SMOOTHING) * r).min(rect.width * 0.5).min(rect.height * 0.5);
+    let min_x = rect.x + p + arrow_half_w;
+    let max_x = (rect.x + rect.width - p - arrow_half_w).max(min_x);
+    let arrow_center_x = (rect.x + rect.width * arrow.offset).clamp(min_x, max_x);
+
+    let min_y = rect.y + p + arrow_half_w;
+    let max_y = (rect.y + rect.height - p - arrow_half_w).max(min_y);
+    let arrow_center_y = (rect.y + rect.height * arrow.offset).clamp(min_y, max_y);
 
     while curr_x < end_x {
         let actual_w = (end_x - curr_x).min(slice_w);
@@ -899,7 +913,6 @@ fn render_blurred_occlusion(
             || (arrow.edge == PopoverArrowEdge::Right && sample_x > rect.x + rect.width);
 
         let (slice_top, slice_height) = if is_in_side_arrow {
-            let arrow_center_y = rect.y + rect.height * arrow.offset;
             let dist_x = if arrow.edge == PopoverArrowEdge::Left {
                 (rect.x - sample_x) / arrow.height
             } else {
