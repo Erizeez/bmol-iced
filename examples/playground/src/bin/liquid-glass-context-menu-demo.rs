@@ -1,18 +1,23 @@
 //! Standalone showcase for authentic Apple-style Liquid Glass Context Menus.
 //!
-//! Features:
+//! Fully powered by `bmol-window-shell`:
+//! - Complete frameless window shell integration with physical non-client rim
+//! - Authentic macOS traffic lights with dynamic symmetric margins (`margin_left == margin_top`)
+//! - Interactive 8-direction border resize handles and loyal titlebar drag bar
+//! - Native macOS squircle corner clipping and Stage Manager guard
 //! - Dual Appearance: Side-by-side demonstration of both Light and Dark physical glass menus
 //! - Ultra-Heavy Backdrop Blur (64pt Dual-Kawase equivalent) completely dissolving high-frequency details
 //! - Continuous 8.0 pt squircle container curvature matching macOS HIG
 //! - 1px fine edge highlight rim with deep elevation drop shadows (36pt blur)
-//! - Smooth Accent hover pill with crisp white text inversion (4.5 pt radius)
 //! - Interactive right-click popup at cursor location with outside-click dismissal
 
 #![allow(clippy::too_many_lines, clippy::cast_precision_loss)]
 
+use std::time::Instant;
+
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Point, Rectangle,
-    Shadow, Size, Subscription, Task, Theme, Vector, event,
+    Shadow, Size, Subscription, Task, Theme, Vector,
     font::Weight,
     mouse,
     widget::{
@@ -20,10 +25,14 @@ use iced::{
         canvas::{self, Canvas, Frame, Geometry, Path, Stroke},
         column, container, row, space, stack, text,
     },
+    window,
 };
 use bmol_designs::menu_metrics;
+use bmol_window_shell::{
+    WindowChromeConfig, WindowShellController, is_system_dark_mode, traffic_lights, window_metrics,
+};
 use liquid_glass::{
-    ContextMenu, MenuItem, UiColorScheme, UiIcon, UiTheme,
+    ContextMenu, ControlAction, MenuItem, TrafficLightsState, UiColorScheme, UiIcon, UiTheme,
     ui::font,
 };
 
@@ -155,6 +164,21 @@ impl MenuAction {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    // Window Shell integration messages
+    WindowOpened(window::Id),
+    WindowResized(Size),
+    WindowEvent((window::Id, window::Event)),
+    DragWindow,
+    ToggleMaximize,
+    ResizeWindow(window::Direction),
+    WindowControl(ControlAction),
+    TrafficLightsHover(bool),
+    TrafficLightsPressStart(usize),
+    TrafficLightsPressCancel(usize),
+    TrafficLightsPressEnd(usize),
+    AnimationFrame(Instant),
+
+    // Context menu and playground messages
     RightClicked,
     CursorMoved(Point),
     DismissFloatingMenu,
@@ -164,15 +188,6 @@ pub enum Message {
     SetBlurPreset(BlurPreset),
     SetFloatingAppearance(FloatingAppearance),
     ToggleColorScheme,
-    TrafficLightClicked(WindowControlAction),
-}
-
-/// Simulated window control actions for the traffic lights.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WindowControlAction {
-    Close,
-    Minimize,
-    Zoom,
 }
 
 /// Canvas program rendering vibrant wallpapers and physical heavy blur diffusion cores.
@@ -251,105 +266,100 @@ impl<Message> canvas::Program<Message> for WallpaperCanvas {
             }
         }
 
-        // 2. High-frequency background grid lines (dissolved under heavy frosted blur)
-        let grid_stroke = Stroke::default().with_width(1.0).with_color(
-            if self.is_dark {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.04)
-            } else {
-                Color::from_rgba(0.0, 0.0, 0.0, 0.05)
-            }
-        );
+        // 2. High-frequency backdrop grid (demonstrates how heavy blur eliminates sharp detail)
+        let grid_spacing = 32.0;
+        let grid_stroke = Stroke::default().with_color(if self.is_dark {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.04)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.04)
+        }).with_width(1.0);
 
-        let blur_factor = (self.blur_preset.radius() / 64.0).clamp(0.25, 1.25);
-
-        let mut x = 0.0;
-        while x < w {
-            // Only draw grid line if outside heavy blur occlusion zones or during subtle blur
-            let in_heavy_occlusion = self.menu_occlusions.iter().any(|r| {
-                blur_factor > 0.6 && (x >= r.x - 20.0 && x <= r.x + r.width + 20.0)
-            });
-            if !in_heavy_occlusion {
-                frame.stroke(&Path::line(Point::new(x, 0.0), Point::new(x, h)), grid_stroke);
+        let mut x = grid_spacing;
+        while x < bounds.width {
+            let mut skip_line = false;
+            if self.blur_preset.radius() >= 48.0 {
+                for rect in &self.menu_occlusions {
+                    if x >= rect.x - 8.0 && x <= rect.x + rect.width + 8.0 {
+                        skip_line = true;
+                        break;
+                    }
+                }
             }
-            x += 64.0;
+            if !skip_line {
+                let path = Path::line(Point::new(x, 0.0), Point::new(x, bounds.height));
+                frame.stroke(&path, grid_stroke);
+            }
+            x += grid_spacing;
         }
 
-        let mut y = 0.0;
-        while y < h {
-            let in_heavy_occlusion = self.menu_occlusions.iter().any(|r| {
-                blur_factor > 0.6 && (y >= r.y - 20.0 && y <= r.y + r.height + 20.0)
-            });
-            if !in_heavy_occlusion {
-                frame.stroke(&Path::line(Point::new(0.0, y), Point::new(w, y)), grid_stroke);
+        let mut y = grid_spacing;
+        while y < bounds.height {
+            let mut skip_line = false;
+            if self.blur_preset.radius() >= 48.0 {
+                for rect in &self.menu_occlusions {
+                    if y >= rect.y - 8.0 && y <= rect.y + rect.height + 8.0 {
+                        skip_line = true;
+                        break;
+                    }
+                }
             }
-            y += 64.0;
+            if !skip_line {
+                let path = Path::line(Point::new(0.0, y), Point::new(bounds.width, y));
+                frame.stroke(&path, grid_stroke);
+            }
+            y += grid_spacing;
         }
 
-        // 3. Physical Heavy Frosted Blur Diffusion Cores behind active menu rects
-        // Mathematically simulates a 64pt multi-pass Dual-Kawase blur kernel:
-        // high frequencies vanish completely, diffusing surrounding saturated colors
-        // into a rich, luminous frosted atmosphere wash.
+        // 3. Physical heavy blur diffusion cores underneath context menus
+        let blur_r = self.blur_preset.radius();
         for rect in &self.menu_occlusions {
-            let padding = self.blur_preset.radius() * 0.45;
-            let blur_rect = Rectangle {
-                x: rect.x - padding,
-                y: rect.y - padding,
-                width: rect.width + padding * 2.0,
-                height: rect.height + padding * 2.0,
-            };
-
-            // Sample low-frequency ambience from the wallpaper orbs for this rect center
             let center = Point::new(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
-            let mut ambient_r = 0.0f32;
-            let mut ambient_g = 0.0f32;
-            let mut ambient_b = 0.0f32;
-            let mut total_weight = 0.001f32;
-
-            for &(orb_center, radius, color) in orbs {
-                let dx = center.x - orb_center.x;
-                let dy = center.y - orb_center.y;
-                let dist = (dx * dx + dy * dy).sqrt();
-                let influence = (1.0 - (dist / (radius * 1.5))).max(0.0).powf(1.8);
-                ambient_r += color.r * influence;
-                ambient_g += color.g * influence;
-                ambient_b += color.b * influence;
-                total_weight += influence;
-            }
-
-            let avg_r = (ambient_r / total_weight).clamp(0.0, 1.0);
-            let avg_g = (ambient_g / total_weight).clamp(0.0, 1.0);
-            let avg_b = (ambient_b / total_weight).clamp(0.0, 1.0);
-
-            // Multi-tier Gaussian diffusion wash
-            let steps = 4;
-            for s in 0..steps {
-                let expand = (s as f32 + 1.0) * (self.blur_preset.radius() / 6.0);
-                let alpha = if self.is_dark { 0.14 } else { 0.22 } * (1.0 / (s as f32 + 1.0));
-                let wash_color = Color::from_rgba(avg_r, avg_g, avg_b, alpha);
-
-                let r_box = Rectangle {
-                    x: (blur_rect.x - expand).max(0.0),
-                    y: (blur_rect.y - expand).max(0.0),
-                    width: blur_rect.width + expand * 2.0,
-                    height: blur_rect.height + expand * 2.0,
+            let passes = if blur_r >= 48.0 { 6 } else { 3 };
+            for p in 0..passes {
+                let expand = blur_r * (p as f32 / passes as f32);
+                let alpha = (0.28 / (passes as f32)) * (1.0 - (p as f32 / passes as f32) * 0.4);
+                let halo_rect = Rectangle {
+                    x: (rect.x - expand).max(0.0),
+                    y: (rect.y - expand).max(0.0),
+                    width: rect.width + expand * 2.0,
+                    height: rect.height + expand * 2.0,
                 };
-                let path = Path::rounded_rectangle(
-                    Point::new(r_box.x, r_box.y),
-                    Size::new(r_box.width, r_box.height),
-                    (menu_metrics::CONTAINER_CORNER_RADIUS + expand).into(),
+                let halo_path = Path::rounded_rectangle(
+                    Point::new(halo_rect.x, halo_rect.y),
+                    halo_rect.size(),
+                    (menu_metrics::CONTAINER_CORNER_RADIUS + expand * 0.5).into(),
                 );
-                frame.fill(&path, wash_color);
+
+                let halo_tint = if self.is_dark {
+                    Color::from_rgba(0.08, 0.10, 0.16, alpha)
+                } else {
+                    Color::from_rgba(1.0, 1.0, 1.0, alpha * 1.5)
+                };
+                frame.fill(&halo_path, halo_tint);
             }
+
+            // Radial environmental diffuse glow
+            let env_radius = (rect.width * 0.5 + blur_r * 1.2).max(120.0);
+            let glow_color = match self.style {
+                WallpaperStyle::Aurora => Color::from_rgba(0.55, 0.20, 0.90, 0.12),
+                WallpaperStyle::Sunset => Color::from_rgba(0.95, 0.35, 0.10, 0.12),
+                WallpaperStyle::Oceanic => Color::from_rgba(0.10, 0.60, 0.90, 0.12),
+                WallpaperStyle::Tahoe => Color::from_rgba(0.20, 0.70, 0.85, 0.12),
+            };
+            let circle = Path::circle(center, env_radius);
+            frame.fill(&circle, glow_color);
         }
 
         vec![frame.into_geometry()]
     }
 }
 
-/// Application state.
 #[derive(Debug)]
 pub struct State {
-    pub scheme: UiColorScheme,
+    pub controller: WindowShellController,
+    pub traffic_lights: TrafficLightsState,
+    pub theme: Theme,
+    pub palette: liquid_glass::UiPalette,
     pub wallpaper: WallpaperStyle,
     pub blur_preset: BlurPreset,
     pub floating_appearance: FloatingAppearance,
@@ -361,12 +371,27 @@ pub struct State {
     pub last_action: Option<String>,
     pub light_menu: ContextMenu<Message>,
     pub dark_menu: ContextMenu<Message>,
+    pub floating_menu_cached: ContextMenu<Message>,
 }
 
 impl Default for State {
     fn default() -> Self {
+        let is_dark = is_system_dark_mode();
+        let config = WindowChromeConfig::unified_header(window_metrics::FUSED_HEADER_HEIGHT);
+        let controller = WindowShellController::new(config, is_dark);
+        let scheme = if is_dark {
+            UiColorScheme::Dark
+        } else {
+            UiColorScheme::Light
+        };
+        let theme = UiTheme::new(scheme).iced_theme();
+        let palette = UiTheme::new(scheme).palette();
+
         Self {
-            scheme: UiColorScheme::Dark,
+            controller,
+            traffic_lights: TrafficLightsState::new(),
+            theme,
+            palette,
             wallpaper: WallpaperStyle::Aurora,
             blur_preset: BlurPreset::UltraHeavy64,
             floating_appearance: FloatingAppearance::FollowTheme,
@@ -378,19 +403,34 @@ impl Default for State {
             last_action: None,
             light_menu: ContextMenu::new(),
             dark_menu: ContextMenu::new(),
+            floating_menu_cached: ContextMenu::new(),
         }
     }
 }
 
 impl State {
+    #[must_use]
+    pub fn scheme(&self) -> UiColorScheme {
+        if self.controller.is_dark {
+            UiColorScheme::Dark
+        } else {
+            UiColorScheme::Light
+        }
+    }
+
     pub fn rebuild_menus(&mut self) {
+        let scheme = self.scheme();
+        self.theme = UiTheme::new(scheme).iced_theme();
+        self.palette = UiTheme::new(scheme).palette();
         self.light_menu = build_demo_menu(self).with_scheme(UiColorScheme::Light);
         self.dark_menu = build_demo_menu(self).with_scheme(UiColorScheme::Dark);
+        let float_scheme = self.resolved_floating_scheme();
+        self.floating_menu_cached = build_demo_menu(self).with_scheme(float_scheme);
     }
 
     #[must_use]
     pub fn resolved_floating_scheme(&self) -> UiColorScheme {
-        self.floating_appearance.resolve(self.scheme)
+        self.floating_appearance.resolve(self.scheme())
     }
 }
 
@@ -402,9 +442,117 @@ pub fn boot() -> (State, Task<Message>) {
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
+        Message::WindowOpened(id) => {
+            state.controller.set_window_id(id);
+            let is_dark = state.controller.is_dark;
+            window::run(id, move |w| {
+                if let Ok(handle) = w.window_handle() {
+                    let appearance = if is_dark {
+                        bmol_window_shell::native::WindowAppearance::Dark
+                    } else {
+                        bmol_window_shell::native::WindowAppearance::Light
+                    };
+                    let _ = bmol_window_shell::setup_native_window(
+                        handle.as_raw(),
+                        bmol_window_shell::NativeWindowOptions::new()
+                            .with_appearance(appearance)
+                            .with_corner_radius(f64::from(window_metrics::DEFAULT_CORNER_RADIUS)),
+                    );
+                }
+            })
+            .discard()
+        }
+        Message::WindowResized(size) => {
+            state.controller.handle_resized(size.width, size.height);
+            Task::none()
+        }
+        Message::WindowEvent((_id, event)) => {
+            if let Some(shell_event) = state.controller.handle_window_event(&event) {
+                match shell_event {
+                    bmol_window_shell::ShellEvent::Focused
+                    | bmol_window_shell::ShellEvent::Unfocused => {
+                        state.traffic_lights.on_group_hover(false);
+                    }
+                    bmol_window_shell::ShellEvent::CloseRequested => {
+                        if let Some(id) = state.controller.window_id {
+                            return window::close(id);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Task::none()
+        }
+        Message::DragWindow => {
+            if let Some(id) = state.controller.window_id {
+                window::drag(id)
+            } else {
+                Task::none()
+            }
+        }
+        Message::ToggleMaximize => {
+            if let Some(id) = state.controller.window_id {
+                window::toggle_maximize(id)
+            } else {
+                Task::none()
+            }
+        }
+        Message::ResizeWindow(direction) => {
+            if let Some(id) = state.controller.window_id {
+                window::drag_resize(id, direction)
+            } else {
+                Task::none()
+            }
+        }
+        Message::WindowControl(action) => match action {
+            ControlAction::Close => {
+                if let Some(id) = state.controller.window_id {
+                    window::close(id)
+                } else {
+                    Task::none()
+                }
+            }
+            ControlAction::Minimize => {
+                if let Some(id) = state.controller.window_id {
+                    window::minimize(id, true)
+                } else {
+                    Task::none()
+                }
+            }
+            ControlAction::Expand => {
+                if let Some(id) = state.controller.window_id {
+                    window::toggle_maximize(id)
+                } else {
+                    Task::none()
+                }
+            }
+        },
+        Message::TrafficLightsHover(hovered) => {
+            state.traffic_lights.on_group_hover(hovered);
+            Task::none()
+        }
+        Message::TrafficLightsPressStart(idx) => {
+            state.traffic_lights.on_press_start(idx);
+            Task::none()
+        }
+        Message::TrafficLightsPressCancel(idx) => {
+            state.traffic_lights.on_press_cancel(idx);
+            Task::none()
+        }
+        Message::TrafficLightsPressEnd(idx) => {
+            state.traffic_lights.on_press_end(idx);
+            Task::none()
+        }
+        Message::AnimationFrame(now) => {
+            state.traffic_lights.step(now);
+            Task::none()
+        }
         Message::RightClicked => {
             state.floating_menu = Some(state.cursor_pos);
-            state.last_action = Some(format!("Menu Spawned at ({:.0}, {:.0})", state.cursor_pos.x, state.cursor_pos.y));
+            state.last_action = Some(format!(
+                "Menu Spawned at ({:.0}, {:.0})",
+                state.cursor_pos.x, state.cursor_pos.y
+            ));
             Task::none()
         }
         Message::CursorMoved(point) => {
@@ -427,17 +575,26 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             match action {
                 MenuAction::ToggleStatusBar => {
                     state.show_status_bar = !state.show_status_bar;
-                    state.last_action = Some(format!("Toggled Status Bar -> {}", if state.show_status_bar { "ON" } else { "OFF" }));
+                    state.last_action = Some(format!(
+                        "Toggled Status Bar -> {}",
+                        if state.show_status_bar { "ON" } else { "OFF" }
+                    ));
                     state.rebuild_menus();
                 }
                 MenuAction::ToggleLineNumbers => {
                     state.show_line_numbers = !state.show_line_numbers;
-                    state.last_action = Some(format!("Toggled Line Numbers -> {}", if state.show_line_numbers { "ON" } else { "OFF" }));
+                    state.last_action = Some(format!(
+                        "Toggled Line Numbers -> {}",
+                        if state.show_line_numbers { "ON" } else { "OFF" }
+                    ));
                     state.rebuild_menus();
                 }
                 MenuAction::ToggleWordWrap => {
                     state.word_wrap = !state.word_wrap;
-                    state.last_action = Some(format!("Toggled Word Wrap -> {}", if state.word_wrap { "ON" } else { "OFF" }));
+                    state.last_action = Some(format!(
+                        "Toggled Word Wrap -> {}",
+                        if state.word_wrap { "ON" } else { "OFF" }
+                    ));
                     state.rebuild_menus();
                 }
                 other => {
@@ -459,40 +616,47 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::SetFloatingAppearance(a) => {
             state.floating_appearance = a;
+            state.rebuild_menus();
             state.last_action = Some(format!("Floating Menu Appearance: {}", a.label()));
             Task::none()
         }
         Message::ToggleColorScheme => {
-            state.scheme = match state.scheme {
-                UiColorScheme::Light => UiColorScheme::Dark,
-                UiColorScheme::Dark => UiColorScheme::Light,
-            };
+            state.controller.set_dark_mode(!state.controller.is_dark);
             state.rebuild_menus();
-            state.last_action = Some(format!("Window Theme: {:?}", state.scheme));
-            Task::none()
-        }
-        Message::TrafficLightClicked(action) => {
-            state.last_action = Some(format!("Window Control: {action:?}"));
+            state.last_action = Some(format!("Window Theme: {:?}", state.scheme()));
             Task::none()
         }
     }
 }
 
-pub fn subscription(_state: &State) -> Subscription<Message> {
-    event::listen_with(|event, _status, _id| match event {
-        iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
-            Some(Message::RightClicked)
-        }
-        iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
-            Some(Message::CursorMoved(position))
-        }
-        _ => None,
-    })
+pub fn subscription(state: &State) -> Subscription<Message> {
+    let mut subscriptions = vec![
+        window::open_events().map(Message::WindowOpened),
+        window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
+        iced::event::listen_with(|event, _status, id| match event {
+            iced::Event::Window(w_event) => {
+                Some(Message::WindowEvent((id, w_event)))
+            }
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                Some(Message::RightClicked)
+            }
+            iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                Some(Message::CursorMoved(position))
+            }
+            _ => None,
+        }),
+    ];
+
+    if state.traffic_lights.is_animating() {
+        subscriptions.push(window::frames().map(Message::AnimationFrame));
+    }
+
+    Subscription::batch(subscriptions)
 }
 
 #[must_use]
 pub fn app_theme(state: &State) -> Theme {
-    UiTheme::new(state.scheme).iced_theme()
+    state.theme.clone()
 }
 
 /// Builds the comprehensive Apple-style Context Menu.
@@ -573,64 +737,160 @@ fn build_demo_menu(state: &State) -> ContextMenu<Message> {
         )
 }
 
-#[must_use]
-pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
-    let is_dark = state.scheme == UiColorScheme::Dark;
-    let theme = app_theme(state);
-    let palette = UiTheme::new(state.scheme).palette();
+/// Builds the authentic Apple Traffic Lights button row with dynamic symmetric margins.
+fn view_traffic_lights_group(
+    state: &State,
+    symmetric_margin: f32,
+) -> Element<'_, Message, Theme, iced::Renderer> {
+    let is_focused = state.controller.is_focused;
+    let hover_amount = state.traffic_lights.hover_progress;
+    let is_dark = state.controller.is_dark;
 
-    // 1. Top fused header bar
-    let red_dot = button(space().width(Length::Fixed(12.0)).height(Length::Fixed(12.0)))
-        .style(|_theme, _status| button::Style {
-            background: Some(Background::Color(Color::from_rgb(1.0, 0.36, 0.34))),
-            border: Border::default().rounded(6.0),
-            ..button::Style::default()
-        })
-        .on_press(Message::TrafficLightClicked(WindowControlAction::Close));
+    let build_btn = |action: ControlAction,
+                     index: usize,
+                     base_color: Color,
+                     hover_color: Color,
+                     press_color: Color,
+                     border_color: Color,
+                     glyph_char: &'static str| {
+        let is_animating = state.traffic_lights.press_targets[index] > 0.0;
+        let scale = state.traffic_lights.press_springs[index].value();
+        let size = traffic_lights::DIAMETER * scale;
 
-    let yellow_dot = button(space().width(Length::Fixed(12.0)).height(Length::Fixed(12.0)))
-        .style(|_theme, _status| button::Style {
-            background: Some(Background::Color(Color::from_rgb(1.0, 0.75, 0.03))),
-            border: Border::default().rounded(6.0),
-            ..button::Style::default()
-        })
-        .on_press(Message::TrafficLightClicked(WindowControlAction::Minimize));
+        let fill_color = if !is_focused && hover_amount < 0.05 {
+            if is_dark {
+                Color::from_rgb8(0x4C, 0x4C, 0x50)
+            } else {
+                Color::from_rgb8(0xD1, 0xD1, 0xD6)
+            }
+        } else if is_animating {
+            press_color
+        } else if hover_amount > 0.5 {
+            hover_color
+        } else {
+            base_color
+        };
 
-    let green_dot = button(space().width(Length::Fixed(12.0)).height(Length::Fixed(12.0)))
-        .style(|_theme, _status| button::Style {
-            background: Some(Background::Color(Color::from_rgb(0.16, 0.79, 0.28))),
-            border: Border::default().rounded(6.0),
-            ..button::Style::default()
-        })
-        .on_press(Message::TrafficLightClicked(WindowControlAction::Zoom));
+        let glyph_text = text(glyph_char)
+            .size(if action == ControlAction::Close { 8.0 } else { 7.0 })
+            .font(font::ui_font(Weight::Bold))
+            .color(Color {
+                a: hover_amount * if is_dark { 0.85 } else { 0.75 },
+                ..match action {
+                    ControlAction::Close => Color::from_rgb8(0x4C, 0x00, 0x00),
+                    ControlAction::Minimize => Color::from_rgb8(0x5A, 0x36, 0x00),
+                    ControlAction::Expand => Color::from_rgb8(0x0A, 0x38, 0x00),
+                }
+            });
 
-    let traffic_lights = row![red_dot, yellow_dot, green_dot]
-        .spacing(8.0)
+        let btn_content = container(glyph_text)
+            .width(Length::Fixed(size))
+            .height(Length::Fixed(size))
+            .center_x(Length::Fixed(size))
+            .center_y(Length::Fixed(size));
+
+        button(btn_content)
+            .padding(0)
+            .style(move |_theme, _status| button::Style {
+                background: Some(Background::Color(fill_color)),
+                border: Border::default()
+                    .rounded(size * 0.5)
+                    .width(0.5)
+                    .color(border_color),
+                shadow: Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.12),
+                    offset: Vector::new(0.0, 0.5),
+                    blur_radius: 1.0,
+                },
+                ..button::Style::default()
+            })
+            .on_press(Message::WindowControl(action))
+    };
+
+    let red = build_btn(
+        ControlAction::Close,
+        0,
+        Color::from_rgb8(0xFF, 0x5F, 0x56),
+        Color::from_rgb8(0xFF, 0x6E, 0x67),
+        Color::from_rgb8(0xD3, 0x3B, 0x36),
+        Color::from_rgb8(0xE0, 0x44, 0x3E),
+        "✕",
+    );
+
+    let yellow = build_btn(
+        ControlAction::Minimize,
+        1,
+        Color::from_rgb8(0xFF, 0xBD, 0x2E),
+        Color::from_rgb8(0xFF, 0xC8, 0x47),
+        Color::from_rgb8(0xD7, 0x96, 0x1E),
+        Color::from_rgb8(0xDE, 0xA1, 0x23),
+        "─",
+    );
+
+    let green = build_btn(
+        ControlAction::Expand,
+        2,
+        Color::from_rgb8(0x27, 0xC9, 0x3F),
+        Color::from_rgb8(0x32, 0xD8, 0x4D),
+        Color::from_rgb8(0x19, 0xA0, 0x23),
+        Color::from_rgb8(0x1A, 0xAB, 0x29),
+        "⤢",
+    );
+
+    let slop = traffic_lights::control_hover_slop(traffic_lights::DIAMETER);
+    let controls_row = row![red, yellow, green]
+        .spacing(traffic_lights::SPACING)
         .align_y(Alignment::Center);
 
-    let title_text = row![
-        text("Liquid Glass Context Menu")
-            .size(15.0)
-            .font(font::ui_font(Weight::Semibold))
-            .color(palette.text_primary),
-        space().width(8.0),
-        text("Heavy 64pt Blur · Dual Light & Dark")
-            .size(12.0)
-            .font(font::ui_font(Weight::Normal))
-            .color(palette.text_secondary),
-    ]
-    .align_y(Alignment::Center);
+    let tracking_area = container(controls_row).padding(Padding {
+        top: slop,
+        right: slop,
+        bottom: slop,
+        left: slop,
+    });
 
-    let mut wallpaper_picker = row![].spacing(4.0).align_y(Alignment::Center);
+    let interactive_group = iced::widget::mouse_area(tracking_area)
+        .on_enter(Message::TrafficLightsHover(true))
+        .on_exit(Message::TrafficLightsHover(false));
+
+    let spacer_left = (symmetric_margin - slop).max(0.0);
+    row![
+        space().width(Length::Fixed(spacer_left)),
+        interactive_group,
+    ]
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Builds the wallpaper style picker.
+fn view_wallpaper_picker<'a>(
+    state: &'a State,
+    palette: &'a liquid_glass::UiPalette,
+    is_dark: bool,
+) -> Element<'a, Message, Theme, iced::Renderer> {
+    let mut picker = row![].spacing(4.0).align_y(Alignment::Center);
     for &style in &WallpaperStyle::ALL {
         let is_selected = state.wallpaper == style;
         let btn = button(
             text(style.label())
                 .size(11.0)
-                .font(font::ui_font(if is_selected { Weight::Semibold } else { Weight::Normal }))
-                .color(if is_selected { Color::WHITE } else { palette.text_secondary })
+                .font(font::ui_font(if is_selected {
+                    Weight::Semibold
+                } else {
+                    Weight::Normal
+                }))
+                .color(if is_selected {
+                    Color::WHITE
+                } else {
+                    palette.text_secondary
+                }),
         )
-        .padding(Padding { top: 4.0, right: 10.0, bottom: 4.0, left: 10.0 })
+        .padding(Padding {
+            top: 4.0,
+            right: 10.0,
+            bottom: 4.0,
+            left: 10.0,
+        })
         .style(move |_theme, _status| {
             if is_selected {
                 button::Style {
@@ -651,413 +911,508 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
             }
         })
         .on_press(Message::SetWallpaper(style));
-        wallpaper_picker = wallpaper_picker.push(btn);
+        picker = picker.push(btn);
     }
+    picker.into()
+}
 
-    let scheme_btn = button(
-        text(if is_dark { "🌙 Dark" } else { "☀️ Light" })
-            .size(12.0)
+/// Builds the blur strength selector.
+fn view_blur_preset_picker<'a>(
+    state: &'a State,
+    palette: &'a liquid_glass::UiPalette,
+    is_dark: bool,
+) -> Element<'a, Message, Theme, iced::Renderer> {
+    let mut picker = row![].spacing(4.0).align_y(Alignment::Center);
+    for &preset in &BlurPreset::ALL {
+        let is_selected = state.blur_preset == preset;
+        let btn = button(
+            text(preset.label())
+                .size(11.0)
+                .font(font::ui_font(if is_selected {
+                    Weight::Semibold
+                } else {
+                    Weight::Normal
+                }))
+                .color(if is_selected {
+                    Color::WHITE
+                } else {
+                    palette.text_secondary
+                }),
+        )
+        .padding(Padding {
+            top: 4.0,
+            right: 9.0,
+            bottom: 4.0,
+            left: 9.0,
+        })
+        .style(move |_theme, _status| {
+            if is_selected {
+                button::Style {
+                    background: Some(Background::Color(palette.accent)),
+                    border: Border::default().rounded(6.0),
+                    ..button::Style::default()
+                }
+            } else {
+                button::Style {
+                    background: Some(Background::Color(if is_dark {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                    } else {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.06)
+                    })),
+                    border: Border::default().rounded(6.0),
+                    ..button::Style::default()
+                }
+            }
+        })
+        .on_press(Message::SetBlurPreset(preset));
+        picker = picker.push(btn);
+    }
+    picker.into()
+}
+
+/// Builds the top fused header bar managed by `loyal_drag_bar`.
+fn view_top_header<'a>(
+    state: &'a State,
+    palette: &'a liquid_glass::UiPalette,
+    is_dark: bool,
+) -> Element<'a, Message, Theme, iced::Renderer> {
+    let header_height = state.controller.metrics.header_rect.height;
+    let symmetric_margin = ((header_height - traffic_lights::DIAMETER) * 0.5).max(4.0);
+
+    let traffic_lights = view_traffic_lights_group(state, symmetric_margin);
+
+    let title_text = row![
+        space().width(Length::Fixed(traffic_lights::TITLE_CLEARANCE)),
+        text("Liquid Glass Context Menu")
+            .size(14.0)
+            .font(font::ui_font(Weight::Semibold))
+            .color(palette.text_primary),
+        space().width(8.0),
+        text("Heavy 64pt Blur · Dual Light & Dark")
+            .size(11.5)
+            .font(font::ui_font(Weight::Normal))
+            .color(palette.text_secondary),
+    ]
+    .align_y(Alignment::Center);
+
+    let wallpaper_picker = view_wallpaper_picker(state, palette, is_dark);
+    let blur_picker = view_blur_preset_picker(state, palette, is_dark);
+
+    let theme_btn = button(
+        text(if is_dark { "☀️ Light" } else { "🌙 Dark" })
+            .size(11.0)
             .font(font::ui_font(Weight::Medium))
-            .color(palette.text_primary)
+            .color(palette.text_primary),
     )
-    .padding(Padding { top: 4.0, right: 12.0, bottom: 4.0, left: 12.0 })
+    .padding(Padding {
+        top: 4.0,
+        right: 10.0,
+        bottom: 4.0,
+        left: 10.0,
+    })
     .style(move |_theme, _status| button::Style {
         background: Some(Background::Color(if is_dark {
             Color::from_rgba(1.0, 1.0, 1.0, 0.10)
         } else {
-            Color::from_rgba(0.0, 0.0, 0.0, 0.08)
+            Color::from_rgba(0.0, 0.0, 0.0, 0.06)
         })),
         border: Border::default().rounded(6.0),
         ..button::Style::default()
     })
     .on_press(Message::ToggleColorScheme);
 
-    let top_bar = container(
-        row![
-            traffic_lights,
-            space().width(24.0),
-            title_text,
-            space().width(Length::Fill),
-            wallpaper_picker,
-            space().width(12.0),
-            scheme_btn,
-        ]
-        .align_y(Alignment::Center)
-        .padding(Padding { top: 0.0, right: 16.0, bottom: 0.0, left: 16.0 })
-    )
-    .height(Length::Fixed(52.0))
-    .width(Length::Fill)
-    .style(move |_theme| container::Style {
-        background: Some(Background::Color(if is_dark {
-            Color::from_rgba(0.10, 0.10, 0.12, 0.75)
-        } else {
-            Color::from_rgba(0.96, 0.96, 0.98, 0.80)
-        })),
-        border: Border::default().width(1.0).color(if is_dark {
-            Color::from_rgba(1.0, 1.0, 1.0, 0.10)
-        } else {
-            Color::from_rgba(0.0, 0.0, 0.0, 0.08)
-        }),
-        ..container::Style::default()
-    });
+    let header_row = row![
+        traffic_lights,
+        title_text,
+        space().width(Length::Fill),
+        wallpaper_picker,
+        space().width(8.0),
+        blur_picker,
+        space().width(8.0),
+        theme_btn,
+        space().width(12.0),
+    ]
+    .align_y(Alignment::Center)
+    .height(Length::Fixed(header_height))
+    .width(Length::Fill);
 
-    // 2. Stage Menu Occlusion zones for physics-accurate heavy blur kernel
-    let mut occlusions = Vec::new();
-    // Known approximate bounds for the dual showcase menus centered in 1180x780 window
-    occlusions.push(Rectangle { x: 50.0, y: 130.0, width: 230.0, height: 470.0 });
-    occlusions.push(Rectangle { x: 310.0, y: 130.0, width: 230.0, height: 470.0 });
-    if let Some(pos) = state.floating_menu {
-        occlusions.push(Rectangle {
-            x: pos.x.clamp(10.0, 880.0),
-            y: pos.y.clamp(60.0, 320.0),
-            width: 230.0,
-            height: 470.0,
+    let header_container = container(header_row)
+        .width(Length::Fill)
+        .height(Length::Fixed(header_height))
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(if is_dark {
+                Color::from_rgba(0.10, 0.10, 0.13, 0.72)
+            } else {
+                Color::from_rgba(0.96, 0.96, 0.98, 0.76)
+            })),
+            border: Border::default().width(0.5).color(if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.10)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.08)
+            }),
+            ..container::Style::default()
         });
-    }
 
-    let wallpaper_widget = Canvas::new(WallpaperCanvas {
-        style: state.wallpaper,
-        is_dark,
-        blur_preset: state.blur_preset,
-        menu_occlusions: occlusions,
-    })
-    .width(Length::Fill)
-    .height(Length::Fill);
+    state.controller.loyal_drag_bar(
+        header_height,
+        header_container,
+        Message::DragWindow,
+        Some(Message::ToggleMaximize),
+    )
+}
 
-    // 3. Side-by-Side Dual Showcase Layout (Light & Dark)
-    let light_menu_view = state.light_menu.view(&theme);
-    let dark_menu_view = state.dark_menu.view(&theme);
+/// Visual styling configuration for side-by-side showcase cards.
+#[derive(Debug, Clone, Copy)]
+struct CardStyle {
+    badge_title: &'static str,
+    badge_sub: &'static str,
+    bg: Color,
+    border: Color,
+    shadow: Color,
+}
 
-    let light_column = column![
-        row![
-            text("☀️")
-                .size(13.0),
-            space().width(6.0),
-            text("Light Appearance")
-                .size(13.0)
-                .font(font::ui_font(Weight::Semibold))
-                .color(palette.text_primary),
-            space().width(Length::Fill),
-            text("64pt Milky Glass")
-                .size(11.0)
-                .font(font::ui_font(Weight::Medium))
-                .color(palette.text_secondary),
-        ]
-        .align_y(Alignment::Center)
-        .padding(Padding { top: 0.0, right: 4.0, bottom: 6.0, left: 4.0 }),
-        light_menu_view,
-    ]
-    .width(Length::Fixed(230.0));
-
-    let dark_column = column![
-        row![
-            text("🌙")
-                .size(13.0),
-            space().width(6.0),
-            text("Dark Appearance")
-                .size(13.0)
-                .font(font::ui_font(Weight::Semibold))
-                .color(palette.text_primary),
-            space().width(Length::Fill),
-            text("56pt Charcoal Glass")
-                .size(11.0)
-                .font(font::ui_font(Weight::Medium))
-                .color(palette.text_secondary),
-        ]
-        .align_y(Alignment::Center)
-        .padding(Padding { top: 0.0, right: 4.0, bottom: 6.0, left: 4.0 }),
-        dark_menu_view,
-    ]
-    .width(Length::Fixed(230.0));
-
-    // Blur Presets Selector in the inspector
-    let mut blur_picker = row![].spacing(4.0).align_y(Alignment::Center);
-    for &preset in &BlurPreset::ALL {
-        let is_sel = state.blur_preset == preset;
-        let b_btn = button(
-            text(preset.label())
-                .size(10.0)
-                .font(font::ui_font(if is_sel { Weight::Semibold } else { Weight::Normal }))
-                .color(if is_sel { Color::WHITE } else { palette.text_secondary })
-        )
-        .padding(Padding { top: 4.0, right: 8.0, bottom: 4.0, left: 8.0 })
-        .style(move |_theme, _status| {
-            if is_sel {
-                button::Style {
-                    background: Some(Background::Color(palette.accent)),
-                    border: Border::default().rounded(5.0),
-                    ..button::Style::default()
-                }
-            } else {
-                button::Style {
-                    background: Some(Background::Color(if is_dark {
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.08)
-                    } else {
-                        Color::from_rgba(0.0, 0.0, 0.0, 0.06)
-                    })),
-                    border: Border::default().rounded(5.0),
-                    ..button::Style::default()
-                }
-            }
-        })
-        .on_press(Message::SetBlurPreset(preset));
-        blur_picker = blur_picker.push(b_btn);
-    }
-
-    // Floating Appearance Selector
-    let mut appearance_picker = row![].spacing(4.0).align_y(Alignment::Center);
-    for &app in &FloatingAppearance::ALL {
-        let is_sel = state.floating_appearance == app;
-        let a_btn = button(
-            text(app.label())
-                .size(10.0)
-                .font(font::ui_font(if is_sel { Weight::Semibold } else { Weight::Normal }))
-                .color(if is_sel { Color::WHITE } else { palette.text_secondary })
-        )
-        .padding(Padding { top: 4.0, right: 8.0, bottom: 4.0, left: 8.0 })
-        .style(move |_theme, _status| {
-            if is_sel {
-                button::Style {
-                    background: Some(Background::Color(palette.accent)),
-                    border: Border::default().rounded(5.0),
-                    ..button::Style::default()
-                }
-            } else {
-                button::Style {
-                    background: Some(Background::Color(if is_dark {
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.08)
-                    } else {
-                        Color::from_rgba(0.0, 0.0, 0.0, 0.06)
-                    })),
-                    border: Border::default().rounded(5.0),
-                    ..button::Style::default()
-                }
-            }
-        })
-        .on_press(Message::SetFloatingAppearance(app));
-        appearance_picker = appearance_picker.push(a_btn);
-    }
-
-    // Specification and Control Inspector Card
-    let info_card = container(
+/// Builds a side-by-side menu comparison card.
+fn view_menu_card<'a>(
+    menu: &'a ContextMenu<Message>,
+    style: CardStyle,
+    theme: &'a Theme,
+    palette: &'a liquid_glass::UiPalette,
+) -> Element<'a, Message, Theme, iced::Renderer> {
+    let header_badge = container(
         column![
-            text("Physical Material & HIG Spec")
-                .size(15.0)
+            text(style.badge_title)
+                .size(13.0)
                 .font(font::ui_font(Weight::Bold))
                 .color(palette.text_primary),
-            space().height(8.0),
-            metric_row("Backdrop Blur Kernel", "64.0 pt Ultra-Heavy Dual-Kawase", &palette),
-            metric_row("Container Curvature", "8.0 pt continuous squircle", &palette),
-            metric_row("Hover Capsule Pill", "4.5 pt rounded accent", &palette),
-            metric_row("Item Row Height", "24.0 pt standard", &palette),
-            metric_row("Specular Edge Rim", "1.0 px physical shine", &palette),
-            metric_row("Elevation Shadow", "36.0 pt blur depth drop shadow", &palette),
-            space().height(10.0),
-            text("Frosted Blur Degree")
-                .size(13.0)
-                .font(font::ui_font(Weight::Semibold))
-                .color(palette.text_primary),
-            space().height(4.0),
-            blur_picker,
-            space().height(10.0),
-            text("Spawned Menu Appearance")
-                .size(13.0)
-                .font(font::ui_font(Weight::Semibold))
-                .color(palette.text_primary),
-            space().height(4.0),
-            appearance_picker,
-            space().height(10.0),
-            text("Active Checkbox State")
-                .size(13.0)
-                .font(font::ui_font(Weight::Semibold))
-                .color(palette.text_primary),
-            space().height(4.0),
-            state_pill("Show Status Bar", state.show_status_bar, &palette),
-            state_pill("Show Line Numbers", state.show_line_numbers, &palette),
-            state_pill("Auto Word Wrap", state.word_wrap, &palette),
-            space().height(12.0),
-            button(
-                text("🖱️ Right-Click Anywhere to Spawn at Cursor")
-                    .size(12.0)
-                    .font(font::ui_font(Weight::Medium))
-                    .color(Color::WHITE)
-            )
-            .padding(Padding { top: 8.0, right: 14.0, bottom: 8.0, left: 14.0 })
-            .width(Length::Fill)
-            .style(move |_theme, _status| button::Style {
-                background: Some(Background::Color(palette.accent)),
-                border: Border::default().rounded(7.0),
-                ..button::Style::default()
-            })
-            .on_press(Message::OpenFloatingMenuAt(Point::new(480.0, 260.0))),
+            text(style.badge_sub)
+                .size(10.5)
+                .font(font::ui_font(Weight::Normal))
+                .color(palette.text_secondary),
         ]
-        .spacing(5.0)
+        .spacing(2.0)
+        .align_x(Alignment::Center),
     )
-    .width(Length::Fixed(350.0))
-    .padding(Padding::from(16.0))
-    .style(move |_theme| container::Style {
-        background: Some(Background::Color(if is_dark {
-            Color::from_rgba(0.08, 0.08, 0.10, 0.70)
-        } else {
-            Color::from_rgba(0.98, 0.98, 1.0, 0.75)
-        })),
-        border: Border::default()
-            .rounded(12.0)
-            .width(1.0)
-            .color(if is_dark {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.16)
-            } else {
-                Color::from_rgba(0.0, 0.0, 0.0, 0.12)
-            }),
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.28),
-            offset: Vector::new(0.0, 8.0),
-            blur_radius: 22.0,
-        },
-        ..container::Style::default()
+    .width(Length::Fill)
+    .center_x(Length::Fill)
+    .padding(Padding {
+        top: 6.0,
+        right: 12.0,
+        bottom: 8.0,
+        left: 12.0,
     });
 
-    let showcase_row = row![
-        light_column,
-        space().width(24.0),
-        dark_column,
-        space().width(28.0),
-        info_card,
+    let menu_element = menu.view::<iced::Renderer>(theme);
+
+    let card_box = container(column![header_badge, menu_element].spacing(8.0).align_x(Alignment::Center))
+        .padding(Padding {
+            top: 8.0,
+            right: 8.0,
+            bottom: 12.0,
+            left: 8.0,
+        })
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(style.bg)),
+            border: Border::default()
+                .rounded(14.0)
+                .width(1.0)
+                .color(style.border),
+            shadow: Shadow {
+                color: style.shadow,
+                offset: Vector::new(0.0, 16.0),
+                blur_radius: 36.0,
+            },
+            ..container::Style::default()
+        });
+
+    card_box.into()
+}
+
+/// Builds the bottom status bar.
+fn view_status_bar<'a>(
+    state: &'a State,
+    palette: &'a liquid_glass::UiPalette,
+    is_dark: bool,
+) -> Element<'a, Message, Theme, iced::Renderer> {
+    let status_text = state
+        .last_action
+        .as_deref()
+        .unwrap_or("Ready. Right-click anywhere to summon Liquid Glass Context Menu.");
+
+    let status_content = row![
+        text("STATUS: ")
+            .size(11.0)
+            .font(font::ui_font(Weight::Bold))
+            .color(palette.accent),
+        text(status_text)
+            .size(11.0)
+            .font(font::ui_font(Weight::Normal))
+            .color(palette.text_primary),
+        space().width(Length::Fill),
+        text("Window Shell Resizer & loyal_drag_bar Active")
+            .size(10.5)
+            .font(font::ui_font(Weight::Normal))
+            .color(palette.text_secondary),
     ]
     .align_y(Alignment::Center);
 
-    let stage_content = container(showcase_row)
+    container(status_content)
+        .width(Length::Fill)
+        .padding(Padding {
+            top: 6.0,
+            right: 16.0,
+            bottom: 6.0,
+            left: 16.0,
+        })
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(if is_dark {
+                Color::from_rgba(0.08, 0.08, 0.10, 0.85)
+            } else {
+                Color::from_rgba(0.96, 0.96, 0.98, 0.90)
+            })),
+            border: Border::default().width(0.5).color(if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.10)
+            }),
+            ..container::Style::default()
+        })
+        .into()
+}
+
+#[must_use]
+pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
+    let is_dark = state.controller.is_dark;
+    let theme = &state.theme;
+    let palette = &state.palette;
+
+    // 1. Top fused header bar
+    let draggable_header = view_top_header(state, palette, is_dark);
+
+    // 2. Stage with side-by-side Light & Dark menu cards
+    let light_card = view_menu_card(
+        &state.light_menu,
+        CardStyle {
+            badge_title: "☀️ Light Mode Menu",
+            badge_sub: "64pt Blur · Opal Translucency · 32pt Shadow",
+            bg: Color::from_rgba(1.0, 1.0, 1.0, 0.28),
+            border: Color::from_rgba(1.0, 1.0, 1.0, 0.50),
+            shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.24),
+        },
+        theme,
+        palette,
+    );
+
+    let dark_card = view_menu_card(
+        &state.dark_menu,
+        CardStyle {
+            badge_title: "🌙 Dark Mode Menu",
+            badge_sub: "56pt Blur · Deep Charcoal · 36pt Shadow",
+            bg: Color::from_rgba(0.0, 0.0, 0.0, 0.40),
+            border: Color::from_rgba(1.0, 1.0, 1.0, 0.18),
+            shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.55),
+        },
+        theme,
+        palette,
+    );
+
+    let stage_menus_row = row![light_card, dark_card]
+        .spacing(48.0)
+        .align_y(Alignment::Center);
+
+    let floating_opts_bar = row![
+        text("Floating Right-Click Menu Appearance: ")
+            .size(11.5)
+            .font(font::ui_font(Weight::Medium))
+            .color(palette.text_primary),
+        row(FloatingAppearance::ALL.iter().map(|&app| {
+            let selected = state.floating_appearance == app;
+            button(
+                text(app.label())
+                    .size(11.0)
+                    .font(font::ui_font(if selected {
+                        Weight::Semibold
+                    } else {
+                        Weight::Normal
+                    }))
+                    .color(if selected {
+                        Color::WHITE
+                    } else {
+                        palette.text_secondary
+                    }),
+            )
+            .padding(Padding {
+                top: 3.0,
+                right: 8.0,
+                bottom: 3.0,
+                left: 8.0,
+            })
+            .style(move |_theme, _status| {
+                if selected {
+                    button::Style {
+                        background: Some(Background::Color(palette.accent)),
+                        border: Border::default().rounded(5.0),
+                        ..button::Style::default()
+                    }
+                } else {
+                    button::Style {
+                        background: Some(Background::Color(if is_dark {
+                            Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                        } else {
+                            Color::from_rgba(0.0, 0.0, 0.0, 0.06)
+                        })),
+                        border: Border::default().rounded(5.0),
+                        ..button::Style::default()
+                    }
+                }
+            })
+            .on_press(Message::SetFloatingAppearance(app))
+            .into()
+        }))
+        .spacing(4.0),
+        space().width(Length::Fill),
+        text("💡 Right-click anywhere to pop up dynamic menu at cursor")
+            .size(11.0)
+            .font(font::ui_font(Weight::Normal))
+            .color(palette.text_secondary),
+    ]
+    .align_y(Alignment::Center)
+    .padding(Padding {
+        top: 6.0,
+        right: 14.0,
+        bottom: 6.0,
+        left: 14.0,
+    });
+
+    let floating_opts_container = container(floating_opts_bar)
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(if is_dark {
+                Color::from_rgba(0.12, 0.12, 0.15, 0.70)
+            } else {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.65)
+            })),
+            border: Border::default().rounded(8.0).width(0.5).color(if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.10)
+            }),
+            ..container::Style::default()
+        });
+
+    let stage_content = column![
+        floating_opts_container,
+        stage_menus_row,
+    ]
+    .spacing(24.0)
+    .align_x(Alignment::Center);
+
+    let stage_centered = container(stage_content)
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
         .center_y(Length::Fill);
 
-    // 4. Bottom Toast status pill
-    let toast_text = state
-        .last_action
-        .as_deref()
-        .unwrap_or("Right-click anywhere to trigger the context menu");
-
-    let toast_pill = container(
-        row![
-            text("💡")
-                .size(13.0),
-            space().width(8.0),
-            text(toast_text)
-                .size(12.0)
-                .font(font::ui_font(Weight::Medium))
-                .color(palette.text_primary),
-        ]
-        .align_y(Alignment::Center)
-    )
-    .padding(Padding { top: 6.0, right: 16.0, bottom: 6.0, left: 14.0 })
-    .style(move |_theme| container::Style {
-        background: Some(Background::Color(if is_dark {
-            Color::from_rgba(0.14, 0.14, 0.17, 0.88)
-        } else {
-            Color::from_rgba(0.95, 0.95, 0.98, 0.92)
-        })),
-        border: Border::default()
-            .rounded(20.0)
-            .width(1.0)
-            .color(if is_dark {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.18)
-            } else {
-                Color::from_rgba(0.0, 0.0, 0.0, 0.14)
-            }),
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.32),
-            offset: Vector::new(0.0, 4.0),
-            blur_radius: 14.0,
+    // Approximate occlusion rectangles for heavy blur diffusion core
+    let menu_occlusions = vec![
+        Rectangle {
+            x: 200.0,
+            y: 140.0,
+            width: 240.0,
+            height: 480.0,
         },
-        ..container::Style::default()
-    });
+        Rectangle {
+            x: 520.0,
+            y: 140.0,
+            width: 240.0,
+            height: 480.0,
+        },
+    ];
 
-    let toast_layer = container(toast_pill)
+    let wallpaper_canvas = Canvas::new(WallpaperCanvas {
+        style: state.wallpaper,
+        is_dark,
+        blur_preset: state.blur_preset,
+        menu_occlusions,
+    })
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    let wallpaper_layer = container(wallpaper_canvas)
         .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(iced::alignment::Horizontal::Center)
-        .align_y(iced::alignment::Vertical::Bottom)
-        .padding(Padding { top: 0.0, right: 0.0, bottom: 18.0, left: 0.0 });
+        .height(Length::Fill);
 
-    // 5. Floating right-click context menu overlay
-    let mut main_stack = stack![wallpaper_widget, stage_content, toast_layer];
+    let stage_stack = stack![wallpaper_layer, stage_centered]
+        .width(Length::Fill)
+        .height(Length::Fill);
 
+    let page_content = if state.show_status_bar {
+        column![
+            draggable_header,
+            stage_stack,
+            view_status_bar(state, palette, is_dark)
+        ]
+    } else {
+        column![draggable_header, stage_stack]
+    }
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    let mut layers: Vec<Element<'_, Message, Theme, iced::Renderer>> = vec![page_content.into()];
+
+    // 3. Optional floating context menu at cursor
     if let Some(pos) = state.floating_menu {
-        // Transparent dismissal backdrop
-        let backdrop = button(space().width(Length::Fill).height(Length::Fill))
-            .style(|_theme, _status| button::Style {
-                background: None,
-                border: Border::default(),
-                ..button::Style::default()
-            })
-            .on_press(Message::DismissFloatingMenu);
+        let dismiss_backdrop = iced::widget::mouse_area(
+            container(space())
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .on_press(Message::DismissFloatingMenu);
 
-        let floating_scheme = state.resolved_floating_scheme();
-        let floating_menu_view = if floating_scheme == UiColorScheme::Light {
-            state.light_menu.view(&theme)
-        } else {
-            state.dark_menu.view(&theme)
-        };
+        let floating_menu_widget = state.floating_menu_cached.view::<iced::Renderer>(theme);
 
-        // Clamp menu within stage bounds (assumed window ~1180x780, menu ~230x470)
-        let clamped_x = pos.x.clamp(10.0, 930.0);
-        let clamped_y = pos.y.clamp(60.0, 300.0);
-
-        let menu_positioned = container(floating_menu_view)
+        let positioned_menu = container(floating_menu_widget)
             .padding(Padding {
-                top: clamped_y,
-                left: clamped_x,
+                top: (pos.y - 10.0).max(10.0),
+                left: (pos.x - 10.0).max(10.0),
                 right: 0.0,
                 bottom: 0.0,
-            });
+            })
+            .width(Length::Fill)
+            .height(Length::Fill);
 
-        let overlay_layer = stack![backdrop, menu_positioned];
-        main_stack = main_stack.push(overlay_layer);
+        let overlay_stack = stack![dismiss_backdrop, positioned_menu]
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        layers.push(overlay_stack.into());
     }
 
-    column![top_bar, main_stack].into()
-}
+    let root_page = container(iced::widget::Stack::with_children(layers))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(if is_dark {
+                Color::from_rgb8(18, 18, 22)
+            } else {
+                Color::from_rgb8(248, 249, 251)
+            })),
+            border: Border {
+                radius: window_metrics::DEFAULT_CORNER_RADIUS.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
 
-fn metric_row<'a>(label: &'static str, value: &'static str, palette: &liquid_glass::UiPalette) -> Element<'a, Message, Theme, iced::Renderer> {
-    row![
-        text(label)
-            .size(12.0)
-            .font(font::ui_font(Weight::Normal))
-            .color(palette.text_secondary),
-        space().width(Length::Fill),
-        text(value)
-            .size(12.0)
-            .font(font::ui_font(Weight::Medium))
-            .color(palette.text_primary),
-    ]
-    .align_y(Alignment::Center)
-    .into()
-}
-
-fn state_pill<'a>(label: &'static str, active: bool, palette: &liquid_glass::UiPalette) -> Element<'a, Message, Theme, iced::Renderer> {
-    row![
-        text(if active { "●" } else { "○" })
-            .size(10.0)
-            .color(if active { palette.accent } else { palette.text_tertiary }),
-        space().width(6.0),
-        text(label)
-            .size(12.0)
-            .font(font::ui_font(Weight::Normal))
-            .color(palette.text_primary),
-        space().width(Length::Fill),
-        text(if active { "Active" } else { "Off" })
-            .size(11.0)
-            .font(font::ui_font(Weight::Semibold))
-            .color(if active { palette.accent } else { palette.text_tertiary }),
-    ]
-    .align_y(Alignment::Center)
-    .into()
+    // 4. Wrap with bmol-window-shell 8-direction resize handles and physical non-client rim
+    state.controller.wrap_window_with_resizer(
+        root_page,
+        window_metrics::DEFAULT_CORNER_RADIUS,
+        Message::ResizeWindow,
+    )
 }
 
 fn main() -> iced::Result {
     let fonts = font::ui_fonts();
-    let window_settings = iced::window::Settings {
+    let window_settings = window::Settings {
         size: Size::new(1180.0, 780.0),
         transparent: true,
         decorations: false,
@@ -1065,7 +1420,7 @@ fn main() -> iced::Result {
     };
 
     let mut app = iced::application::<State, Message, Theme, iced::Renderer>(boot, update, view)
-        .title("Liquid Glass Context Menu - Heavy Blur Showcase")
+        .title("Liquid Glass Context Menu - Window Shell Edition")
         .theme(app_theme)
         .subscription(subscription)
         .window(window_settings);
@@ -1086,7 +1441,6 @@ mod tests {
     #[test]
     fn test_initial_state_defaults() {
         let state = State::default();
-        assert_eq!(state.scheme, UiColorScheme::Dark);
         assert_eq!(state.wallpaper, WallpaperStyle::Aurora);
         assert_eq!(state.blur_preset, BlurPreset::UltraHeavy64);
         assert_eq!(state.floating_appearance, FloatingAppearance::FollowTheme);
@@ -1094,6 +1448,42 @@ mod tests {
         assert!(state.show_line_numbers);
         assert!(!state.word_wrap);
         assert_eq!(state.floating_menu, None);
+        assert_eq!(state.controller.window_id, None);
+    }
+
+    #[test]
+    fn test_window_shell_controller_lifecycle() {
+        let mut state = State::default();
+        let test_id = window::Id::unique();
+
+        // 1. WindowOpened associates window id
+        let _ = update(&mut state, Message::WindowOpened(test_id));
+        assert_eq!(state.controller.window_id, Some(test_id));
+
+        // 2. WindowResized updates controller metrics
+        let _ = update(&mut state, Message::WindowResized(Size::new(1200.0, 800.0)));
+        assert_eq!(state.controller.window_size, (1200.0, 800.0));
+        assert_eq!(state.controller.metrics.window_size, (1200.0, 800.0));
+
+        // 3. Traffic lights hover interaction
+        assert_eq!(state.traffic_lights.hover_target, 0.0);
+        let _ = update(&mut state, Message::TrafficLightsHover(true));
+        assert_eq!(state.traffic_lights.hover_target, 1.0);
+        let _ = update(&mut state, Message::TrafficLightsHover(false));
+        assert_eq!(state.traffic_lights.hover_target, 0.0);
+
+        // 4. Focus/Unfocus handling
+        let _ = update(
+            &mut state,
+            Message::WindowEvent((test_id, window::Event::Unfocused)),
+        );
+        assert!(!state.controller.is_focused);
+
+        let _ = update(
+            &mut state,
+            Message::WindowEvent((test_id, window::Event::Focused)),
+        );
+        assert!(state.controller.is_focused);
     }
 
     #[test]
@@ -1129,10 +1519,10 @@ mod tests {
     #[test]
     fn test_theme_and_wallpaper_switching() {
         let mut state = State::default();
-        assert_eq!(state.scheme, UiColorScheme::Dark);
+        let orig_theme = state.controller.is_dark;
 
         let _ = update(&mut state, Message::ToggleColorScheme);
-        assert_eq!(state.scheme, UiColorScheme::Light);
+        assert_ne!(state.controller.is_dark, orig_theme);
 
         let _ = update(&mut state, Message::SetWallpaper(WallpaperStyle::Sunset));
         assert_eq!(state.wallpaper, WallpaperStyle::Sunset);
@@ -1144,7 +1534,8 @@ mod tests {
 
     #[test]
     fn test_demo_menu_building_and_rendering() {
-        let state = State::default();
+        let mut state = State::default();
+        state.rebuild_menus();
         let menu = build_demo_menu(&state);
         assert!(!menu.is_empty());
         assert!(menu.len() >= 10);
@@ -1154,7 +1545,8 @@ mod tests {
         drop(elem_dark);
 
         let mut light_state = State::default();
-        light_state.scheme = UiColorScheme::Light;
+        light_state.controller.set_dark_mode(false);
+        light_state.rebuild_menus();
         let theme_light = app_theme(&light_state);
         let elem_light = menu.view::<iced::Renderer>(&theme_light);
         drop(elem_light);
