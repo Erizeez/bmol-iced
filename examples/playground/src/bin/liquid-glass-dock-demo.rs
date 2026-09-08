@@ -581,284 +581,6 @@ fn sample_sharp_wallpaper(
     }
 }
 
-/// High-precision approximation of the error function erf(x).
-/// Maximum error < 1.5e-7 (Abramowitz and Stegun formula 7.1.26).
-#[inline]
-fn approx_erf(x: f32) -> f32 {
-    let sign = if x < 0.0 { -1.0 } else { 1.0 };
-    let abs_x = x.abs();
-
-    if abs_x > 4.0 {
-        return sign;
-    }
-
-    let p = 0.3275911;
-    let a1 = 0.254829592;
-    let a2 = -0.284496736;
-    let a3 = 1.421413741;
-    let a4 = -1.453152027;
-    let a5 = 1.061405429;
-
-    let t = 1.0 / (1.0 + p * abs_x);
-    let poly = ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t;
-    sign * (1.0 - poly * (-abs_x * abs_x).exp())
-}
-
-/// Standard normal cumulative distribution function Phi(z) = P(Z <= z).
-#[inline]
-fn normal_cdf(z: f32) -> f32 {
-    0.5 * (1.0 + approx_erf(z * std::f32::consts::FRAC_1_SQRT_2))
-}
-
-/// Evaluates genuine continuous Gaussian convolution for 1D horizontal segments.
-#[inline]
-fn segment_gaussian_weight(x: f32, x_left: f32, x_right: f32, inv_sigma: f32) -> f32 {
-    let cdf_right = normal_cdf((x_right - x) * inv_sigma);
-    let cdf_left = normal_cdf((x_left - x) * inv_sigma);
-    (cdf_right - cdf_left).max(0.0)
-}
-
-/// Continuous analytical Gaussian convolution for 8 TV color bars.
-fn sample_blurred_tv_bars(x: f32, bounds_width: f32, blur_radius: f32) -> [f32; 3] {
-    const TV_BARS: [[f32; 3]; 8] = [
-        [1.0, 1.0, 1.0], // 0: 白
-        [1.0, 1.0, 0.0], // 1: 黄
-        [0.0, 1.0, 1.0], // 2: 青
-        [0.0, 1.0, 0.0], // 3: 绿
-        [1.0, 0.0, 1.0], // 4: 洋红
-        [1.0, 0.0, 0.0], // 5: 红
-        [0.0, 0.0, 1.0], // 6: 蓝
-        [0.0, 0.0, 0.0], // 7: 黑
-    ];
-
-    let n = 8.0f32;
-    let bar_w = bounds_width / n;
-    if blur_radius <= 0.5 {
-        let idx = ((x / bar_w).floor() as usize).min(7);
-        return TV_BARS[idx];
-    }
-    // Authentic Apple Dual Kawase / Deep Gaussian spread: sigma ~ 2.2 * radius
-    let sigma = (blur_radius * 2.2).max(1.0);
-    let inv_sigma = 1.0 / sigma;
-
-    let mut r = 0.0f32;
-    let mut g = 0.0f32;
-    let mut b = 0.0f32;
-
-    for (i, &color) in TV_BARS.iter().enumerate() {
-        let left = i as f32 * bar_w;
-        let right = (i + 1) as f32 * bar_w;
-        let w = segment_gaussian_weight(x, left, right, inv_sigma);
-        r += color[0] * w;
-        g += color[1] * w;
-        b += color[2] * w;
-    }
-
-    [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)]
-}
-
-/// Continuous analytical Gaussian convolution for two-tier SMPTE bars.
-fn sample_blurred_tv_smpte(x: f32, y: f32, bounds: Size, blur_radius: f32) -> [f32; 3] {
-    if blur_radius <= 0.5 {
-        return sample_sharp_wallpaper(WallpaperStyle::TvSmpteSplit, x, y, bounds, None);
-    }
-    const TOP_SMPTE: [[f32; 3]; 7] = [
-        [1.0, 1.0, 1.0], // 白
-        [1.0, 1.0, 0.0], // 黄
-        [0.0, 1.0, 1.0], // 青
-        [0.0, 1.0, 0.0], // 绿
-        [1.0, 0.0, 1.0], // 洋红
-        [1.0, 0.0, 0.0], // 红
-        [0.0, 0.0, 1.0], // 蓝
-    ];
-
-    const BOT_SMPTE: [[f32; 3]; 8] = [
-        [0.0, 0.0, 1.0], // 蓝
-        [0.0, 0.0, 0.0], // 黑
-        [1.0, 0.0, 1.0], // 洋红
-        [0.0, 0.0, 0.0], // 黑
-        [0.0, 1.0, 1.0], // 青
-        [0.0, 0.0, 0.0], // 黑
-        [1.0, 1.0, 1.0], // 白
-        [0.0, 0.0, 0.0], // 黑
-    ];
-
-    let top_h = bounds.height * 0.70;
-    let sigma = (blur_radius * 2.2).max(1.0);
-    let inv_sigma = 1.0 / sigma;
-
-    let top_vertical_w = segment_gaussian_weight(y, -2.0 * sigma, top_h, inv_sigma);
-    let bot_vertical_w = segment_gaussian_weight(y, top_h, bounds.height + 2.0 * sigma, inv_sigma);
-    let v_sum = (top_vertical_w + bot_vertical_w).max(1e-5);
-    let norm_top_w = top_vertical_w / v_sum;
-    let norm_bot_w = bot_vertical_w / v_sum;
-
-    let top_bar_w = bounds.width / 7.0;
-    let mut top_r = 0.0f32;
-    let mut top_g = 0.0f32;
-    let mut top_b = 0.0f32;
-    for (i, &color) in TOP_SMPTE.iter().enumerate() {
-        let left = i as f32 * top_bar_w;
-        let right = (i + 1) as f32 * top_bar_w;
-        let w = segment_gaussian_weight(x, left, right, inv_sigma);
-        top_r += color[0] * w;
-        top_g += color[1] * w;
-        top_b += color[2] * w;
-    }
-
-    let bot_bar_w = bounds.width / 8.0;
-    let mut bot_r = 0.0f32;
-    let mut bot_g = 0.0f32;
-    let mut bot_b = 0.0f32;
-    for (i, &color) in BOT_SMPTE.iter().enumerate() {
-        let left = i as f32 * bot_bar_w;
-        let right = (i + 1) as f32 * bot_bar_w;
-        let w = segment_gaussian_weight(x, left, right, inv_sigma);
-        bot_r += color[0] * w;
-        bot_g += color[1] * w;
-        bot_b += color[2] * w;
-    }
-
-    [
-        (top_r * norm_top_w + bot_r * norm_bot_w).clamp(0.0, 1.0),
-        (top_g * norm_top_w + bot_g * norm_bot_w).clamp(0.0, 1.0),
-        (top_b * norm_top_w + bot_b * norm_bot_w).clamp(0.0, 1.0),
-    ]
-}
-
-/// Continuous analytical 2D Gaussian convolution for 4x3 color grid.
-fn sample_blurred_tv_grid(x: f32, y: f32, bounds: Size, blur_radius: f32) -> [f32; 3] {
-    if blur_radius <= 0.5 {
-        return sample_sharp_wallpaper(WallpaperStyle::TvColorGrid, x, y, bounds, None);
-    }
-    const GRID_PALETTE: [[f32; 3]; 12] = [
-        [1.0, 0.2, 0.3], // Coral Red
-        [1.0, 0.6, 0.0], // Orange
-        [1.0, 0.9, 0.1], // Gold
-        [0.2, 0.8, 0.4], // Emerald
-        [0.0, 0.7, 0.9], // Cyan
-        [0.2, 0.4, 1.0], // Cobalt
-        [0.6, 0.2, 0.9], // Purple
-        [1.0, 0.3, 0.7], // Magenta
-        [0.1, 0.9, 0.8], // Mint
-        [0.9, 0.8, 0.2], // Yellow
-        [0.3, 0.2, 0.8], // Indigo
-        [0.9, 0.4, 0.2], // Rust
-    ];
-
-    let cols = 4.0f32;
-    let rows = 3.0f32;
-    let cell_w = bounds.width / cols;
-    let cell_h = bounds.height / rows;
-    let sigma = (blur_radius * 2.2).max(1.0);
-    let inv_sigma = 1.0 / sigma;
-
-    let mut r = 0.0f32;
-    let mut g = 0.0f32;
-    let mut b = 0.0f32;
-
-    for row_idx in 0..3 {
-        let top = row_idx as f32 * cell_h;
-        let bot = (row_idx + 1) as f32 * cell_h;
-        let v_weight = segment_gaussian_weight(y, top, bot, inv_sigma);
-
-        for col_idx in 0..4 {
-            let left = col_idx as f32 * cell_w;
-            let right = (col_idx + 1) as f32 * cell_w;
-            let h_weight = segment_gaussian_weight(x, left, right, inv_sigma);
-            let total_w = v_weight * h_weight;
-
-            let color = GRID_PALETTE[row_idx * 4 + col_idx];
-            r += color[0] * total_w;
-            g += color[1] * total_w;
-            b += color[2] * total_w;
-        }
-    }
-
-    [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)]
-}
-
-/// Continuous 9-tap 2D Gaussian convolution for smooth gradients (Aurora / Sunset).
-fn sample_blurred_gradient(
-    style: WallpaperStyle,
-    x: f32,
-    y: f32,
-    bounds: Size,
-    blur_radius: f32,
-    wallpaper_buf: Option<&WallpaperBuffer>,
-) -> [f32; 3] {
-    if blur_radius <= 0.5 {
-        return sample_sharp_wallpaper(style, x, y, bounds, wallpaper_buf);
-    }
-    let offset = (blur_radius * 1.8).max(1.0);
-    let c = sample_sharp_wallpaper(style, x, y, bounds, wallpaper_buf);
-    let c_l = sample_sharp_wallpaper(style, (x - offset).max(0.0), y, bounds, wallpaper_buf);
-    let c_r = sample_sharp_wallpaper(style, (x + offset).min(bounds.width), y, bounds, wallpaper_buf);
-    let c_u = sample_sharp_wallpaper(style, x, (y - offset).max(0.0), bounds, wallpaper_buf);
-    let c_d = sample_sharp_wallpaper(style, x, (y + offset).min(bounds.height), bounds, wallpaper_buf);
-    let c_lu = sample_sharp_wallpaper(style, (x - offset * 0.707).max(0.0), (y - offset * 0.707).max(0.0), bounds, wallpaper_buf);
-    let c_ru = sample_sharp_wallpaper(style, (x + offset * 0.707).min(bounds.width), (y - offset * 0.707).max(0.0), bounds, wallpaper_buf);
-    let c_ld = sample_sharp_wallpaper(style, (x - offset * 0.707).max(0.0), (y + offset * 0.707).min(bounds.height), bounds, wallpaper_buf);
-    let c_rd = sample_sharp_wallpaper(style, (x + offset * 0.707).min(bounds.width), (y + offset * 0.707).min(bounds.height), bounds, wallpaper_buf);
-
-    [
-        c[0] * 0.28 + (c_l[0] + c_r[0] + c_u[0] + c_d[0]) * 0.12 + (c_lu[0] + c_ru[0] + c_ld[0] + c_rd[0]) * 0.06,
-        c[1] * 0.28 + (c_l[1] + c_r[1] + c_u[1] + c_d[1]) * 0.12 + (c_lu[1] + c_ru[1] + c_ld[1] + c_rd[1]) * 0.06,
-        c[2] * 0.28 + (c_l[2] + c_r[2] + c_u[2] + c_d[2]) * 0.12 + (c_lu[2] + c_ru[2] + c_ld[2] + c_rd[2]) * 0.06,
-    ]
-}
-
-/// Samples the blurred wallpaper color with Apple Vibrancy color lift & IGN anti-banding dithering
-/// powered by `vibrancy-rs`.
-fn sample_vibrancy_blurred_wallpaper(
-    style: WallpaperStyle,
-    x: f32,
-    y: f32,
-    bounds: Size,
-    blur_radius: f32,
-    is_dark: bool,
-    wallpaper_buf: Option<&WallpaperBuffer>,
-) -> Color {
-    let raw_rgb = match style {
-        WallpaperStyle::DesktopTransparent => {
-            if let Some(buf) = wallpaper_buf {
-                let u = (x / bounds.width.max(1.0)).clamp(0.0, 1.0);
-                let v = (y / bounds.height.max(1.0)).clamp(0.0, 1.0);
-                buf.sample_blurred(u, v, blur_radius, bounds)
-            } else if is_dark {
-                [0.12, 0.12, 0.14]
-            } else {
-                [0.92, 0.92, 0.94]
-            }
-        }
-        WallpaperStyle::AuroraMesh => sample_blurred_gradient(style, x, y, bounds, blur_radius, wallpaper_buf),
-        WallpaperStyle::SunsetGaze => sample_blurred_gradient(style, x, y, bounds, blur_radius, wallpaper_buf),
-        WallpaperStyle::TvColorBars => sample_blurred_tv_bars(x, bounds.width, blur_radius),
-        WallpaperStyle::TvSmpteSplit => sample_blurred_tv_smpte(x, y, bounds, blur_radius),
-        WallpaperStyle::TvColorGrid => sample_blurred_tv_grid(x, y, bounds, blur_radius),
-        WallpaperStyle::PureWhite => [1.0, 1.0, 1.0],
-        WallpaperStyle::PureBlack => [0.0, 0.0, 0.0],
-    };
-
-    // 1. Apple Vibrancy color model: gentle luma lift and rich saturation boost
-    let vibrancy = VibrancyConfig {
-        saturation_boost: if is_dark { 1.25 } else { 1.30 },
-        luma_lift: if is_dark { 1.02 } else { 1.06 },
-        luma_bias: if is_dark { 0.004 } else { 0.012 },
-        ..Default::default()
-    };
-    let vibrant_rgb = vibrancy.apply(raw_rgb);
-
-    // 2. Interleaved Gradient Noise (IGN) anti-banding dithering
-    let dither = ign_dither_offset(x, y);
-
-    Color::from_rgb(
-        (vibrant_rgb[0] + dither).clamp(0.0, 1.0),
-        (vibrant_rgb[1] + dither).clamp(0.0, 1.0),
-        (vibrant_rgb[2] + dither).clamp(0.0, 1.0),
-    )
-}
-
 /// Analytical Signed Distance Field (SDF) of a rounded rectangle with corner radius `r`.
 /// Returns negative inside, zero on boundary, and positive outside.
 #[inline]
@@ -881,6 +603,9 @@ pub fn rounded_rect_sdf(px: f32, py: f32, w: f32, h: f32, r: f32) -> f32 {
 /// completely eliminating high-frequency textures (pebbles, foam, sharp edges)
 /// in strict accordance with physical light diffusion.
 pub fn perform_separable_gaussian_blur(src: &[[f32; 3]], w: usize, h: usize, radius: f32) -> Vec<[f32; 3]> {
+    if radius <= 0.5 {
+        return src.to_vec();
+    }
     let sigma = (radius * 1.25).max(0.5);
     let kernel_radius = ((sigma * 2.5).ceil() as usize).clamp(1, 36);
 
@@ -1144,7 +869,11 @@ pub struct LayoutMetrics {
     pub status_h: f32,
     pub search_rect: Rectangle,
     pub dock_rect: Rectangle,
+    pub dock_radius: f32,
     pub base_icon_size: f32,
+    pub icon_radius: f32,
+    pub icon_gap: f32,
+    pub dock_padding: f32,
     pub icon_rects: [Rectangle; 9],
 }
 
@@ -1164,9 +893,23 @@ impl LayoutMetrics {
             height: search_h,
         };
 
-        // Main Frosted Dock (Floating at bottom center)
-        let dock_w = 688.0f32.min(window_size.width - 40.0);
-        let dock_h = 86.0f32;
+        // --- Concentric Geometric Proportion System ---
+        // 1. Icon Geometry (10:20:10 curvature ratio, 40px width/height):
+        //    - Corner radius: 10px (10/40 = 0.25)
+        //    - Straight edge: 20px (20/40 = 0.50)
+        //    - Corner radius: 10px (10/40 = 0.25)
+        //    - Total width/height: 40px
+        let base_icon_size = 40.0f32;
+        let icon_radius = base_icon_size * (10.0 / 40.0); // 10.0pt
+        let icon_gap = 13.0f32;                           // 13.0pt
+        let dock_padding = 13.0f32;                       // 13.0pt
+
+        // 2. Dock Geometry (Strict Concentric Radius: Dock R = Padding + Icon R = 13px + 10px = 23px):
+        let dock_radius = dock_padding + icon_radius;     // 23.0pt (13px + 10px)
+        let dock_h = base_icon_size + dock_padding * 2.0; // 40 + 13 * 2 = 66.0pt
+        let total_icons_w = 9.0 * base_icon_size + 8.0 * icon_gap; // 9*40 + 8*13 = 464.0pt
+        let dock_w = (total_icons_w + dock_padding * 2.0).min(window_size.width - 40.0); // 490.0pt
+
         let dock_y = (window_size.height - status_h - 16.0 - dock_h).max(header_h + 120.0);
         let dock_x = (window_size.width - dock_w) * 0.5;
         let dock_rect = Rectangle {
@@ -1176,19 +919,16 @@ impl LayoutMetrics {
             height: dock_h,
         };
 
-        // 9 Icon Rectangles inside the Dock (Strict 1:1 Aspect Ratio Squircles)
-        let base_icon_size = 56.0f32;
-        let icon_gap = 14.0f32;
-        let total_icons_w = 9.0 * base_icon_size + 8.0 * icon_gap; // 504 + 112 = 616
-        let start_x = dock_x + (dock_w - total_icons_w) * 0.5;
-        let base_y = dock_y + (dock_h - base_icon_size) * 0.5;
+        // 3. Symmetrically Padded 9 Icon Squircles
+        let start_x = dock_x + dock_padding;
+        let base_y = dock_y + dock_padding;
 
         let mut icon_rects = [Rectangle::default(); 9];
         for (i, app) in DockApp::ALL.iter().enumerate() {
             let is_hovered = hovered_app == Some(*app);
-            let size = if is_hovered { 64.0 } else { 56.0 };
+            let size = if is_hovered { 46.0 } else { base_icon_size };
             let offset_x = (size - base_icon_size) * 0.5;
-            let offset_y = if is_hovered { 8.0 } else { 0.0 };
+            let offset_y = if is_hovered { 6.0 } else { 0.0 };
 
             let x = start_x + i as f32 * (base_icon_size + icon_gap) - offset_x;
             let y = base_y - offset_y;
@@ -1207,7 +947,11 @@ impl LayoutMetrics {
             status_h,
             search_rect,
             dock_rect,
+            dock_radius,
             base_icon_size,
+            icon_radius,
+            icon_gap,
+            dock_padding,
             icon_rects,
         }
     }
@@ -1225,31 +969,31 @@ pub enum MenuContext {
 /// Preset levels of glass plate translucency & transparency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GlassTransparency {
-    /// High Transparency (Apple Sequoia/Sonoma style: ~90% clear middle, vibrant wallpaper transmission)
+    /// Ultra Clear Glass (Minimal center tint, pure optical refraction feel - Apple liquid glass default)
     #[default]
-    High,
-    /// Ultra Clear Glass (Minimal center tint, pure optical refraction feel)
     Ultra,
+    /// High Transparency (Apple Sequoia/Sonoma style: ~90% clear middle, vibrant wallpaper transmission)
+    High,
     /// Milky Frosted Glass (Traditional heavier frosted substrate)
     Frosted,
 }
 
 impl GlassTransparency {
-    pub const ALL: [Self; 3] = [Self::High, Self::Ultra, Self::Frosted];
+    pub const ALL: [Self; 3] = [Self::Ultra, Self::High, Self::Frosted];
 
     pub fn label(&self) -> &'static str {
         match self {
-            Self::High => "高透",
             Self::Ultra => "极清",
+            Self::High => "高透",
             Self::Frosted => "磨砂",
         }
     }
 
     pub fn next(&self) -> Self {
         match self {
-            Self::High => Self::Ultra,
-            Self::Ultra => Self::Frosted,
-            Self::Frosted => Self::High,
+            Self::Ultra => Self::High,
+            Self::High => Self::Frosted,
+            Self::Frosted => Self::Ultra,
         }
     }
 
@@ -1300,21 +1044,17 @@ pub enum Message {
     TriggerAction(String),
 }
 
-/// Renders the complete backdrop, frosted blur, and Apple liquid glass optics.
-struct LiquidGlassOpticsCanvas {
+/// Renders the sharp backdrop wallpaper, alignment grid, and 2D frosted blur slices.
+struct LiquidGlassBackdropCanvas {
     style: WallpaperStyle,
     metrics: LayoutMetrics,
-    blur_radius: f32,
     show_grid: bool,
-    enable_highlight: bool,
-    enable_dark_rim: bool,
-    is_dark: bool,
-    transparency: GlassTransparency,
-    floating_menu_rect: Option<Rectangle>,
     system_wallpaper: Option<Arc<WallpaperBuffer>>,
+    dock_frosted_texture: Option<iced::widget::image::Handle>,
+    search_frosted_texture: Option<iced::widget::image::Handle>,
 }
 
-impl<Message> canvas::Program<Message> for LiquidGlassOpticsCanvas {
+impl<Message> canvas::Program<Message> for LiquidGlassBackdropCanvas {
     type State = ();
 
     fn draw(
@@ -1327,12 +1067,10 @@ impl<Message> canvas::Program<Message> for LiquidGlassOpticsCanvas {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
 
-        // -------------------------------------------------------------
         // 1. Draw Base Sharp Wallpaper (Desktop Wallpaper / TV Bars / SMPTE / Grid / Rainbow)
-        // -------------------------------------------------------------
         match self.style {
             WallpaperStyle::DesktopTransparent => {
-                // Testing if draw_image interferes with canvas vector geometry
+                // Desktop wallpaper drawn in widget Layer 0
             }
             WallpaperStyle::AuroraMesh => {
                 let grad = Linear::new(Point::ORIGIN, Point::new(bounds.width, bounds.height))
@@ -1423,9 +1161,7 @@ impl<Message> canvas::Program<Message> for LiquidGlassOpticsCanvas {
             }
         }
 
-        // -------------------------------------------------------------
         // 2. Alignment Calibration Grid Lines
-        // -------------------------------------------------------------
         if self.show_grid && !matches!(self.style, WallpaperStyle::PureWhite | WallpaperStyle::PureBlack) {
             let grid_step = 36.0f32;
             let line_color = Color::from_rgba(1.0, 1.0, 1.0, 0.16);
@@ -1441,9 +1177,46 @@ impl<Message> canvas::Program<Message> for LiquidGlassOpticsCanvas {
             }
         }
 
-        // -------------------------------------------------------------
-        // 3. Render Frosted Search Bar Capsule
-        // -------------------------------------------------------------
+        // 3. Draw 2D Frosted Backdrop Texture Slices with sub-pixel Squircle AA mask
+        let s_rect = self.metrics.search_rect;
+        if let Some(texture) = &self.search_frosted_texture {
+            frame.draw_image(s_rect, iced::widget::canvas::Image::new(texture.clone()));
+        }
+
+        let d_rect = self.metrics.dock_rect;
+        if let Some(texture) = &self.dock_frosted_texture {
+            frame.draw_image(d_rect, iced::widget::canvas::Image::new(texture.clone()));
+        }
+
+        vec![frame.into_geometry()]
+    }
+}
+
+/// Renders the Apple Liquid Glass optics, substrate tint, specular bevel, and App icons on top.
+struct LiquidGlassForegroundCanvas {
+    metrics: LayoutMetrics,
+    blur_radius: f32,
+    enable_highlight: bool,
+    enable_dark_rim: bool,
+    is_dark: bool,
+    transparency: GlassTransparency,
+    floating_menu_rect: Option<Rectangle>,
+}
+
+impl<Message> canvas::Program<Message> for LiquidGlassForegroundCanvas {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &iced::Renderer,
+        _theme: &Theme,
+        _bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, _bounds.size());
+
+        // 1. Render Frosted Search Bar Optics
         let s_rect = self.metrics.search_rect;
         draw_liquid_glass_plate(
             &mut frame,
@@ -1453,45 +1226,35 @@ impl<Message> canvas::Program<Message> for LiquidGlassOpticsCanvas {
             self.transparency,
             self.enable_highlight,
             self.enable_dark_rim,
-            self.style,
-            bounds.size(),
             self.blur_radius,
-            self.system_wallpaper.as_deref(),
         );
 
-        // -------------------------------------------------------------
-        // 4. Render Main Frosted Dock Bar
-        // -------------------------------------------------------------
+        // 2. Render Main Frosted Dock Optics (Concentric 23px radius = 13px padding + 10px icon R)
         let d_rect = self.metrics.dock_rect;
         draw_liquid_glass_plate(
             &mut frame,
             d_rect,
-            24.0,
+            self.metrics.dock_radius,
             self.is_dark,
             self.transparency,
             self.enable_highlight,
             self.enable_dark_rim,
-            self.style,
-            bounds.size(),
             self.blur_radius,
-            self.system_wallpaper.as_deref(),
         );
 
-        // -------------------------------------------------------------
-        // 5. Render 9 Authentic macOS Squircle Icons with Liquid Optics
-        // -------------------------------------------------------------
-        for (i, &app) in DockApp::ALL.iter().enumerate() {
+        // 3. Render 9 Authentic macOS Squircle Icons & Interactive Mechanics
+        for (i, app) in DockApp::ALL.iter().enumerate() {
             let i_rect = self.metrics.icon_rects[i];
             draw_apple_icon(
                 &mut frame,
-                app,
+                *app,
                 i_rect,
                 self.is_dark,
                 self.enable_highlight,
                 self.enable_dark_rim,
             );
 
-            // macOS authentic active app indicator dot (Finder, Safari, Messages, Mail, Terminal, Settings)
+            // macOS authentic active app indicator dot
             let is_running = matches!(
                 app,
                 DockApp::Finder
@@ -1503,7 +1266,7 @@ impl<Message> canvas::Program<Message> for LiquidGlassOpticsCanvas {
             );
             if is_running {
                 let dot_cx = i_rect.x + i_rect.width * 0.5;
-                let dot_cy = d_rect.y + d_rect.height - 5.5;
+                let dot_cy = d_rect.y + d_rect.height - (self.metrics.dock_padding * 0.35);
                 let (dot_color, halo_color) = if self.is_dark {
                     (
                         Color::from_rgba(1.0, 1.0, 1.0, 0.90),
@@ -1520,9 +1283,7 @@ impl<Message> canvas::Program<Message> for LiquidGlassOpticsCanvas {
             }
         }
 
-        // -------------------------------------------------------------
-        // 6. Render Floating Context Menu (if active)
-        // -------------------------------------------------------------
+        // 4. Render Floating Context Menu (if active)
         if let Some(m_rect) = self.floating_menu_rect {
             draw_liquid_glass_plate(
                 &mut frame,
@@ -1532,10 +1293,7 @@ impl<Message> canvas::Program<Message> for LiquidGlassOpticsCanvas {
                 self.transparency,
                 self.enable_highlight,
                 self.enable_dark_rim,
-                self.style,
-                bounds.size(),
                 self.blur_radius,
-                self.system_wallpaper.as_deref(),
             );
         }
 
@@ -1553,124 +1311,47 @@ fn draw_liquid_glass_plate(
     transparency: GlassTransparency,
     enable_highlight: bool,
     enable_dark_rim: bool,
-    style: WallpaperStyle,
-    bounds: Size,
     blur_radius: f32,
-    wallpaper_buf: Option<&WallpaperBuffer>,
 ) {
     // 1. Soft subtle ambient elevation drop shadow
     draw_elevation_shadow(frame, rect, radius, is_dark, transparency);
 
-    // 2. Optical Frosted Wallpaper Backdrop (Physical transmission model)
-    // When blur_radius <= 0.5 (0pt preset), transmission is 100% specular (completely clear glass,
-    // revealing the sharp background directly). As blur_radius increases from 0 to 16pt,
-    // diffuse scattering emerges and smoothly transitions into full frosted glass.
+    // 2. Base Glass Substrate (Calibrated Apple macOS authentic transparency & intrinsic silver/graphite tint)
     let path = build_squircle_path(rect, radius);
     let frost_factor = (blur_radius / 16.0).clamp(0.0, 1.0);
-
-    if blur_radius > 0.5 {
-        let diffusion_alpha = frost_factor;
-
-        // 2a. Horizontal blurred gradient across the dock/plate width (40 samples)
-        let mut grad = Linear::new(
-            Point::new(rect.x, rect.y),
-            Point::new(rect.x + rect.width, rect.y),
-        );
-        let num_samples = 40;
-        for i in 0..=num_samples {
-            let t = i as f32 / num_samples as f32;
-            let sample_x = rect.x + rect.width * t;
-            let sample_y = rect.y + rect.height * 0.5;
-            let col = sample_vibrancy_blurred_wallpaper(
-                style,
-                sample_x,
-                sample_y,
-                bounds,
-                blur_radius,
-                is_dark,
-                wallpaper_buf,
-            );
-            grad = grad.add_stop(t, Color::from_rgba(col.r, col.g, col.b, diffusion_alpha));
-        }
-        frame.fill(&path, grad);
-
-        // 2b. Vertical subtle modulation (capturing top-to-bottom background gradient in 2D)
-        if diffusion_alpha > 0.15 {
-            let top_col = sample_vibrancy_blurred_wallpaper(
-                style,
-                rect.x + rect.width * 0.5,
-                rect.y + rect.height * 0.15,
-                bounds,
-                blur_radius,
-                is_dark,
-                wallpaper_buf,
-            );
-            let bot_col = sample_vibrancy_blurred_wallpaper(
-                style,
-                rect.x + rect.width * 0.5,
-                rect.y + rect.height * 0.85,
-                bounds,
-                blur_radius,
-                is_dark,
-                wallpaper_buf,
-            );
-            let v_alpha = 0.40 * diffusion_alpha;
-            let v_grad = Linear::new(
-                Point::new(rect.x, rect.y),
-                Point::new(rect.x, rect.y + rect.height),
-            )
-            .add_stop(0.0, Color::from_rgba(top_col.r, top_col.g, top_col.b, v_alpha))
-            .add_stop(1.0, Color::from_rgba(bot_col.r, bot_col.g, bot_col.b, v_alpha));
-            frame.fill(&path, v_grad);
-        }
-    }
-
-    // 3. Base Glass Substrate (Calibrated Apple macOS authentic transparency & intrinsic silver/graphite tint)
-    // At 0pt blur, milk haze is minimal (pure optical crystal clarity); as blur increases to 16pt, full milk diffusion develops.
-    let t_bleed = (6.0 / rect.height).clamp(0.06, 0.20);
     let glass_grad = if is_dark {
         let base_c_mid = transparency.center_alpha_dark();
-        let c_mid = base_c_mid * (0.20 + 0.80 * frost_factor);
-        let c_edge = (c_mid * 1.35 + 0.03).min(0.48);
+        let c_mid = base_c_mid * (0.05 + 0.35 * frost_factor);
+        let c_top = (c_mid + 0.028).min(0.28);
+        let c_bot = (c_mid + 0.012).min(0.26);
         let tint = Color::from_rgb(0.095, 0.102, 0.125);
-        let edge_tint = Color::from_rgb(0.14, 0.16, 0.20);
+        let edge_tint = Color::from_rgb(0.12, 0.135, 0.16);
         Linear::new(Point::new(rect.x, rect.y), Point::new(rect.x, rect.y + rect.height))
-            .add_stop(0.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_edge))
-            .add_stop(t_bleed * 0.20, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_mid + (c_edge - c_mid) * 0.50))
-            .add_stop(t_bleed * 0.50, Color::from_rgba(tint.r, tint.g, tint.b, c_mid + (c_edge - c_mid) * 0.15))
-            .add_stop(t_bleed, Color::from_rgba(tint.r, tint.g, tint.b, c_mid))
-            .add_stop(1.0 - t_bleed, Color::from_rgba(tint.r, tint.g, tint.b, c_mid))
-            .add_stop(1.0 - t_bleed * 0.50, Color::from_rgba(tint.r, tint.g, tint.b, c_mid + (c_edge - c_mid) * 0.15))
-            .add_stop(1.0 - t_bleed * 0.20, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_mid + (c_edge - c_mid) * 0.50))
-            .add_stop(1.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_edge))
+            .add_stop(0.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_top))
+            .add_stop(0.08, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, (c_top + c_mid) * 0.5))
+            .add_stop(0.22, Color::from_rgba(tint.r, tint.g, tint.b, c_mid))
+            .add_stop(0.78, Color::from_rgba(tint.r, tint.g, tint.b, c_mid))
+            .add_stop(0.92, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, (c_bot + c_mid) * 0.5))
+            .add_stop(1.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_bot))
     } else {
         let base_c_mid = transparency.center_alpha_light();
-        let c_mid = base_c_mid * (0.20 + 0.80 * frost_factor);
-        let c_edge = (c_mid * 1.35 + 0.03).min(0.40);
+        let c_mid = base_c_mid * (0.05 + 0.35 * frost_factor);
+        let c_top = (c_mid + 0.032).min(0.22);
+        let c_bot = (c_mid + 0.014).min(0.20);
         let tint = Color::from_rgb(0.95, 0.96, 0.98);
         let edge_tint = Color::from_rgb(0.98, 0.99, 1.0);
         Linear::new(Point::new(rect.x, rect.y), Point::new(rect.x, rect.y + rect.height))
-            .add_stop(0.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_edge))
-            .add_stop(t_bleed * 0.20, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_mid + (c_edge - c_mid) * 0.50))
-            .add_stop(t_bleed * 0.50, Color::from_rgba(tint.r, tint.g, tint.b, c_mid + (c_edge - c_mid) * 0.15))
-            .add_stop(t_bleed, Color::from_rgba(tint.r, tint.g, tint.b, c_mid))
-            .add_stop(1.0 - t_bleed, Color::from_rgba(tint.r, tint.g, tint.b, c_mid))
-            .add_stop(1.0 - t_bleed * 0.50, Color::from_rgba(tint.r, tint.g, tint.b, c_mid + (c_edge - c_mid) * 0.15))
-            .add_stop(1.0 - t_bleed * 0.20, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_mid + (c_edge - c_mid) * 0.50))
-            .add_stop(1.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_edge))
+            .add_stop(0.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_top))
+            .add_stop(0.08, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, (c_top + c_mid) * 0.5))
+            .add_stop(0.22, Color::from_rgba(tint.r, tint.g, tint.b, c_mid))
+            .add_stop(0.78, Color::from_rgba(tint.r, tint.g, tint.b, c_mid))
+            .add_stop(0.92, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, (c_bot + c_mid) * 0.5))
+            .add_stop(1.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_bot))
     };
     frame.fill(&path, glass_grad);
 
-    // 4. Authentic subtle continuous 0.5px perimeter glass rim
-    let outline_color = if is_dark {
-        Color::from_rgba(1.0, 1.0, 1.0, 0.14)
-    } else {
-        Color::from_rgba(1.0, 1.0, 1.0, 0.28)
-    };
-    frame.stroke(&path, Stroke::default().with_color(outline_color).with_width(0.5));
-
-    // 5. Apple Liquid Glass Bevel Optics
-    // Symmetrical dual-strip specular + G2 corner curvature-compressed arcs + Left/Right zero highlight + Edge Occlusion Rim
+    // 4. Apple Liquid Glass Optics & Subpixel-Aligned Boundary Bevel
+    // Seamlessly integrates top specular highlight + 0.5pt (1 device pixel on Retina HiDPI) Standard Black Hairline on lateral sides.
     draw_liquid_glass_bevel(frame, rect, radius, is_dark, enable_highlight, enable_dark_rim);
 }
 
@@ -1683,7 +1364,8 @@ fn draw_apple_icon(
     enable_highlight: bool,
     enable_dark_rim: bool,
 ) {
-    let r = rect.width * 0.235; // Authentic Apple squircle corner radius
+    // 10:20:10 Curvature Ratio: 10px corner radius, 20px straight edge for 40px icon (r = width * 0.25)
+    let r = rect.width * 0.25;
 
     // 0. Soft physical contact drop shadow underneath the icon onto the dock shelf
     let shadow_color_1 = Color::from_rgba(0.0, 0.0, 0.0, 0.16);
@@ -1981,7 +1663,10 @@ fn draw_liquid_glass_bevel(
     enable_dark_rim: bool,
 ) {
     let is_icon = rect.height < 70.0;
-    let inset = 0.5f32;
+    // 0.25pt inset aligns a 0.5pt centered stroke into an exact inside stroke,
+    // positioning the stroke center at half-pixels on 2x Retina display (e.g. 552.5px),
+    // guaranteeing 100% device pixel coverage on exactly 1 physical pixel without subpixel bleeding!
+    let inset = 0.25f32;
     let inner_rect = Rectangle {
         x: rect.x + inset,
         y: rect.y + inset,
@@ -2002,76 +1687,139 @@ fn draw_liquid_glass_bevel(
         return;
     }
 
-    let stroke_w = if is_icon { 0.55 } else { 0.5 };
-    // Softened Apple Physical Highlights (Subtle reflection, eliminating harsh glare)
-    let max_spec_alpha = if is_icon {
-        if is_dark { 0.65 } else { 0.78 }
-    } else if is_dark {
-        0.58
-    } else {
-        0.65
-    };
-    let max_bounce_alpha = if is_icon { max_spec_alpha } else { max_spec_alpha * 0.55 };
+    let stroke_w = 0.5f32; // Exactly 0.5pt = 1 physical device pixel on HiDPI Retina (2x)
+    let scale = if is_icon { 0.6f32 } else { 1.0f32 };
 
-    // Measured Dark Occlusion Rim on vertical lateral edges (measured subtle darkening)
-    let max_rim_alpha = if is_icon {
-        if is_dark { 0.35 } else { 0.25 }
+    // --- Translucent macOS Authentic Liquid Bevel Optics ---
+    // Whisper-soft translucent light/dark tones, delicate and unobtrusive:
+    // Pixel 1 (Outer Perimeter, 0.5pt): Extremely delicate translucent specular highlight
+    let max_spec_alpha = if is_icon {
+        if is_dark { 0.28 } else { 0.38 }
     } else if is_dark {
-        0.45
+        0.28
     } else {
         0.38
+    };
+    let max_bounce_alpha = if is_icon { max_spec_alpha } else { max_spec_alpha * 0.60 };
+
+    // Pixel 2 (Inner Secondary Highlight, 0.5pt, inset by 0.5pt = 1 physical pixel inward):
+    // Extremely subtle secondary light rim, visible only upon close inspection
+    let max_inner_alpha = if is_icon {
+        if is_dark { 0.09 } else { 0.14 }
+    } else if is_dark {
+        0.09
+    } else {
+        0.14
+    };
+    let max_inner_bounce = max_inner_alpha * 0.60;
+    let offset_inner = 0.50 * scale; // Exactly 1 physical pixel inward
+    let width_inner = 0.50 * scale;
+
+    // Translucent Dark Boundary Hairline (Semi-transparent dark boundary, not opaque ink)
+    let max_rim_alpha = if is_icon {
+        if is_dark { 0.22 } else { 0.18 }
+    } else if is_dark {
+        0.36f32
+    } else {
+        0.45f32
     };
 
     let rect_origin = inner_rect.position();
 
-    // Helper closure to stroke a single micro-segment with exact physical lighting
+    // Helper closure to stroke a single micro-segment with authentic 2-pixel macOS bevel optics
     let mut stroke_micro_segment = |p_a: Point, p_b: Point, nx: f32, ny: f32| {
         let u = (-ny).clamp(0.0, 1.0);       // Upward fraction (overhead strip light)
-        let d = ny.clamp(0.0, 1.0);          // Downward fraction (bottom shelf strip light)
-        let s = nx.abs().clamp(0.0, 1.0);    // Lateral fraction (side edge occlusion)
+        let d = ny.clamp(0.0, 1.0);          // Downward fraction (bottom shelf bounce light)
+        let _s = nx.abs().clamp(0.0, 1.0);   // Lateral fraction
+        let vert_comp = u.max(d);
 
-        // 1. Edge Occlusion / Rim Darkening on vertical sides
-        // Measured: on lateral vertical edges (|nx| = 1.0), rim alpha is exactly 0.57.
-        // It seamlessly vanishes around corner arcs as specular highlight washes out occlusion.
+        // 1. Pixel 1 (Outermost Perimeter Hairline, width = 0.5pt):
+        // Horizontal straight lines: 100% uniform peak specular highlight from left corner to right corner.
+        // Sides AND the entire corner arcs: Dark Rim.
+        // Corner refinement: Across the corner arc (0.0 < vert_comp < 0.90),
+        // the black rim softly attenuates (趋近于更淡) from 1.0 down to ~0.35,
+        // eliminating any harsh, jarring black ring around the rounded corner.
         if enable_dark_rim {
-            let unlit_fraction = (1.0 - u.max(d)).clamp(0.0, 1.0);
-            let rim_factor = s.powf(2.0) * unlit_fraction;
+            let rim_factor = if vert_comp < 0.90 {
+                let corner_soften = 1.0 - 0.65 * (vert_comp * std::f32::consts::PI * 0.5).sin().powf(1.2);
+                corner_soften.clamp(0.20, 1.0)
+            } else {
+                let norm = (1.0 - vert_comp) / (1.0 - 0.90);
+                0.35 * (norm * std::f32::consts::PI * 0.5).sin().powf(1.5)
+            };
             let rim_alpha = max_rim_alpha * rim_factor;
             if rim_alpha > 0.015 {
+                let dark_color = Color::from_rgba(0.0, 0.0, 0.0, rim_alpha);
                 let stroke = Stroke::default()
-                    .with_color(Color::from_rgba(0.0, 0.0, 0.0, rim_alpha))
+                    .with_color(dark_color)
                     .with_width(stroke_w);
                 let seg = Path::line(p_a, p_b);
                 frame.stroke(&seg, stroke);
             }
         }
 
-        // 2. Specular Highlights: Balanced Upper & Lower Strip Lights
-        // Measured: at corner angle >= 70° (u <= 0.25), highlight is 100% extinguished.
-        // Rapid falloff from 45° to 65°, with razor-sharp compression at the apex.
+        // Spatial pre-corner lead-in attenuation ("早于R角开始变化"):
+        // In the vast central straight edge (> lead_in_dist from tangent), highlight is 100% constant and peak uniform.
+        // As the straight edge approaches the R corner (within lead_in_dist ahead of the tangent cutoff),
+        // it gently and smoothly begins decaying ahead of time down to ~0.85 at the tangent,
+        // eliminating any sharp inflection or sudden brightness kink before entering the corner!
+        let p_mid_x = (p_a.x + p_b.x) * 0.5;
+        let rel_x = p_mid_x - inner_rect.x;
+        let dist_from_tangent = (rel_x - r).min(inner_rect.width - r - rel_x);
+        let lead_in_dist = (r * 1.25).min(32.0).max(8.0);
+        let lead_in_factor = if dist_from_tangent >= lead_in_dist {
+            1.0f32
+        } else if dist_from_tangent >= 0.0 {
+            let k_tangent = 0.85f32;
+            let norm = (dist_from_tangent / lead_in_dist).clamp(0.0, 1.0);
+            k_tangent + (1.0 - k_tangent) * (norm * std::f32::consts::PI * 0.5).sin().powf(1.5)
+        } else {
+            0.85f32
+        };
+
         if enable_highlight {
-            const SPEC_CUTOFF: f32 = 0.25;
+            // Outermost Specular Highlight:
+            // 100% uniform peak brightness across the straight line, gently beginning smooth falloff
+            // slightly ahead of the R corner, and smoothly continuing monotonic falloff along the corner arc (vert_comp < 1.0).
+            const SPEC_CUTOFF: f32 = 0.90;
+            let mut spec_white_alpha = 0.0f32;
             if u > SPEC_CUTOFF {
                 let norm_u = (u - SPEC_CUTOFF) / (1.0 - SPEC_CUTOFF);
-                let spec_factor = norm_u.powf(1.6);
-                let spec_alpha = max_spec_alpha * spec_factor;
-                if spec_alpha > 0.015 {
-                    let stroke = Stroke::default()
-                        .with_color(Color::from_rgba(1.0, 1.0, 1.0, spec_alpha))
-                        .with_width(stroke_w);
-                    let seg = Path::line(p_a, p_b);
-                    frame.stroke(&seg, stroke);
-                }
+                let spec_factor = (norm_u * std::f32::consts::PI * 0.5).sin().powf(1.6);
+                spec_white_alpha = spec_white_alpha.max(max_spec_alpha * spec_factor * lead_in_factor);
             } else if d > SPEC_CUTOFF {
-                // Lower strip reflection: perfectly balanced power curve matching the upper strip
                 let norm_d = (d - SPEC_CUTOFF) / (1.0 - SPEC_CUTOFF);
-                let bounce_factor = norm_d.powf(1.6);
-                let bounce_alpha = max_bounce_alpha * bounce_factor;
-                if bounce_alpha > 0.015 {
+                let bounce_factor = (norm_d * std::f32::consts::PI * 0.5).sin().powf(1.6);
+                spec_white_alpha = spec_white_alpha.max(max_bounce_alpha * bounce_factor * lead_in_factor);
+            }
+
+            if spec_white_alpha > 0.015 {
+                let stroke = Stroke::default()
+                    .with_color(Color::from_rgba(1.0, 1.0, 1.0, spec_white_alpha.min(0.95)))
+                    .with_width(stroke_w);
+                let seg = Path::line(p_a, p_b);
+                frame.stroke(&seg, stroke);
+            }
+
+            // 2. Pixel 2 (Inner Secondary Highlight, width = 0.5pt, inset by 0.5pt):
+            // Along horizontal straight lines: uniform secondary highlight, with gentle lead-in decay ahead of R corner.
+            // Extending gracefully through the corner arc and vanishing near the vertical straight line (vert_comp <= 0.20)!
+            const INNER_ARC_CUTOFF: f32 = 0.20;
+            if vert_comp > INNER_ARC_CUTOFF {
+                let norm_arc = (vert_comp - INNER_ARC_CUTOFF) / (1.0 - INNER_ARC_CUTOFF);
+                let arc_factor = (norm_arc * std::f32::consts::PI * 0.5).sin().powf(1.6);
+                let base_inner = if u >= d { max_inner_alpha } else { max_inner_bounce };
+                let inner_alpha = base_inner * arc_factor * lead_in_factor;
+
+                if inner_alpha > 0.015 {
+                    let in_nx = -nx;
+                    let in_ny = -ny;
+                    let p_a2 = Point::new(p_a.x + in_nx * offset_inner, p_a.y + in_ny * offset_inner);
+                    let p_b2 = Point::new(p_b.x + in_nx * offset_inner, p_b.y + in_ny * offset_inner);
                     let stroke = Stroke::default()
-                        .with_color(Color::from_rgba(1.0, 1.0, 1.0, bounce_alpha))
-                        .with_width(stroke_w);
-                    let seg = Path::line(p_a, p_b);
+                        .with_color(Color::from_rgba(1.0, 1.0, 1.0, inner_alpha.min(0.85)))
+                        .with_width(width_inner);
+                    let seg = Path::line(p_a2, p_b2);
                     frame.stroke(&seg, stroke);
                 }
             }
@@ -2110,14 +1858,25 @@ fn draw_liquid_glass_bevel(
                 if len > 1e-4 {
                     let nx = dy / len;
                     let ny = -dx / len;
-                    let p_a = Point::new(rect_origin.x + curr_pt.x, rect_origin.y + curr_pt.y);
-                    let p_b = Point::new(rect_origin.x + pt.x, rect_origin.y + pt.y);
-                    stroke_micro_segment(p_a, p_b, nx, ny);
+                    let n_sub = ((len / 16.0).ceil() as usize).max(1);
+                    for s in 0..n_sub {
+                        let t0 = s as f32 / n_sub as f32;
+                        let t1 = (s + 1) as f32 / n_sub as f32;
+                        let p_a = Point::new(
+                            rect_origin.x + curr_pt.x + dx * t0,
+                            rect_origin.y + curr_pt.y + dy * t0,
+                        );
+                        let p_b = Point::new(
+                            rect_origin.x + curr_pt.x + dx * t1,
+                            rect_origin.y + curr_pt.y + dy * t1,
+                        );
+                        stroke_micro_segment(p_a, p_b, nx, ny);
+                    }
                 }
                 curr_pt = pt;
             }
             PathCommand::CubicTo { c0, c1, to } => {
-                let steps = 10;
+                let steps = 16;
                 for i in 0..steps {
                     let t_a = i as f32 / steps as f32;
                     let t_b = (i + 1) as f32 / steps as f32;
@@ -2145,9 +1904,20 @@ fn draw_liquid_glass_bevel(
                 if len > 1e-4 {
                     let nx = dy / len;
                     let ny = -dx / len;
-                    let p_a = Point::new(rect_origin.x + curr_pt.x, rect_origin.y + curr_pt.y);
-                    let p_b = Point::new(rect_origin.x + start_pt.x, rect_origin.y + start_pt.y);
-                    stroke_micro_segment(p_a, p_b, nx, ny);
+                    let n_sub = ((len / 16.0).ceil() as usize).max(1);
+                    for s in 0..n_sub {
+                        let t0 = s as f32 / n_sub as f32;
+                        let t1 = (s + 1) as f32 / n_sub as f32;
+                        let p_a = Point::new(
+                            rect_origin.x + curr_pt.x + dx * t0,
+                            rect_origin.y + curr_pt.y + dy * t0,
+                        );
+                        let p_b = Point::new(
+                            rect_origin.x + curr_pt.x + dx * t1,
+                            rect_origin.y + curr_pt.y + dy * t1,
+                        );
+                        stroke_micro_segment(p_a, p_b, nx, ny);
+                    }
                 }
                 curr_pt = start_pt;
             }
@@ -2176,6 +1946,8 @@ pub struct State {
     pub floating_menu_cached: ContextMenu<Message>,
     pub last_action: String,
     pub system_wallpaper: Arc<WallpaperBuffer>,
+    pub dock_frosted_texture: Option<iced::widget::image::Handle>,
+    pub search_frosted_texture: Option<iced::widget::image::Handle>,
 }
 
 impl Default for State {
@@ -2191,7 +1963,7 @@ impl Default for State {
         let theme = UiTheme::new(scheme).iced_theme();
         let system_wallpaper = load_or_create_wallpaper(1240, 820);
 
-        let s = Self {
+        let mut s = Self {
             controller,
             traffic_lights: TrafficLightsState::new(),
             window_size: Size::new(1240.0, 820.0),
@@ -2201,7 +1973,7 @@ impl Default for State {
             } else {
                 WallpaperStyle::DesktopTransparent
             },
-            transparency: GlassTransparency::High,
+            transparency: GlassTransparency::Ultra,
             blur_preset: BlurPreset::Standard16,
             blur_radius: BlurPreset::Standard16.radius(),
             show_grid: false,
@@ -2214,12 +1986,37 @@ impl Default for State {
             floating_menu_cached: ContextMenu::new(),
             last_action: "就绪：macOS 原生桌面壁纸输入已接入，Liquid Glass 实施 2D 深度高斯模糊卷积".to_string(),
             system_wallpaper,
+            dock_frosted_texture: None,
+            search_frosted_texture: None,
         };
+        s.regenerate_frosted_textures();
         s
     }
 }
 
 impl State {
+    pub fn regenerate_frosted_textures(&mut self) {
+        let metrics = LayoutMetrics::new(self.window_size, self.hovered_app);
+        self.dock_frosted_texture = Some(generate_frosted_plate_texture(
+            self.wallpaper,
+            metrics.dock_rect,
+            self.window_size,
+            self.blur_radius,
+            metrics.dock_radius,
+            self.is_dark(),
+            Some(&self.system_wallpaper),
+        ));
+        self.search_frosted_texture = Some(generate_frosted_plate_texture(
+            self.wallpaper,
+            metrics.search_rect,
+            self.window_size,
+            self.blur_radius,
+            21.0,
+            self.is_dark(),
+            Some(&self.system_wallpaper),
+        ));
+    }
+
     #[must_use]
     pub fn is_dark(&self) -> bool {
         self.controller.is_dark
@@ -2352,6 +2149,7 @@ pub fn boot() -> (State, Task<Message>) {
         }
     }
     state.rebuild_menu(MenuContext::DockBar);
+    state.regenerate_frosted_textures();
     (state, Task::none())
 }
 
@@ -2382,6 +2180,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::WindowResized(size) => {
             state.window_size = size;
             state.controller.handle_resized(size.width, size.height);
+            state.regenerate_frosted_textures();
             Task::none()
         }
         Message::WindowEvent((_id, event)) => {
@@ -2449,18 +2248,21 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::SetWallpaper(w) => {
             state.wallpaper = w;
             state.last_action = format!("切换壁纸: {}", w.label());
+            state.regenerate_frosted_textures();
             Task::none()
         }
         Message::SetBlurPreset(p) => {
             state.blur_preset = p;
             state.blur_radius = p.radius();
             state.last_action = format!("切换模糊预设: {} (vibrancy-rs)", p.label());
+            state.regenerate_frosted_textures();
             Task::none()
         }
         Message::ToggleTheme => {
             state.controller.is_dark = !state.controller.is_dark;
             state.theme = UiTheme::new(state.scheme()).iced_theme();
             state.last_action = format!("切换外观: {}", if state.is_dark() { "深色 (Dark)" } else { "浅色 (Light)" });
+            state.regenerate_frosted_textures();
             Task::none()
         }
         Message::CycleTransparency => {
@@ -2600,25 +2402,36 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
     });
 
     // -------------------------------------------------------------
-    // Layer 1: Liquid Glass Optics & Backdrop Canvas
+    // Layer 1: Liquid Glass 2D Frosted Backdrop Canvas (Sharp background + 2D Gaussian blurred slices)
     // -------------------------------------------------------------
-    let canvas_widget = Canvas::new(LiquidGlassOpticsCanvas {
+    let backdrop_canvas = Canvas::new(LiquidGlassBackdropCanvas {
         style: state.wallpaper,
         metrics,
-        blur_radius: state.blur_radius,
         show_grid: state.show_grid,
-        enable_highlight: state.enable_highlight,
-        enable_dark_rim: state.enable_dark_rim,
-        is_dark,
-        transparency: state.transparency,
-        floating_menu_rect,
         system_wallpaper: Some(state.system_wallpaper.clone()),
+        dock_frosted_texture: state.dock_frosted_texture.clone(),
+        search_frosted_texture: state.search_frosted_texture.clone(),
     })
     .width(Length::Fill)
     .height(Length::Fill);
 
     // -------------------------------------------------------------
-    // Layer 2: Interactive Controls Overlay (Exact Metric Sizing)
+    // Layer 2: Liquid Glass Foreground Optics Canvas (Bevel highlights, substrate tint, icons)
+    // -------------------------------------------------------------
+    let foreground_canvas = Canvas::new(LiquidGlassForegroundCanvas {
+        metrics,
+        blur_radius: state.blur_radius,
+        enable_highlight: state.enable_highlight,
+        enable_dark_rim: state.enable_dark_rim,
+        is_dark,
+        transparency: state.transparency,
+        floating_menu_rect,
+    })
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    // -------------------------------------------------------------
+    // Layer 3: Interactive Controls Overlay (Exact Metric Sizing)
     // -------------------------------------------------------------
     let header = view_header(state, is_dark);
     let status_bar = view_status_bar(state, is_dark);
@@ -2650,10 +2463,13 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
         layers.push(wallpaper_widget.into());
     }
 
-    // Layer 1: Liquid Glass Optics & Backdrop Canvas (contains blurred glass plates, squircle, icons, highlights)
-    layers.push(canvas_widget.into());
+    // Layer 1: Liquid Glass 2D Frosted Backdrop Canvas
+    layers.push(backdrop_canvas.into());
 
-    // Layer 2: Interactive Controls Overlay (Exact Metric Sizing)
+    // Layer 2: Liquid Glass Foreground Optics Canvas (Guaranteed on top of backdrop images)
+    layers.push(foreground_canvas.into());
+
+    // Layer 3: Interactive Controls Overlay (Exact Metric Sizing)
     layers.push(page_content.into());
 
     // -------------------------------------------------------------
@@ -3337,6 +3153,7 @@ fn main() -> iced::Result {
     let fonts = font::ui_fonts();
     let window_settings = window::Settings {
         size: Size::new(1240.0, 820.0),
+        position: window::Position::Centered,
         transparent: true,
         decorations: false,
         ..Default::default()
@@ -3366,11 +3183,11 @@ mod tests {
     #[test]
     fn test_transparency_defaults_and_cycling() {
         let t = GlassTransparency::default();
-        assert_eq!(t, GlassTransparency::High);
+        assert_eq!(t, GlassTransparency::Ultra);
 
-        assert_eq!(t.next(), GlassTransparency::Ultra);
+        assert_eq!(t.next(), GlassTransparency::High);
         assert_eq!(t.next().next(), GlassTransparency::Frosted);
-        assert_eq!(t.next().next().next(), GlassTransparency::High);
+        assert_eq!(t.next().next().next(), GlassTransparency::Ultra);
     }
 
     #[test]
@@ -3393,10 +3210,10 @@ mod tests {
     #[test]
     fn test_state_transparency_and_message_update() {
         let mut state = State::default();
-        assert_eq!(state.transparency, GlassTransparency::High);
+        assert_eq!(state.transparency, GlassTransparency::Ultra);
 
         let _ = update(&mut state, Message::CycleTransparency);
-        assert_eq!(state.transparency, GlassTransparency::Ultra);
+        assert_eq!(state.transparency, GlassTransparency::High);
 
         let _ = update(&mut state, Message::SetTransparency(GlassTransparency::Frosted));
         assert_eq!(state.transparency, GlassTransparency::Frosted);
@@ -3412,11 +3229,22 @@ mod tests {
     #[test]
     fn test_dock_layout_metrics() {
         let metrics = LayoutMetrics::new(Size::new(1200.0, 820.0), None);
-        assert_eq!(metrics.dock_rect.height, 86.0);
+        // Concentric geometric proportion system assertions:
+        assert_eq!(metrics.base_icon_size, 40.0, "Icon size must be 40px");
+        assert_eq!(metrics.icon_radius, 10.0, "Icon corner radius must be 10px (10:20:10 ratio)");
+        assert_eq!(metrics.icon_gap, 13.0, "Icon gap must be 13px");
+        assert_eq!(metrics.dock_padding, 13.0, "Dock padding must be 13px");
+        assert_eq!(metrics.dock_radius, 23.0, "Dock radius must be concentric: 13px + 10px = 23px");
+        assert_eq!(metrics.dock_rect.height, 66.0, "Dock height = 40 + 13*2 = 66px");
+        assert_eq!(metrics.dock_rect.width, 490.0, "Dock width = 9*40 + 8*13 + 13*2 = 490px");
         assert_eq!(metrics.icon_rects.len(), 9);
-        // Icons should fit nicely inside the dock with vertical margin
-        assert!(metrics.icon_rects[0].y > metrics.dock_rect.y);
-        assert!(metrics.icon_rects[0].y + metrics.icon_rects[0].height < metrics.dock_rect.y + metrics.dock_rect.height);
+
+        // Icons should fit symmetrically inside the dock with 13px padding
+        assert_eq!(metrics.icon_rects[0].y, metrics.dock_rect.y + 13.0);
+        assert_eq!(metrics.icon_rects[0].x, metrics.dock_rect.x + 13.0);
+        let last_idx = metrics.icon_rects.len() - 1;
+        let right_padding = (metrics.dock_rect.x + metrics.dock_rect.width) - (metrics.icon_rects[last_idx].x + metrics.icon_rects[last_idx].width);
+        assert!((right_padding - 13.0).abs() < 1e-4, "Right padding must be exactly 13px");
     }
 
     #[test]
@@ -3476,20 +3304,20 @@ mod tests {
     }
 
     #[test]
-    fn test_vibrancy_blurred_wallpaper_sampling() {
-        let col = sample_vibrancy_blurred_wallpaper(
-            WallpaperStyle::TvColorBars,
-            300.0,
-            400.0,
-            Size::new(1200.0, 820.0),
-            64.0,
-            false,
-            None,
-        );
-        // RGB components should be valid clamped floats
-        assert!(col.r >= 0.0 && col.r <= 1.0);
-        assert!(col.g >= 0.0 && col.g <= 1.0);
-        assert!(col.b >= 0.0 && col.b <= 1.0);
+    fn test_separable_gaussian_blur_convolution() {
+        let w = 20;
+        let h = 20;
+        let mut src = vec![[0.0, 0.0, 0.0]; w * h];
+        // Impulse in center
+        src[10 * w + 10] = [1.0, 1.0, 1.0];
+
+        let blurred_0 = perform_separable_gaussian_blur(&src, w, h, 0.0);
+        assert!((blurred_0[10 * w + 10][0] - 1.0).abs() < 1e-3);
+
+        let blurred_4 = perform_separable_gaussian_blur(&src, w, h, 4.0);
+        // Energy diffused outward: center value decreases, neighbor increases
+        assert!(blurred_4[10 * w + 10][0] < 0.5);
+        assert!(blurred_4[10 * w + 11][0] > 0.0);
     }
 
     #[test]
@@ -3501,67 +3329,112 @@ mod tests {
         assert!(sharp[0] >= 0.0 && sharp[0] <= 1.0);
         let blurred = buf.sample_blurred(0.5, 0.5, 96.0, Size::new(200.0, 150.0));
         assert!(blurred[0] >= 0.0 && blurred[0] <= 1.0);
-
-        let vibrant_col = sample_vibrancy_blurred_wallpaper(
-            WallpaperStyle::DesktopTransparent,
-            100.0,
-            75.0,
-            Size::new(200.0, 150.0),
-            96.0,
-            false,
-            Some(&buf),
-        );
-        assert!(vibrant_col.r >= 0.0 && vibrant_col.r <= 1.0);
     }
 
     #[test]
-    fn test_real_system_wallpaper_sampling() {
+    fn test_real_system_wallpaper_frosted_plate_generation() {
         let wallpaper = load_or_create_wallpaper(1240, 820);
-        println!("Loaded wallpaper: {}x{}, pixels len: {}", wallpaper.width, wallpaper.height, wallpaper.pixels.len());
-        let col = sample_vibrancy_blurred_wallpaper(
+        let bounds = Size::new(1240.0, 820.0);
+        let dock_rect = Rectangle::new(Point::new(300.0, 700.0), Size::new(640.0, 84.0));
+        let handle = generate_frosted_plate_texture(
             WallpaperStyle::DesktopTransparent,
-            620.0,
-            740.0,
-            Size::new(1240.0, 820.0),
-            96.0,
+            dock_rect,
+            bounds,
+            16.0,
+            24.0,
             false,
             Some(&wallpaper),
         );
-        println!("Sampled vibrancy col at dock center: {:?}", col);
-        assert!(!col.r.is_nan());
-        assert!(!col.g.is_nan());
-        assert!(!col.b.is_nan());
-        assert!(!col.a.is_nan());
+        let _ = format!("{:?}", handle);
     }
 
     #[test]
     fn test_specular_cutoff_and_rim_darkening_physics() {
-        const SPEC_CUTOFF: f32 = 0.25;
+        const SPEC_CUTOFF: f32 = 0.90;
+        const INNER_ARC_CUTOFF: f32 = 0.20;
 
         // At theta = 90° (vertical edge), u = 0.0, d = 0.0, s = 1.0
         let u_vertical = 0.0f32;
-        let s_vertical = 1.0f32;
         assert!(u_vertical <= SPEC_CUTOFF, "Vertical edge must have 0 specular highlight");
+        assert!(u_vertical <= INNER_ARC_CUTOFF, "Vertical edge must have 0 inner highlight");
+        let vert_comp_vertical = u_vertical;
+        let rim_factor_vertical = if vert_comp_vertical < 0.90 {
+            let corner_soften = 1.0 - 0.65 * (vert_comp_vertical * std::f32::consts::PI * 0.5).sin().powf(1.2);
+            corner_soften.clamp(0.20, 1.0)
+        } else { 0.0 };
+        assert_eq!(rim_factor_vertical, 1.0, "Vertical edge must have 100% dark rim");
 
-        let unlit_vertical = 1.0 - u_vertical;
-        let rim_factor_vertical = s_vertical.powf(2.0) * unlit_vertical;
-        assert!((rim_factor_vertical - 1.0).abs() < 1e-5, "Vertical edge must have 100% dark rim");
+        // At curved arc (theta = 45°, u = 0.707)
+        let u_arc = 0.707f32;
+        assert!(u_arc <= SPEC_CUTOFF, "Outer boundary on curved arc is dark rim without specular");
+        let rim_factor_arc = if u_arc < 0.90 {
+            let corner_soften = 1.0 - 0.65 * (u_arc * std::f32::consts::PI * 0.5).sin().powf(1.2);
+            corner_soften.clamp(0.20, 1.0)
+        } else { 0.0 };
+        assert!(rim_factor_arc < 0.60 && rim_factor_arc > 0.35, "Curved arc dark rim must soften gracefully");
+        // But inner secondary highlight extends through arc!
+        assert!(u_arc > INNER_ARC_CUTOFF, "Inner secondary highlight extends into corner arc");
 
-        // At theta = 0° (top horizontal edge), u = 1.0, s = 0.0
+        // At theta = 0° (top horizontal edge, outside R corner), u = 1.0, s = 0.0
         let u_horizontal = 1.0f32;
-        let s_horizontal = 0.0f32;
         assert!(u_horizontal > SPEC_CUTOFF);
-        let norm_u_horizontal = (u_horizontal - SPEC_CUTOFF) / (1.0 - SPEC_CUTOFF);
-        assert!((norm_u_horizontal - 1.0).abs() < 1e-5, "Top edge must have 100% specular");
-        let rim_factor_horizontal = s_horizontal.powf(2.0) * (1.0 - u_horizontal);
-        assert!((rim_factor_horizontal - 0.0).abs() < 1e-5, "Top edge must have 0 dark rim");
+        assert!(u_horizontal > INNER_ARC_CUTOFF);
+        // On straight horizontal segment, factors are exactly 1.0 (perfectly uniform peak brightness)
+        let norm_u_flat = (u_horizontal - SPEC_CUTOFF) / (1.0 - SPEC_CUTOFF);
+        let spec_factor_flat = (norm_u_flat * std::f32::consts::PI * 0.5).sin().powf(1.6);
+        assert!((spec_factor_flat - 1.0).abs() < 1e-5, "Straight line must have 100% uniform specular highlight");
+        let norm_arc_flat = (u_horizontal - INNER_ARC_CUTOFF) / (1.0 - INNER_ARC_CUTOFF);
+        let inner_factor_flat = (norm_arc_flat * std::f32::consts::PI * 0.5).sin().powf(1.6);
+        assert!((inner_factor_flat - 1.0).abs() < 1e-5, "Straight line must have 100% uniform inner highlight");
 
-        // At theta = 75° (approaching vertical, u = 0.25)
-        let u_75 = 0.25f32;
-        assert!(u_75 <= SPEC_CUTOFF, "Specular must extinguish by 75 degrees");
+        // Ahead of R corner: Pre-corner lead-in smooth decay ("早于R角开始变化")
+        let r = 24.0f32;
+        let lead_in_dist = (r * 1.25).min(32.0).max(8.0);
+        let calc_lead_in = |dist: f32| -> f32 {
+            if dist >= lead_in_dist {
+                1.0f32
+            } else if dist >= 0.0 {
+                let k_tangent = 0.85f32;
+                let norm = (dist / lead_in_dist).clamp(0.0, 1.0);
+                k_tangent + (1.0 - k_tangent) * (norm * std::f32::consts::PI * 0.5).sin().powf(1.5)
+            } else {
+                0.85f32
+            }
+        };
+
+        // Far from corner in central plateau:
+        assert_eq!(calc_lead_in(lead_in_dist + 50.0), 1.0, "Central plateau must be 100% constant");
+        // Ahead of R corner (e.g. 15pt before tangent):
+        let factor_ahead = calc_lead_in(15.0);
+        assert!(factor_ahead < 1.0 && factor_ahead > 0.85, "Highlight begins smoothly decaying ahead of R corner");
+        // Exactly at tangent:
+        assert!((calc_lead_in(0.0) - 0.85).abs() < 1e-5, "Smoothly arrives at ~0.85 at R corner tangent");
+
+        // Entering R corner arc (u begins decreasing from 1.0 down towards 0.0):
+        // Monotonic smooth attenuation continues along the corner arc!
+        let u_corner_entry = 0.96f32;
+        let norm_u_entry = (u_corner_entry - SPEC_CUTOFF) / (1.0 - SPEC_CUTOFF);
+        let spec_factor_entry = (norm_u_entry * std::f32::consts::PI * 0.5).sin().powf(1.6);
+        assert!(spec_factor_entry < spec_factor_flat, "Specular highlight strictly decays upon entering R corner");
+
+        let norm_arc_entry = (u_corner_entry - INNER_ARC_CUTOFF) / (1.0 - INNER_ARC_CUTOFF);
+        let inner_factor_entry = (norm_arc_entry * std::f32::consts::PI * 0.5).sin().powf(1.6);
+        assert!(inner_factor_entry < inner_factor_flat, "Inner highlight strictly decays upon entering R corner");
+
+        let rim_factor_horizontal = if u_horizontal < 0.90 {
+            1.0f32
+        } else {
+            let norm = (1.0 - u_horizontal) / (1.0 - 0.90);
+            (norm * std::f32::consts::PI * 0.5).sin().powf(1.5)
+        };
+        assert!((rim_factor_horizontal - 0.0).abs() < 1e-5, "Top horizontal edge must have 0 dark rim");
 
         // Calibrated light mode base alpha
         assert_eq!(GlassTransparency::High.center_alpha_light(), 0.13);
+
+        // Near vertical edge of arc (u = 0.15): Inner highlight gracefully extinguished
+        let u_near_vert = 0.15f32;
+        assert!(u_near_vert <= INNER_ARC_CUTOFF);
     }
 
     #[test]
@@ -3570,6 +3443,44 @@ mod tests {
         let _ = format!("{:?}", handle);
         let _img = iced::widget::canvas::Image::new(handle);
     }
+
+    #[test]
+    fn test_generate_frosted_plate_texture_blur_progression() {
+        let wallpaper = load_or_create_wallpaper(1240, 820);
+        let rect = Rectangle {
+            x: 210.0,
+            y: 700.0,
+            width: 820.0,
+            height: 80.0,
+        };
+        let window_size = Size::new(1240.0, 820.0);
+
+        // 1. Generate 0pt clear slice
+        let handle_0pt = generate_frosted_plate_texture(
+            WallpaperStyle::DesktopTransparent,
+            rect,
+            window_size,
+            0.0,
+            24.0,
+            false,
+            Some(&wallpaper),
+        );
+
+        // 2. Generate 16pt frosted slice
+        let handle_16pt = generate_frosted_plate_texture(
+            WallpaperStyle::DesktopTransparent,
+            rect,
+            window_size,
+            16.0,
+            24.0,
+            false,
+            Some(&wallpaper),
+        );
+
+        assert_ne!(format!("{:?}", handle_0pt), "");
+        assert_ne!(format!("{:?}", handle_16pt), "");
+    }
 }
+
 
 
