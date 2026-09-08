@@ -216,8 +216,8 @@ impl TrafficLightsState {
 pub fn window_control_glyph_size(action: ControlAction, size: f32) -> f32 {
     let factor = if size <= WINDOW_CONTROL_NATIVE_SIZE {
         match action {
-            ControlAction::Close => 7.0 / 14.0,
-            ControlAction::Minimize => 8.0 / 14.0,
+            ControlAction::Close => 7.0 / WINDOW_CONTROL_NATIVE_SIZE,
+            ControlAction::Minimize => 8.0 / WINDOW_CONTROL_NATIVE_SIZE,
             ControlAction::Expand => 0.42,
         }
     } else {
