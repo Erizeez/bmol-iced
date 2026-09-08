@@ -12,6 +12,7 @@ liquid-glass-scene = { path = "../../../liquid-rs/crates/liquid-glass-scene", ve
 bmol-designs = { path = "../../../bmol-designs", version = "0.1.0" }
 bmol-window-shell = { path = "../../../bmol-window-shell/crates/bmol-window-shell", version = "0.1.0" }
 spring-rs = { git = "https://github.com/Erizeez/spring-rs.git", tag = "v0.1.0" }
+vibrancy-rs = { path = "../../../vibrancy-rs", version = "0.1.0" }
 
 [lints]
 workspace = true
