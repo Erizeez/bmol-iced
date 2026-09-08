@@ -7,7 +7,7 @@
 //! - Native macOS squircle corner clipping and Stage Manager guard
 //! - Dual Appearance: Side-by-side demonstration of both Light and Dark physical glass menus
 //! - Ultra-Heavy Backdrop Blur (64pt Dual-Kawase equivalent) completely dissolving high-frequency details
-//! - Continuous 8.0 pt squircle container curvature matching macOS HIG
+//! - Continuous 12.0 pt squircle container curvature matching Apple HIG Liquid Glass specifications
 //! - 1px fine edge highlight rim with deep elevation drop shadows (36pt blur)
 //! - Interactive right-click popup at cursor location with outside-click dismissal
 
@@ -240,7 +240,7 @@ pub mod demo_metrics {
     /// Fixed width of the context menu container (220.0 pt).
     pub const MENU_WIDTH: f32 = menu_metrics::DEFAULT_WIDTH;
 
-    /// Corner radius of the context menu container (8.0 pt).
+    /// Corner radius of the context menu container (strictly 12.0 pt continuous squircle).
     pub const MENU_CORNER_RADIUS: f32 = menu_metrics::CONTAINER_CORNER_RADIUS;
 
     /// Context menu exact physical height:
