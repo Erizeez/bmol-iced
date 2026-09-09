@@ -11,8 +11,8 @@ use iced_backend::{
     SIDEBAR_SEARCH_TOP, SIDEBAR_WIDTH, TOP_BAR_BUTTON_SIZE, WINDOW_CONTROL_NATIVE_IDS,
 };
 use bmol_window_shell::{
-    traffic_lights::{self, WINDOW_CONTROL_GAP, WINDOW_CONTROL_NATIVE_SIZE},
-    window_metrics, window_rim,
+    ShellEvent, TrafficLightsEvent, WindowChromeConfig, WindowShellController, window_metrics,
+    window_rim,
 };
 use liquid_glass::{
     GlassAccessibility, GlassId, Rect, ScrollbarConfig, UiColorScheme, UiIcon, UiTheme,
@@ -20,8 +20,7 @@ use liquid_glass::{
 };
 
 struct State {
-    window_id: Option<iced::window::Id>,
-    window_focused: bool,
+    controller: WindowShellController,
     active_section: Section,
     appearance: Appearance,
     accent: Accent,
@@ -33,7 +32,6 @@ struct State {
     increased_contrast: bool,
     volume: f32,
     system_scheme: UiColorScheme,
-    traffic_lights: liquid_glass::TrafficLightsState,
 }
 
 impl Default for State {
@@ -44,9 +42,10 @@ impl Default for State {
         } else {
             UiColorScheme::Light
         };
+        let config = WindowChromeConfig::unified_header(window_metrics::FUSED_HEADER_HEIGHT);
+        let controller = WindowShellController::new(config, initial_dark);
         Self {
-            window_id: None,
-            window_focused: true,
+            controller,
             active_section: Section::General,
             appearance: Appearance::Automatic,
             accent: Accent::Blue,
@@ -58,7 +57,6 @@ impl Default for State {
             increased_contrast: false,
             volume: 64.0,
             system_scheme: initial_scheme,
-            traffic_lights: liquid_glass::TrafficLightsState::new(),
         }
     }
 }
@@ -159,17 +157,8 @@ enum Message {
     ResizeWindow(iced::window::Direction),
     DragWindow,
     ToggleMaximize,
-    ControlPressed {
-        #[allow(dead_code)]
-        id: GlassId,
-        action: liquid_glass::ControlAction,
-        execute: bool,
-    },
-    ControlPressStarted { id: GlassId },
-    ControlPressVisualCancelled { id: GlassId },
-    ControlPressEnded { id: GlassId },
-    ControlGroupHover(bool),
-    AnimationTick,
+    TrafficLights(TrafficLightsEvent),
+    AnimationTick(std::time::Instant),
     SectionSelected(Section),
     AppearanceSelected(Appearance),
     AccentSelected(Accent),
@@ -189,13 +178,13 @@ fn boot() -> (State, Task<Message>) {
     let state = State::default();
     let is_dark = state.color_scheme() == UiColorScheme::Dark;
     let rim_insets: f32 = window_rim::rim_thickness(is_dark);
-    let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
+    let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - bmol_designs::traffic_lights::DIAMETER) * 0.5;
     let origin_x = rim_insets + symmetric_margin;
     let origin_y = rim_insets + symmetric_margin;
     iced_backend::set_window_control_origin(origin_x, origin_y);
     iced_backend::set_color_scheme(state.color_scheme());
     iced_backend::set_accessibility(state.accessibility());
-    iced_backend::set_window_inactive(!state.window_focused);
+    iced_backend::set_window_inactive(!state.controller.is_focused);
     (
         state,
         Task::batch([
@@ -218,7 +207,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
     let mut task = Task::none();
     match message {
         Message::WindowReady(Some(id)) => {
-            state.window_id = Some(id);
+            state.controller.set_window_id(id);
             let is_dark = state.color_scheme() == UiColorScheme::Dark;
             let options = liquid_glass::NativeWindowOptions::new()
                 .with_corner_radius(window_metrics::DEFAULT_CORNER_RADIUS as f64)
@@ -238,93 +227,53 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::WindowEvent((id, event)) => {
             match event {
                 iced::window::Event::Opened { .. } => {
-                    if state.window_id.is_none() {
+                    if state.controller.window_id.is_none() {
                         return update(state, Message::WindowReady(Some(id)));
                     }
                 }
-                iced::window::Event::Focused => {
-                    if state.window_id == Some(id) || state.window_id.is_none() {
-                        state.window_focused = true;
-                        iced_backend::set_window_inactive(false);
+                _ => {
+                    if state.controller.window_id == Some(id) {
+                        if let Some(shell_event) = state.controller.handle_window_event(&event) {
+                            match shell_event {
+                                ShellEvent::Focused => iced_backend::set_window_inactive(false),
+                                ShellEvent::Unfocused => iced_backend::set_window_inactive(true),
+                                ShellEvent::CloseRequested => task = iced::window::close(id),
+                                _ => {}
+                            }
+                        }
                     }
                 }
-                iced::window::Event::Unfocused => {
-                    if state.window_id == Some(id) {
-                        state.window_focused = false;
-                        state.traffic_lights.hover_target = 0.0;
-                        state.traffic_lights.hover_progress = 0.0;
-                        iced_backend::set_window_inactive(true);
-                    }
-                }
-                iced::window::Event::Closed => {
-                    if state.window_id == Some(id) {
-                        state.window_id = None;
-                    }
-                }
-                _ => {}
             }
         }
         Message::ResizeWindow(direction) => {
-            if let Some(id) = state.window_id {
+            if let Some(id) = state.controller.window_id {
                 task = iced::window::drag_resize(id, direction);
             }
         }
         Message::DragWindow => {
-            if let Some(id) = state.window_id {
+            if let Some(id) = state.controller.window_id {
                 task = iced::window::drag(id);
             }
         }
         Message::ToggleMaximize => {
-            if let Some(id) = state.window_id {
+            if let Some(id) = state.controller.window_id {
                 task = iced::window::toggle_maximize(id);
             }
         }
-        Message::ControlPressed { action, execute, .. } => {
-            if execute {
-                if let Some(id) = state.window_id {
-                    task = match action {
-                        liquid_glass::ControlAction::Close => iced::window::close(id),
-                        liquid_glass::ControlAction::Minimize => iced::window::minimize(id, true),
-                        liquid_glass::ControlAction::Expand | liquid_glass::ControlAction::Zoom => {
-                            iced::window::toggle_maximize(id)
-                        }
-                    };
-                }
-            }
+        Message::TrafficLights(event) => {
+            task = state.controller.handle_traffic_lights(event);
         }
-        Message::ControlPressStarted { id } => {
-            if let Some(index) = WINDOW_CONTROL_NATIVE_IDS.iter().position(|&x| x == id) {
-                state.traffic_lights.on_press_start(index);
-                iced_backend::set_window_control_press_progress(id, 1.0);
-            }
-        }
-        Message::ControlPressVisualCancelled { id } => {
-            if let Some(index) = WINDOW_CONTROL_NATIVE_IDS.iter().position(|&x| x == id) {
-                state.traffic_lights.on_press_cancel(index);
-                iced_backend::set_window_control_press_progress(id, 0.0);
-            }
-        }
-        Message::ControlPressEnded { id } => {
-            if let Some(index) = WINDOW_CONTROL_NATIVE_IDS.iter().position(|&x| x == id) {
-                state.traffic_lights.on_press_end(index);
-                iced_backend::set_window_control_press_progress(id, 0.0);
-            }
-        }
-        Message::ControlGroupHover(hovered) => {
-            state.traffic_lights.on_group_hover(hovered);
-            iced_backend::set_window_control_group_hover(0, hovered);
-        }
-        Message::AnimationTick => {
-            state.traffic_lights.step(std::time::Instant::now());
+        Message::AnimationTick(now) => {
+            state.controller.step(now);
             for (index, &id) in WINDOW_CONTROL_NATIVE_IDS.iter().enumerate() {
                 iced_backend::set_window_control_scale(
                     id,
-                    state.traffic_lights.press_springs[index].value(),
+                    state.controller.traffic_lights.press_springs[index].value(),
                 );
             }
             iced_backend::set_window_control_group_progress(
                 0,
-                state.traffic_lights.hover_progress,
+                state.controller.traffic_lights.hover_progress,
             );
         }
         Message::SectionSelected(section) => state.active_section = section,
@@ -338,19 +287,27 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::IncreasedContrastChanged(enabled) => state.increased_contrast = enabled,
         Message::VolumeChanged(volume) => state.volume = volume,
         Message::SystemThemeChanged(mode) => {
-            state.system_scheme = UiColorScheme::from_mode(mode);
+            let event = state.controller.handle_system_theme(mode);
+            if let ShellEvent::ThemeChanged { is_dark } = event {
+                state.system_scheme = if is_dark {
+                    UiColorScheme::Dark
+                } else {
+                    UiColorScheme::Light
+                };
+            }
         }
     }
     if updates_color_scheme {
         let scheme = state.color_scheme();
         let is_dark = scheme == UiColorScheme::Dark;
+        state.controller.set_dark_mode(is_dark);
         let rim_insets: f32 = window_rim::rim_thickness(is_dark);
-        let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
+        let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - bmol_designs::traffic_lights::DIAMETER) * 0.5;
         let origin_x = rim_insets + symmetric_margin;
         let origin_y = rim_insets + symmetric_margin;
         iced_backend::set_window_control_origin(origin_x, origin_y);
         iced_backend::set_color_scheme(scheme);
-        if let Some(id) = state.window_id {
+        if let Some(id) = state.controller.window_id {
             let options = liquid_glass::NativeWindowOptions::new()
                 .with_corner_radius(window_metrics::DEFAULT_CORNER_RADIUS as f64)
                 .with_dark_mode(is_dark)
@@ -384,18 +341,11 @@ impl State {
 }
 
 fn subscription(state: &State) -> Subscription<Message> {
-    let window_events = iced::window::events().map(Message::WindowEvent);
-    let theme_changes =
-        bmol_window_shell::system_theme_subscription(Message::SystemThemeChanged);
-    if state.traffic_lights.is_animating() {
-        Subscription::batch([
-            window_events,
-            theme_changes,
-            iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::AnimationTick),
-        ])
-    } else {
-        Subscription::batch([window_events, theme_changes])
-    }
+    Subscription::batch([
+        iced::window::events().map(Message::WindowEvent),
+        state.controller.theme_subscription(Message::SystemThemeChanged),
+        state.controller.animation_subscription(Message::AnimationTick),
+    ])
 }
 
 fn app_theme(state: &State) -> Theme {
@@ -498,48 +448,20 @@ fn view(state: &State) -> AppElement<'_> {
 
     let is_dark = state.color_scheme() == UiColorScheme::Dark;
     let rim_insets: f32 = window_rim::rim_thickness(is_dark);
-    let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - WINDOW_CONTROL_NATIVE_SIZE) * 0.5;
-    let slop = traffic_lights::control_hover_slop(WINDOW_CONTROL_NATIVE_SIZE);
-    let leading_spacer_w = (symmetric_margin - slop).max(0.0);
+    let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - bmol_designs::traffic_lights::DIAMETER) * 0.5;
     let origin_x = rim_insets + symmetric_margin;
     let origin_y = rim_insets + symmetric_margin;
     iced_backend::set_window_control_origin(origin_x, origin_y);
     bmol_window_shell::set_glass_passthrough(true);
 
-    let traffic_lights = row![
-        column![].width(Length::Fixed(leading_spacer_w)),
-        traffic_lights::control_group(
-            WINDOW_CONTROL_NATIVE_IDS,
-            WINDOW_CONTROL_NATIVE_SIZE,
-            WINDOW_CONTROL_GAP,
-            is_dark,
-            true,
-            false,
-            true,
-            !state.window_focused,
-            state.traffic_lights.hover_progress,
-            state.traffic_lights.expand_behavior,
-            [
-                state.traffic_lights.press_springs[0].value(),
-                state.traffic_lights.press_springs[1].value(),
-                state.traffic_lights.press_springs[2].value(),
-            ],
-            |id, action| Message::ControlPressed { id, action, execute: true },
-            |id| Message::ControlPressStarted { id },
-            |id| Message::ControlPressVisualCancelled { id },
-            |id| Message::ControlPressEnded { id },
-            Message::ControlGroupHover,
-        ),
-        space::horizontal().width(Length::Fill),
-    ]
-    .align_y(iced::Alignment::Center)
-    .height(Length::Fixed(FUSED_TOP_BAR_HEIGHT))
-    .width(Length::Fill);
+    let traffic_lights = components::glass_overlay(
+        state.controller.traffic_lights_view(Message::TrafficLights),
+    );
 
     let draggable_sidebar_top = container(
-        liquid_glass::loyal_drag_bar(
+        state.controller.loyal_drag_bar(
             FUSED_TOP_BAR_HEIGHT,
-            components::glass_overlay(traffic_lights),
+            traffic_lights,
             Message::DragWindow,
             Some(Message::ToggleMaximize),
         )
@@ -633,13 +555,11 @@ fn view(state: &State) -> AppElement<'_> {
         container(stack![content, draggable_toolbar]).width(Length::Fill).height(Length::Fill);
 
     let window_content = container(row![sidebar, main]).width(Length::Fill).height(Length::Fill);
-    let is_dark = state.color_scheme() == UiColorScheme::Dark;
-    let rimmed = liquid_glass::wrap_window_rim(
+    state.controller.wrap_window_with_resizer(
         window_content,
-        liquid_glass::WindowRimConfig::new(is_dark)
-            .with_corner_radius(window_metrics::DEFAULT_CORNER_RADIUS),
-    );
-    liquid_glass::wrap_border_resizer(rimmed, false, Message::ResizeWindow)
+        window_metrics::DEFAULT_CORNER_RADIUS,
+        Message::ResizeWindow,
+    )
 }
 
 const SIDEBAR_SCROLLBAR_GAP: f32 = 8.0;
@@ -1290,12 +1210,12 @@ mod window_and_traffic_lights_tests {
     #[test]
     fn test_window_ready_attaches_window_id() {
         let mut state = State::default();
-        assert_eq!(state.window_id, None);
-        assert!(state.window_focused);
+        assert_eq!(state.controller.window_id, None);
+        assert!(state.controller.is_focused);
 
         let test_id = iced::window::Id::unique();
         let _ = update(&mut state, Message::WindowReady(Some(test_id)));
-        assert_eq!(state.window_id, Some(test_id));
+        assert_eq!(state.controller.window_id, Some(test_id));
     }
 
     #[test]
@@ -1304,27 +1224,27 @@ mod window_and_traffic_lights_tests {
         let test_id = iced::window::Id::unique();
         let _ = update(&mut state, Message::WindowReady(Some(test_id)));
 
-        state.traffic_lights.on_group_hover(true);
-        assert_eq!(state.traffic_lights.hover_target, 1.0);
+        state.controller.traffic_lights.on_group_hover(true);
+        assert_eq!(state.controller.traffic_lights.hover_target, 1.0);
 
         let _ = update(&mut state, Message::WindowEvent((test_id, iced::window::Event::Unfocused)));
-        assert!(!state.window_focused);
-        assert_eq!(state.traffic_lights.hover_target, 0.0);
+        assert!(!state.controller.is_focused);
+        assert_eq!(state.controller.traffic_lights.hover_target, 0.0);
 
         let _ = update(&mut state, Message::WindowEvent((test_id, iced::window::Event::Focused)));
-        assert!(state.window_focused);
+        assert!(state.controller.is_focused);
     }
 
     #[test]
     fn test_traffic_lights_hover_state() {
         let mut state = State::default();
-        assert_eq!(state.traffic_lights.hover_target, 0.0);
+        assert_eq!(state.controller.traffic_lights.hover_target, 0.0);
 
-        let _ = update(&mut state, Message::ControlGroupHover(true));
-        assert_eq!(state.traffic_lights.hover_target, 1.0);
+        let _ = update(&mut state, Message::TrafficLights(TrafficLightsEvent::GroupHover(true)));
+        assert_eq!(state.controller.traffic_lights.hover_target, 1.0);
 
-        let _ = update(&mut state, Message::ControlGroupHover(false));
-        assert_eq!(state.traffic_lights.hover_target, 0.0);
+        let _ = update(&mut state, Message::TrafficLights(TrafficLightsEvent::GroupHover(false)));
+        assert_eq!(state.controller.traffic_lights.hover_target, 0.0);
     }
 }
 
