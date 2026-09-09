@@ -2,6 +2,7 @@ use iced_wgpu::wgpu;
 use liquid_glass::UiColorScheme;
 
 /// Uploads tightly packed RGBA8 pixels into a fresh 2D texture.
+#[allow(dead_code)]
 fn upload_rgba8(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -76,6 +77,7 @@ pub fn reference_grid_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> (wg
 /// binary asset dependency by default.
 #[cfg(feature = "studio-assets")]
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+#[allow(dead_code)]
 pub fn settings_background_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -110,6 +112,7 @@ pub fn settings_background_texture(
 /// `studio-assets` feature and without any checked-in third-party imagery.
 #[cfg(not(feature = "studio-assets"))]
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+#[allow(dead_code)]
 pub fn settings_background_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
