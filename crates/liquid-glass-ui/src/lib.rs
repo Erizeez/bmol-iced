@@ -214,6 +214,18 @@ where
     }
 }
 
+impl<'a, Message, Theme, Renderer> From<GlassForeground<'a, Message, Theme, Renderer>>
+    for iced::Element<'a, Message, Theme, Renderer>
+where
+    Message: 'a,
+    Theme: 'a,
+    Renderer: advanced::Renderer + GlassForegroundRenderer + 'a,
+{
+    fn from(foreground: GlassForeground<'a, Message, Theme, Renderer>) -> Self {
+        iced::Element::new(foreground)
+    }
+}
+
 /// Wraps a widget whose pixels belong above both the glass composition and
 /// any post-composition masks applied to a foreground layer.
 pub struct GlassOverlay<'a, Message, Theme, Renderer> {
@@ -351,6 +363,18 @@ where
             viewport,
             translation,
         )
+    }
+}
+
+impl<'a, Message, Theme, Renderer> From<GlassOverlay<'a, Message, Theme, Renderer>>
+    for iced::Element<'a, Message, Theme, Renderer>
+where
+    Message: 'a,
+    Theme: 'a,
+    Renderer: advanced::Renderer + GlassForegroundRenderer + 'a,
+{
+    fn from(overlay: GlassOverlay<'a, Message, Theme, Renderer>) -> Self {
+        iced::Element::new(overlay)
     }
 }
 
@@ -568,6 +592,18 @@ where
         } else {
             mouse::Interaction::default()
         }
+    }
+}
+
+impl<'a, Message, Theme, Renderer> From<GlassContainer>
+    for iced::Element<'a, Message, Theme, Renderer>
+where
+    Message: 'a,
+    Theme: 'a,
+    Renderer: advanced::Renderer + GlassForegroundRenderer + 'a,
+{
+    fn from(container: GlassContainer) -> Self {
+        iced::Element::new(container)
     }
 }
 

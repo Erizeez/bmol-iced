@@ -44,7 +44,8 @@ use bmol_window_shell::{
     is_system_dark_mode, window_metrics,
 };
 use liquid_glass::{
-    ContextMenu, MenuItem, UiColorScheme, UiIcon, UiTheme,
+    ContextMenu, CornerCurve, GlassContainer, GlassId,
+    GlassRole, GlassShape, MenuItem, Rect, UiColorScheme, UiIcon, UiTheme,
     geometry::{
         squircle_alpha, squircle_path_commands, PathCommand,
         Point as SquirclePoint, SquircleParams, APPLE_CORNER_SMOOTHING,
@@ -1038,6 +1039,7 @@ pub enum Message {
     ToggleHighlight(bool),
     ToggleDarkRim(bool),
     ToggleGrid(bool),
+    TogglePipelineMode,
     ToggleDocumentEdited,
     SystemThemeChanged(iced::theme::Mode),
     SearchInputChanged(String),
@@ -1049,7 +1051,228 @@ pub enum Message {
     TriggerAction(String),
 }
 
-/// Single unified Canvas program rendering wallpaper, glass substrate, blur, highlights, and icons in a single pass.
+/// Rendering pipeline selection for the Liquid Glass Dock demo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PipelineMode {
+    #[default]
+    GpuLiquidRs,
+    Canvas2D,
+}
+
+impl PipelineMode {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::GpuLiquidRs => "GPU liquid-rs (自研引擎)",
+            Self::Canvas2D => "2D Canvas (矢量模拟)",
+        }
+    }
+}
+
+/// Renders base wallpaper and alignment grid lines directly into the source layer.
+struct WallpaperCanvas {
+    style: WallpaperStyle,
+    show_grid: bool,
+    system_wallpaper: Option<Arc<WallpaperBuffer>>,
+}
+
+impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for WallpaperCanvas {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &iced_backend::Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+
+        let window_squircle = build_squircle_path(
+            Rectangle::new(Point::ORIGIN, bounds.size()),
+            window_metrics::DEFAULT_CORNER_RADIUS,
+        );
+
+        // 1. Draw Base Wallpaper (Presets clipped cleanly to window squircle)
+        match self.style {
+            WallpaperStyle::DesktopTransparent => {}
+            WallpaperStyle::AuroraMesh => {
+                let grad = Linear::new(Point::ORIGIN, Point::new(bounds.width, bounds.height))
+                    .add_stop(0.0, Color::from_rgb(0.12, 0.06, 0.38))
+                    .add_stop(0.20, Color::from_rgb(0.38, 0.10, 0.58))
+                    .add_stop(0.44, Color::from_rgb(0.88, 0.16, 0.48))
+                    .add_stop(0.68, Color::from_rgb(0.98, 0.46, 0.15))
+                    .add_stop(0.86, Color::from_rgb(0.95, 0.80, 0.22))
+                    .add_stop(1.0, Color::from_rgb(0.12, 0.78, 0.82));
+                frame.fill(&window_squircle, grad);
+            }
+            WallpaperStyle::SunsetGaze => {
+                let grad = Linear::new(Point::new(bounds.width * 0.15, 0.0), Point::new(bounds.width * 0.85, bounds.height))
+                    .add_stop(0.0, Color::from_rgb(0.06, 0.10, 0.25))
+                    .add_stop(0.30, Color::from_rgb(0.35, 0.12, 0.42))
+                    .add_stop(0.60, Color::from_rgb(0.82, 0.22, 0.35))
+                    .add_stop(0.82, Color::from_rgb(0.96, 0.52, 0.18))
+                    .add_stop(1.0, Color::from_rgb(1.0, 0.82, 0.45));
+                frame.fill(&window_squircle, grad);
+            }
+            WallpaperStyle::TvColorBars => {
+                let n = 8.0;
+                let bar_w = bounds.width / n;
+                for i in 0..8 {
+                    let c = sample_sharp_wallpaper(self.style, (i as f32 + 0.5) * bar_w, 0.0, bounds.size(), self.system_wallpaper.as_deref());
+                    frame.fill_rectangle(
+                        Point::new(i as f32 * bar_w, 0.0),
+                        Size::new(bar_w + 1.0, bounds.height),
+                        Color::from_rgb(c[0], c[1], c[2]),
+                    );
+                }
+            }
+            WallpaperStyle::TvSmpteSplit => {
+                let top_h = bounds.height * 0.70;
+                let bot_h = bounds.height - top_h;
+
+                let n_top = 7.0;
+                let bar_w_top = bounds.width / n_top;
+                for i in 0..7 {
+                    let c = sample_sharp_wallpaper(self.style, (i as f32 + 0.5) * bar_w_top, 10.0, bounds.size(), self.system_wallpaper.as_deref());
+                    frame.fill_rectangle(
+                        Point::new(i as f32 * bar_w_top, 0.0),
+                        Size::new(bar_w_top + 1.0, top_h),
+                        Color::from_rgb(c[0], c[1], c[2]),
+                    );
+                }
+
+                let n_bot = 8.0;
+                let bar_w_bot = bounds.width / n_bot;
+                for i in 0..8 {
+                    let c = sample_sharp_wallpaper(self.style, (i as f32 + 0.5) * bar_w_bot, top_h + 10.0, bounds.size(), self.system_wallpaper.as_deref());
+                    frame.fill_rectangle(
+                        Point::new(i as f32 * bar_w_bot, top_h),
+                        Size::new(bar_w_bot + 1.0, bot_h),
+                        Color::from_rgb(c[0], c[1], c[2]),
+                    );
+                }
+            }
+            WallpaperStyle::TvColorGrid => {
+                let cols = 4.0;
+                let rows = 3.0;
+                let cell_w = bounds.width / cols;
+                let cell_h = bounds.height / rows;
+                for r in 0..3 {
+                    for c in 0..4 {
+                        let sample = sample_sharp_wallpaper(
+                            self.style,
+                            (c as f32 + 0.5) * cell_w,
+                            (r as f32 + 0.5) * cell_h,
+                            bounds.size(),
+                            self.system_wallpaper.as_deref(),
+                        );
+                        frame.fill_rectangle(
+                            Point::new(c as f32 * cell_w, r as f32 * cell_h),
+                            Size::new(cell_w + 1.0, cell_h + 1.0),
+                            Color::from_rgb(sample[0], sample[1], sample[2]),
+                        );
+                    }
+                }
+            }
+            WallpaperStyle::PureWhite => {
+                frame.fill(&window_squircle, Color::WHITE);
+            }
+            WallpaperStyle::PureBlack => {
+                frame.fill(&window_squircle, Color::BLACK);
+            }
+        }
+
+        // 2. Alignment Calibration Grid Lines
+        if self.show_grid && !matches!(self.style, WallpaperStyle::PureWhite | WallpaperStyle::PureBlack) {
+            let grid_step = 36.0f32;
+            let line_color = Color::from_rgba(1.0, 1.0, 1.0, 0.16);
+            let mut x = grid_step;
+            while x < bounds.width {
+                frame.fill_rectangle(Point::new(x, 0.0), Size::new(1.0, bounds.height), line_color);
+                x += grid_step;
+            }
+            let mut y = grid_step;
+            while y < bounds.height {
+                frame.fill_rectangle(Point::new(0.0, y), Size::new(bounds.width, 1.0), line_color);
+                y += grid_step;
+            }
+        }
+
+        vec![frame.into_geometry()]
+    }
+}
+
+/// Renders application icons and active indicator dots in the glass foreground layer.
+struct IconsCanvas {
+    metrics: LayoutMetrics,
+    is_dark: bool,
+    enable_highlight: bool,
+    enable_dark_rim: bool,
+    app_icons: [Option<iced::widget::image::Handle>; 9],
+}
+
+impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for IconsCanvas {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &iced_backend::Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let d_rect = self.metrics.dock_rect;
+
+        // Render 9 Authentic macOS Squircle Icons & Interactive Mechanics
+        for (i, app) in DockApp::ALL.iter().enumerate() {
+            let i_rect = self.metrics.icon_rects[i];
+            draw_apple_icon(
+                &mut frame,
+                *app,
+                i_rect,
+                self.is_dark,
+                self.enable_highlight,
+                self.enable_dark_rim,
+                self.app_icons[i].as_ref(),
+            );
+
+            let is_running = matches!(
+                app,
+                DockApp::Finder
+                    | DockApp::Safari
+                    | DockApp::Messages
+                    | DockApp::Mail
+                    | DockApp::Terminal
+                    | DockApp::Settings
+            );
+            if is_running {
+                let dot_cx = i_rect.x + i_rect.width * 0.5;
+                let dot_cy = d_rect.y + d_rect.height - (self.metrics.dock_padding * 0.35);
+                let (dot_color, halo_color) = if self.is_dark {
+                    (
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.90),
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.18),
+                    )
+                } else {
+                    (
+                        Color::from_rgba(0.08, 0.09, 0.12, 0.65),
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.45),
+                    )
+                };
+                let dot_r = 2.0f32;
+                frame.fill(&Path::circle(Point::new(dot_cx, dot_cy), dot_r + 1.0), halo_color);
+                frame.fill(&Path::circle(Point::new(dot_cx, dot_cy), dot_r), dot_color);
+            }
+        }
+
+        vec![frame.into_geometry()]
+    }
+}
+
+/// Fallback 2D Canvas program rendering wallpaper, simulated glass substrate, blur, highlights, and icons in a single pass.
 struct LiquidGlassCanvas {
     style: WallpaperStyle,
     metrics: LayoutMetrics,
@@ -1701,6 +1924,7 @@ pub struct State {
     pub transparency: GlassTransparency,
     pub blur_preset: BlurPreset,
     pub blur_radius: f32,
+    pub pipeline_mode: PipelineMode,
     pub show_grid: bool,
     pub enable_highlight: bool,
     pub enable_dark_rim: bool,
@@ -1762,6 +1986,7 @@ impl Default for State {
             transparency: GlassTransparency::Ultra,
             blur_preset: BlurPreset::Standard16,
             blur_radius: BlurPreset::Standard16.radius(),
+            pipeline_mode: PipelineMode::GpuLiquidRs,
             show_grid: false,
             enable_highlight: true,
             enable_dark_rim: true,
@@ -1771,7 +1996,7 @@ impl Default for State {
             document_edited: false,
             floating_menu: None,
             floating_menu_cached: ContextMenu::new(),
-            last_action: "就绪：macOS 原生桌面壁纸输入已接入，Liquid Glass 实施 2D 深度高斯模糊卷积".to_string(),
+            last_action: "就绪：GPU liquid-rs 自研物理光学引擎与硬件模糊已接入".to_string(),
             system_wallpaper,
             dock_frosted_texture: None,
             search_frosted_texture: None,
@@ -1784,6 +2009,9 @@ impl Default for State {
 
 impl State {
     pub fn regenerate_frosted_textures(&mut self) {
+        if self.pipeline_mode == PipelineMode::GpuLiquidRs {
+            return;
+        }
         let metrics = LayoutMetrics::new(self.window_size, self.hovered_app);
         self.dock_frosted_texture = Some(generate_frosted_plate_texture(
             self.wallpaper,
@@ -2051,6 +2279,17 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.last_action = format!("校准网格线: {}", if val { "显示" } else { "隐藏" });
             Task::none()
         }
+        Message::TogglePipelineMode => {
+            state.pipeline_mode = match state.pipeline_mode {
+                PipelineMode::GpuLiquidRs => PipelineMode::Canvas2D,
+                PipelineMode::Canvas2D => PipelineMode::GpuLiquidRs,
+            };
+            if state.pipeline_mode == PipelineMode::Canvas2D {
+                state.regenerate_frosted_textures();
+            }
+            state.last_action = format!("切换渲染管线: {}", state.pipeline_mode.label());
+            Task::none()
+        }
         Message::ToggleDocumentEdited => {
             state.document_edited = !state.document_edited;
             bmol_window_shell::set_document_edited(state.document_edited);
@@ -2202,43 +2441,131 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
         }
     });
 
-    // -------------------------------------------------------------
-    // Unified Liquid Glass Canvas (Sharp background + Frosted blur + Optics + Icons in ONE pass)
-    // -------------------------------------------------------------
-    let glass_canvas = Canvas::new(LiquidGlassCanvas {
-        style: state.wallpaper,
-        metrics,
-        show_grid: state.show_grid,
-        system_wallpaper: Some(state.system_wallpaper.clone()),
-        dock_frosted_texture: state.dock_frosted_texture.clone(),
-        search_frosted_texture: state.search_frosted_texture.clone(),
-        enable_highlight: state.enable_highlight,
-        enable_dark_rim: state.enable_dark_rim,
-        is_dark,
-        transparency: state.transparency,
-        floating_menu_rect,
-        app_icons: state.app_icons.clone(),
-    })
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    // -------------------------------------------------------------
-    // Layer 2: Interactive Controls Overlay (Exact Metric Sizing)
-    // -------------------------------------------------------------
-    let header = view_header(state, is_dark);
-    let status_bar = view_status_bar(state, is_dark);
-
     // Search bar input positioned right over metrics.search_rect
     let search_input = view_search_input(state, is_dark, metrics.search_rect);
 
     // Dock interactive touch areas
     let dock_interactive = view_dock_hitboxes(state, metrics);
 
-    let stage_area = iced::widget::Stack::new()
-        .push(search_input)
-        .push(dock_interactive)
+    // -------------------------------------------------------------
+    // Dual Pipeline Rendering Architecture (GPU liquid-rs vs 2D Canvas Fallback)
+    // -------------------------------------------------------------
+    let (stage_area, base_canvas): (
+        Element<'_, Message, Theme, iced_backend::Renderer>,
+        Element<'_, Message, Theme, iced_backend::Renderer>,
+    ) = if state.pipeline_mode == PipelineMode::GpuLiquidRs {
+        // 1. Base Wallpaper Canvas directly targeting the source render layer
+        let wallpaper_canvas = Canvas::new(WallpaperCanvas {
+            style: state.wallpaper,
+            show_grid: state.show_grid,
+            system_wallpaper: Some(state.system_wallpaper.clone()),
+        })
         .width(Length::Fill)
         .height(Length::Fill);
+
+        let theme = UiTheme::new(state.scheme());
+        let mut search_mat = theme.glass_material(GlassRole::SearchField);
+        search_mat.blur.radius = state.blur_radius;
+
+        let mut dock_mat = theme.glass_material(GlassRole::FloatingControl);
+        dock_mat.blur.radius = state.blur_radius;
+
+        // 2. Search Bar GPU Glass Container
+        let search_glass = container(
+            GlassContainer::new(
+                GlassId(200),
+                Rect::new(
+                    metrics.search_rect.x,
+                    metrics.search_rect.y,
+                    metrics.search_rect.width,
+                    metrics.search_rect.height,
+                ),
+            )
+            .shape(GlassShape::Capsule)
+            .material(search_mat)
+            .chrome(theme.glass_chrome(GlassRole::SearchField)),
+        )
+        .padding(Padding {
+            top: metrics.search_rect.y - metrics.header_h,
+            left: metrics.search_rect.x,
+            ..Padding::ZERO
+        });
+
+        // 3. Dock Bar GPU Glass Container
+        let dock_glass = container(
+            GlassContainer::new(
+                GlassId(201),
+                Rect::new(
+                    metrics.dock_rect.x,
+                    metrics.dock_rect.y,
+                    metrics.dock_rect.width,
+                    metrics.dock_rect.height,
+                ),
+            )
+            .shape(GlassShape::RoundedRect { radius: metrics.dock_radius })
+            .corner_curve(CornerCurve::continuous())
+            .material(dock_mat)
+            .chrome(theme.glass_chrome(GlassRole::FloatingControl)),
+        )
+        .padding(Padding {
+            top: metrics.dock_rect.y - metrics.header_h,
+            left: metrics.dock_rect.x,
+            ..Padding::ZERO
+        });
+
+        // 4. Foreground Icons and Interactive Hitboxes on top of GPU Glass
+        let foreground_icons = liquid_glass::ui::components::glass_foreground(
+            Canvas::new(IconsCanvas {
+                metrics,
+                is_dark,
+                enable_highlight: state.enable_highlight,
+                enable_dark_rim: state.enable_dark_rim,
+                app_icons: state.app_icons.clone(),
+            })
+            .width(Length::Fill)
+            .height(Length::Fill),
+        );
+
+        let stage = iced::widget::Stack::new()
+            .push(search_glass)
+            .push(dock_glass)
+            .push(foreground_icons)
+            .push(liquid_glass::ui::components::glass_foreground(search_input))
+            .push(liquid_glass::ui::components::glass_foreground(dock_interactive))
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        (stage.into(), wallpaper_canvas.into())
+    } else {
+        // Fallback 2D Canvas mode (CPU Gaussian blur / 2D Canvas simulation)
+        let glass_canvas = Canvas::new(LiquidGlassCanvas {
+            style: state.wallpaper,
+            metrics,
+            show_grid: state.show_grid,
+            system_wallpaper: Some(state.system_wallpaper.clone()),
+            dock_frosted_texture: state.dock_frosted_texture.clone(),
+            search_frosted_texture: state.search_frosted_texture.clone(),
+            enable_highlight: state.enable_highlight,
+            enable_dark_rim: state.enable_dark_rim,
+            is_dark,
+            transparency: state.transparency,
+            floating_menu_rect,
+            app_icons: state.app_icons.clone(),
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        let stage = iced::widget::Stack::new()
+            .push(search_input)
+            .push(dock_interactive)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        (stage.into(), glass_canvas.into())
+    };
+
+    let header = view_header(state, is_dark);
+    let status_bar = view_status_bar(state, is_dark);
 
     let page_content = column![header, stage_area, status_bar]
         .width(Length::Fill)
@@ -2246,10 +2573,10 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
 
     let mut layers: Vec<Element<'_, Message, Theme, iced_backend::Renderer>> = Vec::new();
 
-    // Layer 1: Unified Liquid Glass Canvas
-    layers.push(glass_canvas.into());
+    // Layer 1: Base Canvas (Wallpaper in GPU mode / Full 2D Canvas in fallback mode)
+    layers.push(base_canvas);
 
-    // Layer 2: Interactive Controls Overlay (Exact Metric Sizing)
+    // Layer 2: Interactive Controls & Glass Nodes Overlay
     layers.push(page_content.into());
 
     // -------------------------------------------------------------
@@ -2272,11 +2599,36 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
                 ..Padding::ZERO
             });
 
-        let overlay_stack = iced::widget::Stack::new()
-            .push(dismiss_backdrop)
-            .push(positioned_menu);
+        if state.pipeline_mode == PipelineMode::GpuLiquidRs {
+            let theme = UiTheme::new(state.scheme());
+            let menu_glass = container(
+                GlassContainer::new(
+                    GlassId(202),
+                    Rect::new(m_rect.x, m_rect.y, m_rect.width, m_rect.height),
+                )
+                .shape(GlassShape::RoundedRect { radius: 12.0 })
+                .material(theme.glass_material(GlassRole::ContextMenu))
+                .chrome(theme.glass_chrome(GlassRole::ContextMenu)),
+            )
+            .padding(Padding {
+                top: m_rect.y,
+                left: m_rect.x,
+                ..Padding::ZERO
+            });
 
-        layers.push(overlay_stack.into());
+            let overlay_stack = iced::widget::Stack::new()
+                .push(dismiss_backdrop)
+                .push(menu_glass)
+                .push(liquid_glass::ui::components::glass_overlay(positioned_menu));
+
+            layers.push(overlay_stack.into());
+        } else {
+            let overlay_stack = iced::widget::Stack::new()
+                .push(dismiss_backdrop)
+                .push(positioned_menu);
+
+            layers.push(overlay_stack.into());
+        }
     }
 
     let root_stack = container(iced::widget::Stack::with_children(layers))
@@ -2329,6 +2681,40 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
     });
 
     // Optics Tuning Controls wrapped in a floating frosted pill capsule
+    // Active Pipeline Selection Pill
+    let pipeline_pill = container(
+        button(
+            text(state.pipeline_mode.label())
+                .size(11)
+                .font(font::ui_font(Weight::Semibold))
+                .color(if state.pipeline_mode == PipelineMode::GpuLiquidRs {
+                    Color::from_rgb(0.20, 0.85, 0.55)
+                } else {
+                    Color::from_rgb(1.0, 0.70, 0.25)
+                }),
+        )
+        .padding(Padding {
+            top: 3.0,
+            right: 8.0,
+            bottom: 3.0,
+            left: 8.0,
+        })
+        .style(move |_theme, _status| button::Style {
+            background: Some(Background::Color(if is_dark {
+                Color::from_rgba(0.12, 0.14, 0.18, 0.75)
+            } else {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.75)
+            })),
+            border: Border::default().rounded(12.0).width(0.5).color(if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.20)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.12)
+            }),
+            ..Default::default()
+        })
+        .on_press(Message::TogglePipelineMode),
+    );
+
     let wallpaper_pill = container(
         row(WallpaperStyle::ALL
             .iter()
@@ -2597,6 +2983,8 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
         space().width(Length::Fixed(12.0)),
         title_text,
         space().width(Length::Fill),
+        pipeline_pill,
+        space().width(Length::Fixed(4.0)),
         wallpaper_pill,
         space().width(Length::Fixed(4.0)),
         blur_pill,
@@ -3204,6 +3592,20 @@ mod tests {
 
         // Animation frame steps physics
         let _ = update(&mut state, Message::AnimationFrame(Instant::now()));
+    }
+
+    #[test]
+    fn test_pipeline_mode_toggle_and_defaults() {
+        let mut state = State::default();
+        assert_eq!(state.pipeline_mode, PipelineMode::GpuLiquidRs);
+        assert_eq!(state.pipeline_mode.label(), "GPU liquid-rs (自研引擎)");
+
+        let _ = update(&mut state, Message::TogglePipelineMode);
+        assert_eq!(state.pipeline_mode, PipelineMode::Canvas2D);
+        assert_eq!(state.pipeline_mode.label(), "2D Canvas (矢量模拟)");
+
+        let _ = update(&mut state, Message::TogglePipelineMode);
+        assert_eq!(state.pipeline_mode, PipelineMode::GpuLiquidRs);
     }
 }
 
