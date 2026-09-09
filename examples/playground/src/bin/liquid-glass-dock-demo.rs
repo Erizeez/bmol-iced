@@ -46,7 +46,7 @@ use bmol_window_shell::{
 use liquid_glass::{
     ContextMenu, MenuItem, UiColorScheme, UiIcon, UiTheme,
     geometry::{
-        squircle_path_commands, PathCommand,
+        squircle_alpha, squircle_path_commands, PathCommand,
         Point as SquirclePoint, SquircleParams, APPLE_CORNER_SMOOTHING,
     },
     ui::font,
@@ -587,21 +587,6 @@ fn sample_sharp_wallpaper(
     }
 }
 
-/// Analytical Signed Distance Field (SDF) of a rounded rectangle with corner radius `r`.
-/// Returns negative inside, zero on boundary, and positive outside.
-#[inline]
-pub fn rounded_rect_sdf(px: f32, py: f32, w: f32, h: f32, r: f32) -> f32 {
-    let half_w = w * 0.5;
-    let half_h = h * 0.5;
-    let r = r.min(half_w).min(half_h);
-    let px = (px - half_w).abs();
-    let py = (py - half_h).abs();
-    let qx = px - half_w + r;
-    let qy = py - half_h + r;
-    let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
-    let inside = qx.max(qy).min(0.0);
-    outside + inside - r
-}
 
 /// Performs a true 2D Separable Gaussian Convolution on an RGB float buffer.
 ///
@@ -753,8 +738,9 @@ pub fn generate_frosted_plate_texture(
             let vibrant = vibrancy.apply(c);
             let dither = ign_dither_offset(wx, wy);
 
-            let dist = rounded_rect_sdf(px, py, w as f32, h as f32, corner_radius);
-            let alpha = (-dist + 0.5).clamp(0.0, 1.0);
+            let p = SquirclePoint::new(px - w as f32 * 0.5, py - h as f32 * 0.5);
+            let half = SquirclePoint::new(w as f32 * 0.5, h as f32 * 0.5);
+            let alpha = squircle_alpha(p, half, corner_radius, APPLE_CORNER_SMOOTHING);
 
             let out_idx = idx * 4;
             rgba_bytes[out_idx] = ((vibrant[0] + dither).clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -1688,10 +1674,6 @@ fn draw_liquid_glass_bevel<R: iced::advanced::graphics::geometry::Renderer>(
     enable_highlight: bool,
     enable_dark_rim: bool,
 ) {
-    let is_icon = rect.height < 70.0;
-    // 0.25pt inset aligns a 0.5pt centered stroke into an exact inside stroke,
-    // positioning the stroke center at half-pixels on 2x Retina display (e.g. 552.5px),
-    // guaranteeing 100% device pixel coverage on exactly 1 physical pixel without subpixel bleeding!
     let inset = 0.25f32;
     let inner_rect = Rectangle {
         x: rect.x + inset,
@@ -1713,241 +1695,71 @@ fn draw_liquid_glass_bevel<R: iced::advanced::graphics::geometry::Renderer>(
         return;
     }
 
-    let stroke_w = 0.5f32; // Exactly 0.5pt = 1 physical device pixel on HiDPI Retina (2x)
-    let scale = if is_icon { 0.6f32 } else { 1.0f32 };
-
-    // --- Translucent macOS Authentic Liquid Bevel Optics ---
-    // Whisper-soft translucent light/dark tones, delicate and unobtrusive:
-    // Pixel 1 (Outer Perimeter, 0.5pt): Extremely delicate translucent specular highlight
-    let max_spec_alpha = if is_icon {
-        if is_dark { 0.28 } else { 0.38 }
-    } else if is_dark {
-        0.28
-    } else {
-        0.38
-    };
-    let max_bounce_alpha = if is_icon { max_spec_alpha } else { max_spec_alpha * 0.60 };
-
-    // Pixel 2 (Inner Secondary Highlight, 0.5pt, inset by 0.5pt = 1 physical pixel inward):
-    // Extremely subtle secondary light rim, visible only upon close inspection
-    let max_inner_alpha = if is_icon {
-        if is_dark { 0.09 } else { 0.14 }
-    } else if is_dark {
-        0.09
-    } else {
-        0.14
-    };
-    let max_inner_bounce = max_inner_alpha * 0.60;
-    let offset_inner = 0.50 * scale; // Exactly 1 physical pixel inward
-    let width_inner = 0.50 * scale;
-
-    // Translucent Dark Boundary Hairline (Semi-transparent dark boundary, not opaque ink)
-    let max_rim_alpha = if is_icon {
-        if is_dark { 0.22 } else { 0.18 }
-    } else if is_dark {
-        0.36f32
-    } else {
-        0.45f32
-    };
-
-    let rect_origin = inner_rect.position();
-
-    // Helper closure to stroke a single micro-segment with authentic 2-pixel macOS bevel optics
-    let mut stroke_micro_segment = |p_a: Point, p_b: Point, nx: f32, ny: f32| {
-        let u = (-ny).clamp(0.0, 1.0);       // Upward fraction (overhead strip light)
-        let d = ny.clamp(0.0, 1.0);          // Downward fraction (bottom shelf bounce light)
-        let _s = nx.abs().clamp(0.0, 1.0);   // Lateral fraction
-        let vert_comp = u.max(d);
-
-        // 1. Pixel 1 (Outermost Perimeter Hairline, width = 0.5pt):
-        // Horizontal straight lines: 100% uniform peak specular highlight from left corner to right corner.
-        // Sides AND the entire corner arcs: Dark Rim.
-        // Corner refinement: Across the corner arc (0.0 < vert_comp < 0.90),
-        // the black rim softly attenuates (趋近于更淡) from 1.0 down to ~0.35,
-        // eliminating any harsh, jarring black ring around the rounded corner.
-        if enable_dark_rim {
-            let rim_factor = if vert_comp < 0.90 {
-                let corner_soften = 1.0 - 0.65 * (vert_comp * std::f32::consts::PI * 0.5).sin().powf(1.2);
-                corner_soften.clamp(0.20, 1.0)
-            } else {
-                let norm = (1.0 - vert_comp) / (1.0 - 0.90);
-                0.35 * (norm * std::f32::consts::PI * 0.5).sin().powf(1.5)
-            };
-            let rim_alpha = max_rim_alpha * rim_factor;
-            if rim_alpha > 0.015 {
-                let dark_color = Color::from_rgba(0.0, 0.0, 0.0, rim_alpha);
-                let stroke = Stroke::default()
-                    .with_color(dark_color)
-                    .with_width(stroke_w);
-                let seg = Path::line(p_a, p_b);
-                frame.stroke(&seg, stroke);
+    let stroke_w = 0.5f32;
+    let full_path = Path::new(|builder| {
+        for cmd in &commands {
+            match *cmd {
+                PathCommand::MoveTo(p) => builder.move_to(Point::new(inner_rect.x + p.x, inner_rect.y + p.y)),
+                PathCommand::LineTo(p) => builder.line_to(Point::new(inner_rect.x + p.x, inner_rect.y + p.y)),
+                PathCommand::CubicTo { c0, c1, to } => builder.bezier_curve_to(
+                    Point::new(inner_rect.x + c0.x, inner_rect.y + c0.y),
+                    Point::new(inner_rect.x + c1.x, inner_rect.y + c1.y),
+                    Point::new(inner_rect.x + to.x, inner_rect.y + to.y),
+                ),
+                PathCommand::Close => builder.close(),
             }
         }
+    });
 
-        // Spatial pre-corner lead-in attenuation ("早于R角开始变化"):
-        // In the vast central straight edge (> lead_in_dist from tangent), highlight is 100% constant and peak uniform.
-        // As the straight edge approaches the R corner (within lead_in_dist ahead of the tangent cutoff),
-        // it gently and smoothly begins decaying ahead of time down to ~0.85 at the tangent,
-        // eliminating any sharp inflection or sudden brightness kink before entering the corner!
-        let p_mid_x = (p_a.x + p_b.x) * 0.5;
-        let rel_x = p_mid_x - inner_rect.x;
-        let dist_from_tangent = (rel_x - r).min(inner_rect.width - r - rel_x);
-        let lead_in_dist = (r * 1.25).min(32.0).max(8.0);
-        let lead_in_factor = if dist_from_tangent >= lead_in_dist {
-            1.0f32
-        } else if dist_from_tangent >= 0.0 {
-            let k_tangent = 0.85f32;
-            let norm = (dist_from_tangent / lead_in_dist).clamp(0.0, 1.0);
-            k_tangent + (1.0 - k_tangent) * (norm * std::f32::consts::PI * 0.5).sin().powf(1.5)
-        } else {
-            0.85f32
-        };
+    if enable_dark_rim {
+        let rim_alpha = if is_dark { 0.25 } else { 0.18 };
+        frame.stroke(
+            &full_path,
+            Stroke::default()
+                .with_color(Color::from_rgba(0.0, 0.0, 0.0, rim_alpha))
+                .with_width(stroke_w),
+        );
+    }
 
-        if enable_highlight {
-            // Outermost Specular Highlight:
-            // 100% uniform peak brightness across the straight line, gently beginning smooth falloff
-            // slightly ahead of the R corner, and smoothly continuing monotonic falloff along the corner arc (vert_comp < 1.0).
-            const SPEC_CUTOFF: f32 = 0.90;
-            let mut spec_white_alpha = 0.0f32;
-            if u > SPEC_CUTOFF {
-                let norm_u = (u - SPEC_CUTOFF) / (1.0 - SPEC_CUTOFF);
-                let spec_factor = (norm_u * std::f32::consts::PI * 0.5).sin().powf(1.6);
-                spec_white_alpha = spec_white_alpha.max(max_spec_alpha * spec_factor * lead_in_factor);
-            } else if d > SPEC_CUTOFF {
-                let norm_d = (d - SPEC_CUTOFF) / (1.0 - SPEC_CUTOFF);
-                let bounce_factor = (norm_d * std::f32::consts::PI * 0.5).sin().powf(1.6);
-                spec_white_alpha = spec_white_alpha.max(max_bounce_alpha * bounce_factor * lead_in_factor);
-            }
-
-            if spec_white_alpha > 0.015 {
-                let stroke = Stroke::default()
-                    .with_color(Color::from_rgba(1.0, 1.0, 1.0, spec_white_alpha.min(0.95)))
-                    .with_width(stroke_w);
-                let seg = Path::line(p_a, p_b);
-                frame.stroke(&seg, stroke);
-            }
-
-            // 2. Pixel 2 (Inner Secondary Highlight, width = 0.5pt, inset by 0.5pt):
-            // Along horizontal straight lines: uniform secondary highlight, with gentle lead-in decay ahead of R corner.
-            // Extending gracefully through the corner arc and vanishing near the vertical straight line (vert_comp <= 0.20)!
-            const INNER_ARC_CUTOFF: f32 = 0.20;
-            if vert_comp > INNER_ARC_CUTOFF {
-                let norm_arc = (vert_comp - INNER_ARC_CUTOFF) / (1.0 - INNER_ARC_CUTOFF);
-                let arc_factor = (norm_arc * std::f32::consts::PI * 0.5).sin().powf(1.6);
-                let base_inner = if u >= d { max_inner_alpha } else { max_inner_bounce };
-                let inner_alpha = base_inner * arc_factor * lead_in_factor;
-
-                if inner_alpha > 0.015 {
-                    let in_nx = -nx;
-                    let in_ny = -ny;
-                    let p_a2 = Point::new(p_a.x + in_nx * offset_inner, p_a.y + in_ny * offset_inner);
-                    let p_b2 = Point::new(p_b.x + in_nx * offset_inner, p_b.y + in_ny * offset_inner);
-                    let stroke = Stroke::default()
-                        .with_color(Color::from_rgba(1.0, 1.0, 1.0, inner_alpha.min(0.85)))
-                        .with_width(width_inner);
-                    let seg = Path::line(p_a2, p_b2);
-                    frame.stroke(&seg, stroke);
-                }
-            }
-        }
-    };
-
-    let eval_bezier = |p0: SquirclePoint, c0: SquirclePoint, c1: SquirclePoint, p1: SquirclePoint, t: f32| -> (f32, f32, f32, f32) {
-        let u = 1.0 - t;
-        let tt = t * t;
-        let uu = u * u;
-        let uuu = uu * u;
-        let ttt = tt * t;
-
-        let x = uuu * p0.x + 3.0 * uu * t * c0.x + 3.0 * u * tt * c1.x + ttt * p1.x;
-        let y = uuu * p0.y + 3.0 * uu * t * c0.y + 3.0 * u * tt * c1.y + ttt * p1.y;
-
-        let dx = 3.0 * uu * (c0.x - p0.x) + 6.0 * u * t * (c1.x - c0.x) + 3.0 * tt * (p1.x - c1.x);
-        let dy = 3.0 * uu * (c0.y - p0.y) + 6.0 * u * t * (c1.y - c0.y) + 3.0 * tt * (p1.y - c1.y);
-
-        (x, y, dx, dy)
-    };
-
-    let mut curr_pt = SquirclePoint::new(0.0, 0.0);
-    let mut start_pt = SquirclePoint::new(0.0, 0.0);
-
-    for cmd in &commands {
-        match *cmd {
-            PathCommand::MoveTo(pt) => {
-                curr_pt = pt;
-                start_pt = pt;
-            }
-            PathCommand::LineTo(pt) => {
-                let dx = pt.x - curr_pt.x;
-                let dy = pt.y - curr_pt.y;
-                let len = (dx * dx + dy * dy).sqrt();
-                if len > 1e-4 {
-                    let nx = dy / len;
-                    let ny = -dx / len;
-                    let n_sub = ((len / 16.0).ceil() as usize).max(1);
-                    for s in 0..n_sub {
-                        let t0 = s as f32 / n_sub as f32;
-                        let t1 = (s + 1) as f32 / n_sub as f32;
-                        let p_a = Point::new(
-                            rect_origin.x + curr_pt.x + dx * t0,
-                            rect_origin.y + curr_pt.y + dy * t0,
-                        );
-                        let p_b = Point::new(
-                            rect_origin.x + curr_pt.x + dx * t1,
-                            rect_origin.y + curr_pt.y + dy * t1,
-                        );
-                        stroke_micro_segment(p_a, p_b, nx, ny);
+    if enable_highlight {
+        let highlight_alpha = if is_dark { 0.35 } else { 0.48 };
+        let top_highlight_path = Path::new(|builder| {
+            let mut pen = Point::new(inner_rect.x, inner_rect.y);
+            for cmd in &commands {
+                match *cmd {
+                    PathCommand::MoveTo(p) => {
+                        pen = Point::new(inner_rect.x + p.x, inner_rect.y + p.y);
+                        builder.move_to(pen);
                     }
-                }
-                curr_pt = pt;
-            }
-            PathCommand::CubicTo { c0, c1, to } => {
-                let steps = 16;
-                for i in 0..steps {
-                    let t_a = i as f32 / steps as f32;
-                    let t_b = (i + 1) as f32 / steps as f32;
-                    let t_mid = (t_a + t_b) * 0.5;
-
-                    let (xa, ya, _, _) = eval_bezier(curr_pt, c0, c1, to, t_a);
-                    let (xb, yb, _, _) = eval_bezier(curr_pt, c0, c1, to, t_b);
-                    let (_, _, dx, dy) = eval_bezier(curr_pt, c0, c1, to, t_mid);
-
-                    let len = (dx * dx + dy * dy).sqrt();
-                    if len > 1e-4 {
-                        let nx = dy / len;
-                        let ny = -dx / len;
-                        let p_a = Point::new(rect_origin.x + xa, rect_origin.y + ya);
-                        let p_b = Point::new(rect_origin.x + xb, rect_origin.y + yb);
-                        stroke_micro_segment(p_a, p_b, nx, ny);
+                    PathCommand::LineTo(p) => {
+                        let to = Point::new(inner_rect.x + p.x, inner_rect.y + p.y);
+                        if (pen.y - inner_rect.y).abs() < 1.0 && (to.y - inner_rect.y).abs() < 1.0 {
+                            builder.line_to(to);
+                        }
+                        pen = to;
                     }
-                }
-                curr_pt = to;
-            }
-            PathCommand::Close => {
-                let dx = start_pt.x - curr_pt.x;
-                let dy = start_pt.y - curr_pt.y;
-                let len = (dx * dx + dy * dy).sqrt();
-                if len > 1e-4 {
-                    let nx = dy / len;
-                    let ny = -dx / len;
-                    let n_sub = ((len / 16.0).ceil() as usize).max(1);
-                    for s in 0..n_sub {
-                        let t0 = s as f32 / n_sub as f32;
-                        let t1 = (s + 1) as f32 / n_sub as f32;
-                        let p_a = Point::new(
-                            rect_origin.x + curr_pt.x + dx * t0,
-                            rect_origin.y + curr_pt.y + dy * t0,
-                        );
-                        let p_b = Point::new(
-                            rect_origin.x + curr_pt.x + dx * t1,
-                            rect_origin.y + curr_pt.y + dy * t1,
-                        );
-                        stroke_micro_segment(p_a, p_b, nx, ny);
+                    PathCommand::CubicTo { c0, c1, to } => {
+                        let to_pt = Point::new(inner_rect.x + to.x, inner_rect.y + to.y);
+                        if (pen.y - inner_rect.y) < r * 1.5 || (to_pt.y - inner_rect.y) < r * 1.5 {
+                            builder.bezier_curve_to(
+                                Point::new(inner_rect.x + c0.x, inner_rect.y + c0.y),
+                                Point::new(inner_rect.x + c1.x, inner_rect.y + c1.y),
+                                to_pt,
+                            );
+                        }
+                        pen = to_pt;
                     }
+                    PathCommand::Close => {}
                 }
-                curr_pt = start_pt;
             }
-        }
+        });
+
+        frame.stroke(
+            &top_highlight_path,
+            Stroke::default()
+                .with_color(Color::from_rgba(1.0, 1.0, 1.0, highlight_alpha))
+                .with_width(stroke_w),
+        );
     }
 }
 
