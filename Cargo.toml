@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/bmol-iced",
+    "crates/bmol-glass-iced",
     "crates/liquid-glass-ui",
     "examples/playground",
 ]

@@ -1,0 +1,23 @@
+[package]
+name = "bmol-glass-iced"
+description = "Reusable Iced + Liquid Glass GPU compositor backend and window-control scene builder."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+iced = { version = "0.14.0", default-features = false, features = ["wgpu", "advanced", "canvas", "svg", "image-without-codecs", "smol"] }
+iced_wgpu = { version = "0.14.0", features = ["svg", "image"] }
+wgpu = { version = "27.0.1", features = ["noop"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
+window-vibrancy = "0.8.0"
+liquid-glass = { package = "bmol-iced", path = "../bmol-iced", version = "0.1.0" }
+bmol-window-glass = { path = "../../../bmol-window-shell/crates/bmol-window-glass", version = "0.1.0" }
+bmol-window-shell = { path = "../../../bmol-window-shell/crates/bmol-window-shell", version = "0.1.0" }
+liquid-glass-native = { package = "bmol-window-native", path = "../../../bmol-window-shell/crates/bmol-window-native", version = "0.1.0" }
+
+[lints]
+workspace = true

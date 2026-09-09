@@ -308,6 +308,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmol-glass-iced"
+version = "0.1.0"
+dependencies = [
+ "bmol-iced",
+ "bmol-window-glass",
+ "bmol-window-native",
+ "bmol-window-shell",
+ "iced",
+ "iced_wgpu",
+ "image",
+ "wgpu",
+ "window-vibrancy",
+]
+
+[[package]]
 name = "bmol-iced"
 version = "0.1.0"
 dependencies = [
@@ -321,6 +336,14 @@ dependencies = [
  "liquid-glass-ui",
  "liquid-rs 0.1.0",
  "squircle-rs 0.1.1",
+]
+
+[[package]]
+name = "bmol-window-glass"
+version = "0.1.0"
+dependencies = [
+ "bmol-designs",
+ "liquid-glass-scene 0.1.0",
 ]
 
 [[package]]
@@ -341,11 +364,15 @@ dependencies = [
 [[package]]
 name = "bmol-window-platform"
 version = "0.1.0"
+dependencies = [
+ "bmol-designs",
+]
 
 [[package]]
 name = "bmol-window-shell"
 version = "0.1.0"
 dependencies = [
+ "bmol-window-glass",
  "bmol-window-native",
  "bmol-window-platform",
  "iced",
@@ -1686,6 +1713,7 @@ name = "liquid-glass-playground"
 version = "0.1.0"
 dependencies = [
  "bmol-designs",
+ "bmol-glass-iced",
  "bmol-iced",
  "bmol-window-native",
  "bmol-window-shell",

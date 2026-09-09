@@ -48,9 +48,9 @@ pub use ui::{
 };
 
 pub use bmol_window_shell::{
-    ControlAction, NativeWindowOptions, TrafficLightsState, TrafficLightsViewConfig,
+    ControlAction, NativeWindowOptions, TrafficLightsEvent, TrafficLightsState,
     WindowAppearance, WindowChromeConfig, WindowChromeMetrics, WindowControlAction,
     WindowRimConfig, WindowShellController, is_system_dark_mode, loyal_drag_bar,
-    setup_native_window, traffic_lights, view_traffic_lights, wrap_border_resizer,
-    wrap_window_rim,
+    setup_native_window, traffic_lights, view_traffic_lights_all_inclusive,
+    wrap_border_resizer, wrap_window_rim,
 };

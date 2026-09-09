@@ -300,13 +300,13 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 UiColorScheme::Light => UiColorScheme::Dark,
                 UiColorScheme::Dark => UiColorScheme::Light,
             };
-            state.tuning = WindowControlTuning::for_scheme(state.scheme);
+            state.tuning = WindowControlTuning::for_scheme(state.scheme == UiColorScheme::Dark);
             iced_backend::set_color_scheme(state.scheme);
             iced_backend::set_window_control_tuning(state.tuning);
         }
         Message::SystemThemeChanged(mode) => {
             state.scheme = UiColorScheme::from_mode(mode);
-            state.tuning = WindowControlTuning::for_scheme(state.scheme);
+            state.tuning = WindowControlTuning::for_scheme(state.scheme == UiColorScheme::Dark);
             iced_backend::set_color_scheme(state.scheme);
             iced_backend::set_window_control_tuning(state.tuning);
         }
@@ -315,7 +315,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
 }
 
 fn subscription(state: &State) -> Subscription<Message> {
-    let theme_changes = iced::system::theme_changes().map(Message::SystemThemeChanged);
+    let theme_changes =
+        bmol_window_shell::system_theme_subscription(Message::SystemThemeChanged);
     let window_events = IcedWindowController::events().map(Message::WindowEvent);
     let animation_active = state
         .hover_targets

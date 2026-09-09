@@ -16,8 +16,8 @@ pub use bmol_window_shell::{
 
 use iced::{Element, Subscription, Task, window};
 
-/// Default radius of a borderless Liquid Glass window in logical points.
-pub const DEFAULT_WINDOW_CORNER_RADIUS: u16 = 14;
+/// Default radius of a borderless Liquid Glass window in logical points (`H / 2`).
+pub const DEFAULT_WINDOW_CORNER_RADIUS: u16 = bmol_designs::DEFAULT_WINDOW_CORNER_RADIUS as u16;
 
 /// A semantic action that can be emitted by a custom window chrome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

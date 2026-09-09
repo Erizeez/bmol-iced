@@ -9,10 +9,11 @@ use bmol_designs::popover_metrics::{
     PopoverArrowConfig, PopoverArrowEdge, PopoverArrowPreset,
 };
 use bmol_window_shell::{
-    WindowChromeConfig, WindowShellController, is_system_dark_mode, window_metrics,
+    TrafficLightsEvent, WindowChromeConfig, WindowShellController, is_system_dark_mode,
+    window_metrics,
 };
 use liquid_glass::{
-    ContextMenu, ControlAction, TrafficLightsState, UiColorScheme, UiPalette, UiTheme,
+    ContextMenu, ControlAction, UiColorScheme, UiPalette, UiTheme,
 };
 
 use crate::menu_content::{
@@ -36,10 +37,7 @@ pub enum Message {
     ToggleMaximize,
     ResizeWindow(window::Direction),
     WindowControl(ControlAction),
-    TrafficLightsHover(bool),
-    TrafficLightsPressStart(usize),
-    TrafficLightsPressCancel(usize),
-    TrafficLightsPressEnd(usize),
+    TrafficLights(TrafficLightsEvent),
     AnimationFrame(Instant),
 
     // Context menu and playground messages
@@ -66,7 +64,6 @@ pub enum Message {
 #[derive(Debug)]
 pub struct State {
     pub controller: WindowShellController,
-    pub traffic_lights: TrafficLightsState,
     pub theme: Theme,
     pub palette: UiPalette,
     pub wallpaper: WallpaperStyle,
@@ -109,7 +106,6 @@ impl Default for State {
 
         Self {
             controller,
-            traffic_lights: TrafficLightsState::new(),
             theme,
             palette,
             wallpaper: WallpaperStyle::TvColorBars,
@@ -206,7 +202,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 match shell_event {
                     bmol_window_shell::ShellEvent::Focused
                     | bmol_window_shell::ShellEvent::Unfocused => {
-                        state.traffic_lights.on_group_hover(false);
                         state.active_drag = None;
                     }
                     bmol_window_shell::ShellEvent::CloseRequested => {
@@ -240,47 +235,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 Task::none()
             }
         }
-        Message::WindowControl(action) => match action {
-            ControlAction::Close => {
-                if let Some(id) = state.controller.window_id {
-                    window::close(id)
-                } else {
-                    Task::none()
-                }
-            }
-            ControlAction::Minimize => {
-                if let Some(id) = state.controller.window_id {
-                    window::minimize(id, true)
-                } else {
-                    Task::none()
-                }
-            }
-            ControlAction::Expand | ControlAction::Zoom => {
-                if let Some(id) = state.controller.window_id {
-                    window::toggle_maximize(id)
-                } else {
-                    Task::none()
-                }
-            }
-        },
-        Message::TrafficLightsHover(hovered) => {
-            state.traffic_lights.on_group_hover(hovered);
-            Task::none()
-        }
-        Message::TrafficLightsPressStart(idx) => {
-            state.traffic_lights.on_press_start(idx);
-            Task::none()
-        }
-        Message::TrafficLightsPressCancel(idx) => {
-            state.traffic_lights.on_press_cancel(idx);
-            Task::none()
-        }
-        Message::TrafficLightsPressEnd(idx) => {
-            state.traffic_lights.on_press_end(idx);
-            Task::none()
-        }
+        Message::WindowControl(action) => state.controller.handle_control_action(action),
+        Message::TrafficLights(event) => state.controller.handle_traffic_lights(event),
         Message::AnimationFrame(now) => {
-            state.traffic_lights.step(now);
+            state.controller.step(now);
             Task::none()
         }
         Message::RightClicked => {
@@ -511,7 +469,7 @@ pub fn subscription(state: &State) -> Subscription<Message> {
         }),
     ];
 
-    if state.traffic_lights.is_animating() {
+    if state.controller.is_animating() {
         subscriptions.push(window::frames().map(Message::AnimationFrame));
     }
 

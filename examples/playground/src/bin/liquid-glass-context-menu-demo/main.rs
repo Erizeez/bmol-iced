@@ -434,11 +434,17 @@ mod tests {
         assert_eq!(state.controller.metrics.window_size, (1200.0, 800.0));
 
         // 3. Traffic lights hover interaction
-        assert_eq!(state.traffic_lights.hover_target, 0.0);
-        let _ = update(&mut state, Message::TrafficLightsHover(true));
-        assert_eq!(state.traffic_lights.hover_target, 1.0);
-        let _ = update(&mut state, Message::TrafficLightsHover(false));
-        assert_eq!(state.traffic_lights.hover_target, 0.0);
+        assert_eq!(state.controller.traffic_lights.hover_target, 0.0);
+        let _ = update(
+            &mut state,
+            Message::TrafficLights(bmol_window_shell::TrafficLightsEvent::GroupHover(true)),
+        );
+        assert_eq!(state.controller.traffic_lights.hover_target, 1.0);
+        let _ = update(
+            &mut state,
+            Message::TrafficLights(bmol_window_shell::TrafficLightsEvent::GroupHover(false)),
+        );
+        assert_eq!(state.controller.traffic_lights.hover_target, 0.0);
 
         // 4. Focus/Unfocus handling
         let _ = update(

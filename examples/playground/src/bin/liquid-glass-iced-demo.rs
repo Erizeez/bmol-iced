@@ -181,7 +181,6 @@ enum Message {
     IncreasedContrastChanged(bool),
     VolumeChanged(f32),
     SystemThemeChanged(iced::theme::Mode),
-    PollSystemTheme,
 }
 
 type AppElement<'a> = Element<'a, Message, Theme, Renderer>;
@@ -207,7 +206,7 @@ fn boot() -> (State, Task<Message>) {
 }
 
 fn update(state: &mut State, message: Message) -> Task<Message> {
-    let mut updates_color_scheme =
+    let updates_color_scheme =
         matches!(&message, Message::AppearanceSelected(_) | Message::SystemThemeChanged(_));
     let updates_accessibility = matches!(
         &message,
@@ -341,20 +340,6 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::SystemThemeChanged(mode) => {
             state.system_scheme = UiColorScheme::from_mode(mode);
         }
-        Message::PollSystemTheme => {
-            let current_dark = bmol_window_shell::is_system_dark_mode();
-            let current_scheme = if current_dark {
-                UiColorScheme::Dark
-            } else {
-                UiColorScheme::Light
-            };
-            if state.system_scheme != current_scheme {
-                state.system_scheme = current_scheme;
-                if state.appearance == Appearance::Automatic {
-                    updates_color_scheme = true;
-                }
-            }
-        }
     }
     if updates_color_scheme {
         let scheme = state.color_scheme();
@@ -400,17 +385,16 @@ impl State {
 
 fn subscription(state: &State) -> Subscription<Message> {
     let window_events = iced::window::events().map(Message::WindowEvent);
-    let theme_changes = iced::system::theme_changes().map(Message::SystemThemeChanged);
-    let poll_theme = iced::time::every(std::time::Duration::from_millis(250)).map(|_| Message::PollSystemTheme);
+    let theme_changes =
+        bmol_window_shell::system_theme_subscription(Message::SystemThemeChanged);
     if state.traffic_lights.is_animating() {
         Subscription::batch([
             window_events,
             theme_changes,
-            poll_theme,
             iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::AnimationTick),
         ])
     } else {
-        Subscription::batch([window_events, theme_changes, poll_theme])
+        Subscription::batch([window_events, theme_changes])
     }
 }
 
@@ -520,6 +504,7 @@ fn view(state: &State) -> AppElement<'_> {
     let origin_x = rim_insets + symmetric_margin;
     let origin_y = rim_insets + symmetric_margin;
     iced_backend::set_window_control_origin(origin_x, origin_y);
+    bmol_window_shell::set_glass_passthrough(true);
 
     let traffic_lights = row![
         column![].width(Length::Fixed(leading_spacer_w)),
@@ -554,7 +539,7 @@ fn view(state: &State) -> AppElement<'_> {
     let draggable_sidebar_top = container(
         liquid_glass::loyal_drag_bar(
             FUSED_TOP_BAR_HEIGHT,
-            traffic_lights,
+            components::glass_overlay(traffic_lights),
             Message::DragWindow,
             Some(Message::ToggleMaximize),
         )

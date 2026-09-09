@@ -13,9 +13,10 @@ iced_wgpu = { version = "0.14.0", features = ["svg", "image"] }
 flate2 = "1.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
 liquid-glass = { package = "bmol-iced", path = "../../crates/bmol-iced", version = "0.1.0" }
+bmol-glass-iced = { path = "../../crates/bmol-glass-iced", version = "0.1.0" }
 liquid-glass-native = { package = "bmol-window-native", path = "../../../bmol-window-shell/crates/bmol-window-native", version = "0.1.0" }
 bmol-designs = { path = "../../../bmol-designs", version = "0.1.0" }
-bmol-window-shell = { path = "../../../bmol-window-shell/crates/bmol-window-shell", version = "0.1.0" }
+bmol-window-shell = { path = "../../../bmol-window-shell/crates/bmol-window-shell", version = "0.1.0", features = ["assets", "wallpaper", "theme"] }
 pollster = "1.0.1"
 spring-rs = { git = "https://github.com/Erizeez/spring-rs.git", tag = "v0.1.0" }
 wgpu = { version = "27.0.1", features = ["noop"] }

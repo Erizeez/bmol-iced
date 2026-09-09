@@ -40,11 +40,11 @@ use iced::{
 };
 use bmol_designs::{dock_metrics, menu_metrics};
 use bmol_window_shell::{
-    TrafficLightsViewConfig, WindowChromeConfig, WindowControlAction, WindowShellController,
-    app_icon_png, is_system_dark_mode, view_traffic_lights, window_metrics,
+    TrafficLightsEvent, WindowChromeConfig, WindowShellController, app_icon_png,
+    is_system_dark_mode, window_metrics,
 };
 use liquid_glass::{
-    ContextMenu, ControlAction, MenuItem, TrafficLightsState, UiColorScheme, UiIcon, UiTheme,
+    ContextMenu, MenuItem, UiColorScheme, UiIcon, UiTheme,
     geometry::{
         squircle_path_commands, PathCommand,
         Point as SquirclePoint, SquircleParams, APPLE_CORNER_SMOOTHING,
@@ -55,6 +55,11 @@ use iced::advanced::graphics::gradient::Linear;
 use vibrancy_rs::{ign_dither_offset, KawasePassPlan, VibrancyConfig};
 #[cfg(test)]
 use vibrancy_rs::{MaterialKind, VibrancyAppearance};
+
+#[path = "../iced_backend.rs"]
+mod iced_backend;
+
+use iced_backend::{DemoSurface, WINDOW_CONTROL_NATIVE_IDS};
 
 /// Downsamples an RGBA buffer by 2x using 2x2 area box filtering.
 fn downsample_2x(w: u32, h: u32, src: &[u8]) -> (u32, u32, Vec<u8>) {
@@ -1036,8 +1041,7 @@ pub enum Message {
     AnimationFrame(Instant),
     ResizeWindow(window::Direction),
     DragWindow,
-    WindowControl(ControlAction),
-    TrafficLightsHover(bool),
+    TrafficLights(TrafficLightsEvent),
     SetWallpaper(WallpaperStyle),
     SetBlurPreset(BlurPreset),
     ToggleTheme,
@@ -1046,6 +1050,8 @@ pub enum Message {
     ToggleHighlight(bool),
     ToggleDarkRim(bool),
     ToggleGrid(bool),
+    ToggleDocumentEdited,
+    SystemThemeChanged(iced::theme::Mode),
     SearchInputChanged(String),
     CursorMoved(Point),
     IconHovered(Option<DockApp>),
@@ -1065,13 +1071,13 @@ struct LiquidGlassBackdropCanvas {
     search_frosted_texture: Option<iced::widget::image::Handle>,
 }
 
-impl<Message> canvas::Program<Message> for LiquidGlassBackdropCanvas {
+impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for LiquidGlassBackdropCanvas {
     type State = ();
 
     fn draw(
         &self,
         _state: &Self::State,
-        renderer: &iced::Renderer,
+        renderer: &iced_backend::Renderer,
         _theme: &Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
@@ -1215,13 +1221,13 @@ struct LiquidGlassForegroundCanvas {
     app_icons: [Option<iced::widget::image::Handle>; 9],
 }
 
-impl<Message> canvas::Program<Message> for LiquidGlassForegroundCanvas {
+impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for LiquidGlassForegroundCanvas {
     type State = ();
 
     fn draw(
         &self,
         _state: &Self::State,
-        renderer: &iced::Renderer,
+        renderer: &iced_backend::Renderer,
         _theme: &Theme,
         _bounds: Rectangle,
         _cursor: mouse::Cursor,
@@ -1314,10 +1320,12 @@ impl<Message> canvas::Program<Message> for LiquidGlassForegroundCanvas {
     }
 }
 
-/// Renders a floating frosted liquid glass panel (Search Bar, Dock, or Context Menu)
+
+
+/// Renders a complete authentic Apple Liquid Glass Plate (frosted substrate, specular highlight, rim darkening)
 /// with 100% continuous G2 curvature, multi-tier Gaussian shadow, and physical optics.
-fn draw_liquid_glass_plate(
-    frame: &mut Frame,
+fn draw_liquid_glass_plate<R: iced::advanced::graphics::geometry::Renderer>(
+    frame: &mut Frame<R>,
     rect: Rectangle,
     radius: f32,
     is_dark: bool,
@@ -1369,8 +1377,8 @@ fn draw_liquid_glass_plate(
 }
 
 /// Draws an authentic macOS Squircle App Icon with vector graphics and liquid glass bevel.
-fn draw_apple_icon(
-    frame: &mut Frame,
+fn draw_apple_icon<R: iced::advanced::graphics::geometry::Renderer>(
+    frame: &mut Frame<R>,
     app: DockApp,
     rect: Rectangle,
     is_dark: bool,
@@ -1589,8 +1597,8 @@ fn draw_apple_icon(
 }
 
 /// Draws soft multi-tier Gaussian elevation drop shadow underneath floating glass panels.
-fn draw_elevation_shadow(
-    frame: &mut Frame,
+fn draw_elevation_shadow<R: iced::advanced::graphics::geometry::Renderer>(
+    frame: &mut Frame<R>,
     rect: Rectangle,
     radius: f32,
     is_dark: bool,
@@ -1652,7 +1660,7 @@ fn build_squircle_path(rect: Rectangle, radius: f32) -> Path {
 }
 
 /// Fills an authentic Apple squircle on the frame using our continuous curvature library.
-fn fill_squircle(frame: &mut Frame, rect: Rectangle, radius: f32, color: Color) {
+fn fill_squircle<R: iced::advanced::graphics::geometry::Renderer>(frame: &mut Frame<R>, rect: Rectangle, radius: f32, color: Color) {
     if rect.width <= 0.0 || rect.height <= 0.0 {
         return;
     }
@@ -1672,8 +1680,8 @@ fn fill_squircle(frame: &mut Frame, rect: Rectangle, radius: f32, color: Color) 
 ///      line (inset 1.2px) and a 3rd ambient line (inset 2.2px) create a rich 2.5px wide gradient glow.
 ///    - When entering the squircle corner, the inner diffusion lines stop, leaving ONLY the single
 ///      curvature-compressed outer specular arc, creating the exact sharp-corner vs. soft-horizontal contrast!
-fn draw_liquid_glass_bevel(
-    frame: &mut Frame,
+fn draw_liquid_glass_bevel<R: iced::advanced::graphics::geometry::Renderer>(
+    frame: &mut Frame<R>,
     rect: Rectangle,
     radius: f32,
     is_dark: bool,
@@ -1947,7 +1955,6 @@ fn draw_liquid_glass_bevel(
 #[derive(Debug)]
 pub struct State {
     pub controller: WindowShellController,
-    pub traffic_lights: TrafficLightsState,
     pub window_size: Size,
     pub theme: Theme,
     pub wallpaper: WallpaperStyle,
@@ -1960,6 +1967,7 @@ pub struct State {
     pub cursor_pos: Point,
     pub hovered_app: Option<DockApp>,
     pub search_query: String,
+    pub document_edited: bool,
     pub floating_menu: Option<(Point, MenuContext)>,
     pub floating_menu_cached: ContextMenu<Message>,
     pub last_action: String,
@@ -2008,7 +2016,6 @@ impl Default for State {
 
         let mut s = Self {
             controller,
-            traffic_lights: TrafficLightsState::new(),
             window_size: Size::new(1240.0, 820.0),
             theme,
             wallpaper: if std::env::var("WALLPAPER").map(|s| s == "tv").unwrap_or(false) {
@@ -2025,6 +2032,7 @@ impl Default for State {
             cursor_pos: Point::new(600.0, 400.0),
             hovered_app: None,
             search_query: String::new(),
+            document_edited: false,
             floating_menu: None,
             floating_menu_cached: ContextMenu::new(),
             last_action: "就绪：macOS 原生桌面壁纸输入已接入，Liquid Glass 实施 2D 深度高斯模糊卷积".to_string(),
@@ -2230,10 +2238,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::WindowEvent((_id, event)) => {
             if let Some(shell_event) = state.controller.handle_window_event(&event) {
                 match shell_event {
-                    bmol_window_shell::ShellEvent::Focused
-                    | bmol_window_shell::ShellEvent::Unfocused => {
-                        state.traffic_lights.on_group_hover(false);
-                    }
                     bmol_window_shell::ShellEvent::CloseRequested => {
                         if let Some(id) = state.controller.window_id {
                             return window::close(id);
@@ -2245,7 +2249,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::AnimationFrame(now) => {
-            state.traffic_lights.step(now);
+            state.controller.step(now);
             Task::none()
         }
         Message::ResizeWindow(direction) => {
@@ -2262,33 +2266,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 Task::none()
             }
         }
-        Message::WindowControl(action) => match action {
-            ControlAction::Close => {
-                if let Some(id) = state.controller.window_id {
-                    window::close(id)
-                } else {
-                    Task::none()
-                }
-            }
-            ControlAction::Minimize => {
-                if let Some(id) = state.controller.window_id {
-                    window::minimize(id, true)
-                } else {
-                    Task::none()
-                }
-            }
-            ControlAction::Expand | ControlAction::Zoom => {
-                if let Some(id) = state.controller.window_id {
-                    window::toggle_maximize(id)
-                } else {
-                    Task::none()
-                }
-            }
-        },
-        Message::TrafficLightsHover(hover) => {
-            state.traffic_lights.on_group_hover(hover);
-            Task::none()
-        }
+        Message::TrafficLights(event) => state.controller.handle_traffic_lights(event),
         Message::SetWallpaper(w) => {
             state.wallpaper = w;
             state.last_action = format!("切换壁纸: {}", w.label());
@@ -2332,6 +2310,18 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::ToggleGrid(val) => {
             state.show_grid = val;
             state.last_action = format!("校准网格线: {}", if val { "显示" } else { "隐藏" });
+            Task::none()
+        }
+        Message::ToggleDocumentEdited => {
+            state.document_edited = !state.document_edited;
+            bmol_window_shell::set_document_edited(state.document_edited);
+            state.last_action =
+                format!("NSWindow.isDocumentEdited = {}", state.document_edited);
+            Task::none()
+        }
+        Message::SystemThemeChanged(mode) => {
+            state.controller.set_dark_mode(mode == iced::theme::Mode::Dark);
+            state.last_action = format!("系统外观: {mode:?}");
             Task::none()
         }
         Message::SearchInputChanged(q) => {
@@ -2407,6 +2397,7 @@ pub fn subscription(state: &State) -> Subscription<Message> {
     let mut subscriptions = vec![
         window::open_events().map(Message::WindowOpened),
         window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
+        bmol_window_shell::system_theme_subscription(Message::SystemThemeChanged),
         iced::event::listen_with(|event, _status, id| match event {
             iced::Event::Window(w_event) => Some(Message::WindowEvent((id, w_event))),
             iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
@@ -2419,16 +2410,40 @@ pub fn subscription(state: &State) -> Subscription<Message> {
         }),
     ];
 
-    if state.traffic_lights.is_animating() {
+    if state.controller.is_animating() {
         subscriptions.push(window::frames().map(Message::AnimationFrame));
     }
 
     Subscription::batch(subscriptions)
 }
 
-pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
+pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer> {
     let is_dark = state.is_dark();
     let metrics = LayoutMetrics::new(state.window_size, state.hovered_app);
+
+    // Drive the shared Liquid Glass compositor so the traffic lights render
+    // through the exact same GPU physical-glass pipeline as the settings demo.
+    iced_backend::set_surface(DemoSurface::TrafficLightsOnly);
+    bmol_window_shell::set_glass_passthrough(true);
+    bmol_window_shell::set_document_edited(state.document_edited);
+    iced_backend::set_color_scheme(if is_dark {
+        UiColorScheme::Dark
+    } else {
+        UiColorScheme::Light
+    });
+    iced_backend::set_window_inactive(!state.controller.is_focused);
+    // The traffic-light origin is measured from the glyph widget's real layout
+    // by `MeasuredTrafficLights`, so no manual origin is needed here.
+    for (index, &id) in WINDOW_CONTROL_NATIVE_IDS.iter().enumerate() {
+        iced_backend::set_window_control_scale(
+            id,
+            state.controller.traffic_lights.press_springs[index].value(),
+        );
+    }
+    iced_backend::set_window_control_group_progress(
+        0,
+        state.controller.traffic_lights.hover_progress,
+    );
 
     // Compute Context Menu Rect if open
     let floating_menu_rect = state.floating_menu.map(|(pos, _)| {
@@ -2497,7 +2512,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let mut layers: Vec<Element<'_, Message, Theme, iced::Renderer>> = Vec::new();
+    let mut layers: Vec<Element<'_, Message, Theme, iced_backend::Renderer>> = Vec::new();
 
     // Layer 0: Real System Wallpaper backdrop (placed in widget stack so it stays strictly underneath canvas meshes)
     if state.wallpaper == WallpaperStyle::DesktopTransparent {
@@ -2528,7 +2543,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
         )
         .on_press(Message::DismissFloatingMenu);
 
-        let menu_view = state.floating_menu_cached.view::<iced::Renderer>(&state.theme);
+        let menu_view = state.floating_menu_cached.view::<iced_backend::Renderer>(&state.theme);
 
         let positioned_menu = container(menu_view)
             .padding(Padding {
@@ -2563,23 +2578,11 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
 }
 
 /// Builds the top titlebar with macOS Traffic Lights, Title, and Tuning Bar.
-fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced::Renderer> {
-    let tl_config = TrafficLightsViewConfig::from_state(
-        &state.traffic_lights,
-        state.controller.is_focused,
-        is_dark,
-    );
-
-    let traffic_lights = view_traffic_lights(
-        tl_config,
-        |action| match action {
-            WindowControlAction::Close => Message::WindowControl(ControlAction::Close),
-            WindowControlAction::Minimize => Message::WindowControl(ControlAction::Minimize),
-            WindowControlAction::Zoom | WindowControlAction::Expand => {
-                Message::WindowControl(ControlAction::Expand)
-            }
-        },
-        Message::TrafficLightsHover,
+fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced_backend::Renderer> {
+    // The glyphs sit above the GPU glass composition (overlay layer). The
+    // wrapper publishes their measured layout origin so the spheres follow it.
+    let traffic_lights = liquid_glass::ui::components::glass_overlay(
+        state.controller.traffic_lights_view(Message::TrafficLights),
     );
 
     let title_text = container(
@@ -2799,6 +2802,38 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
     })
     .on_press(Message::ToggleDarkRim(!state.enable_dark_rim));
 
+    // Mirrors NSWindow.isDocumentEdited: shows the close button's dirty dot.
+    let document_edited_btn = button(
+        text("未保存")
+            .size(11)
+            .font(font::ui_font(Weight::Medium))
+            .color(if state.document_edited {
+                Color::WHITE
+            } else if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.6)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.6)
+            }),
+    )
+    .padding(Padding {
+        top: 4.0,
+        right: 8.0,
+        bottom: 4.0,
+        left: 8.0,
+    })
+    .style(move |_theme, _status| button::Style {
+        background: Some(Background::Color(if state.document_edited {
+            Color::from_rgb(0.85, 0.25, 0.20)
+        } else if is_dark {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.10)
+        })),
+        border: Border::default().rounded(14.0),
+        ..Default::default()
+    })
+    .on_press(Message::ToggleDocumentEdited);
+
     let theme_btn = button(
         text(if is_dark { "☀️ 浅色" } else { "🌙 深色" })
             .size(11)
@@ -2856,6 +2891,7 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
         transparency_btn,
         toggle_highlight_btn,
         toggle_rim_btn,
+        document_edited_btn,
         theme_btn,
     ]
     .spacing(4.0)
@@ -2871,7 +2907,9 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
         44.0,
         header_row,
         Message::DragWindow,
-        Some(Message::WindowControl(ControlAction::Expand)),
+        Some(Message::TrafficLights(TrafficLightsEvent::Action(
+            bmol_window_shell::WindowControlAction::Zoom,
+        ))),
     )
 }
 
@@ -2880,7 +2918,7 @@ fn view_search_input(
     state: &State,
     is_dark: bool,
     search_rect: Rectangle,
-) -> Element<'_, Message, Theme, iced::Renderer> {
+) -> Element<'_, Message, Theme, iced_backend::Renderer> {
     let search_icon = text("🔍").size(13);
 
     let input = text_input("聚焦搜索或输入网址...", &state.search_query)
@@ -2952,7 +2990,7 @@ fn view_search_input(
 fn view_dock_hitboxes(
     state: &State,
     metrics: LayoutMetrics,
-) -> Element<'_, Message, Theme, iced::Renderer> {
+) -> Element<'_, Message, Theme, iced_backend::Renderer> {
     let mut hitboxes = Vec::new();
 
     for (i, &app) in DockApp::ALL.iter().enumerate() {
@@ -3018,7 +3056,7 @@ fn view_dock_hitboxes(
 }
 
 /// Builds the bottom status bar displaying metrics and user action feedbacks.
-fn view_status_bar(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced::Renderer> {
+fn view_status_bar(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced_backend::Renderer> {
     let status_text = text(&state.last_action)
         .size(11)
         .font(font::ui_font(Weight::Normal))
@@ -3102,7 +3140,7 @@ fn main() -> iced::Result {
         ..Default::default()
     };
 
-    let mut app = iced::application::<State, Message, Theme, iced::Renderer>(boot, update, view)
+    let mut app = iced::application::<State, Message, Theme, iced_backend::Renderer>(boot, update, view)
         .title("Liquid Glass Optics & Dock Showcase - bmol-iced")
         .theme(app_theme)
         .style(app_style)
@@ -3433,6 +3471,25 @@ mod tests {
             assert!(state.app_icons[0].is_some(), "Finder icon should be loaded");
             assert!(state.app_icons[1].is_some(), "Safari icon should be loaded");
         }
+    }
+
+    #[test]
+    fn test_dock_demo_traffic_lights_controller_integration() {
+        let mut state = State::default();
+        assert_eq!(state.controller.traffic_lights.hover_progress, 0.0);
+        assert!(!state.controller.is_animating());
+
+        // Hover group
+        let _ = update(&mut state, Message::TrafficLights(TrafficLightsEvent::GroupHover(true)));
+        assert_eq!(state.controller.traffic_lights.hover_target, 1.0);
+        assert!(state.controller.is_animating());
+
+        // Unfocus window event automatically clears hover
+        let _ = update(&mut state, Message::WindowEvent((window::Id::unique(), window::Event::Unfocused)));
+        assert_eq!(state.controller.traffic_lights.hover_target, 0.0);
+
+        // Animation frame steps physics
+        let _ = update(&mut state, Message::AnimationFrame(Instant::now()));
     }
 }
 

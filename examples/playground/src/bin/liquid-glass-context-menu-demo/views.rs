@@ -7,10 +7,8 @@ use iced::{
     widget::{button, column, container, row, space, text},
 };
 use bmol_designs::popover_metrics::{PopoverArrowEdge, PopoverArrowPreset};
-use bmol_window_shell::{
-    TrafficLightsViewConfig, WindowControlAction, traffic_lights, view_traffic_lights,
-};
-use liquid_glass::{ContextMenu, ControlAction, UiPalette, ui::font};
+use bmol_window_shell::traffic_lights;
+use liquid_glass::{ContextMenu, UiPalette, ui::font};
 use vibrancy_rs::KawasePassPlan;
 
 use crate::menu_content::{demo_metrics, MenuContentPreset};
@@ -202,25 +200,9 @@ pub fn view_top_header<'a>(
     let slop = traffic_lights::control_hover_slop(traffic_lights::DIAMETER);
     let spacer_left = (symmetric_margin - slop).max(0.0);
 
-    let tl_config = TrafficLightsViewConfig::from_state(
-        &state.traffic_lights,
-        state.controller.is_focused,
-        is_dark,
-    );
-
     let traffic_lights = row![
         space().width(Length::Fixed(spacer_left)),
-        view_traffic_lights(
-            tl_config,
-            |action| match action {
-                WindowControlAction::Close => Message::WindowControl(ControlAction::Close),
-                WindowControlAction::Minimize => Message::WindowControl(ControlAction::Minimize),
-                WindowControlAction::Zoom | WindowControlAction::Expand => {
-                    Message::WindowControl(ControlAction::Expand)
-                }
-            },
-            Message::TrafficLightsHover,
-        ),
+        state.controller.traffic_lights_view(Message::TrafficLights),
     ]
     .align_y(Alignment::Center);
 
