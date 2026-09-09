@@ -9,15 +9,15 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-liquid-rs = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.2" }
-liquid-glass-animation = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.2" }
+liquid-rs = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.3" }
+liquid-glass-animation = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.3" }
 squircle-rs = { git = "https://github.com/Erizeez/squircle-rs", tag = "v0.1.2" }
-liquid-glass-render = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.2" }
-liquid-glass-scene = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.2" }
-bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.7" }
-bmol-window-platform = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.7" }
-bmol-window-native = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.7" }
-bmol-designs = { git = "https://github.com/Erizeez/bmol-designs", tag = "v0.1.4" }
+liquid-glass-render = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.3" }
+liquid-glass-scene = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.3" }
+bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.8" }
+bmol-window-platform = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.8" }
+bmol-window-native = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.8" }
+bmol-designs = { git = "https://github.com/Erizeez/bmol-designs", tag = "v0.1.5" }
 liquid-glass-ui = { path = "../liquid-glass-ui", version = "0.1.4" }
 
 [lints]
