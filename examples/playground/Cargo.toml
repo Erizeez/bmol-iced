@@ -6,14 +6,20 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+# Enables the upstream liquid-glass-studio comparison demos. Requires a local
+# `liquid-glass-studio` checkout next to this repository.
+studio-assets = ["bmol-glass-iced/studio-assets"]
+
 [dependencies]
 bytemuck = { version = "1.24.0", features = ["derive"] }
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "advanced", "canvas", "svg", "image-without-codecs", "smol"] }
 iced_wgpu = { version = "0.14.0", features = ["svg", "image"] }
 flate2 = "1.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
-liquid-glass = { package = "bmol-iced", path = "../../crates/bmol-iced", version = "0.1.1" }
-bmol-glass-iced = { path = "../../crates/bmol-glass-iced", version = "0.1.1" }
+liquid-glass = { package = "bmol-iced", path = "../../crates/bmol-iced", version = "0.1.2" }
+bmol-glass-iced = { path = "../../crates/bmol-glass-iced", version = "0.1.2" }
 liquid-glass-native = { package = "bmol-window-native", git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.1" }
 bmol-designs = { git = "https://github.com/Erizeez/bmol-designs", tag = "v0.1.1" }
 bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.1", features = ["assets", "wallpaper", "theme"] }
@@ -27,3 +33,15 @@ squircle-icon-rs = { git = "https://github.com/Erizeez/squircle-icon-rs", tag = 
 
 [lints]
 workspace = true
+
+# Upstream comparison demos embed WGSL from the local `liquid-glass-studio`
+# checkout, so they only build when the `studio-assets` feature is enabled.
+[[bin]]
+name = "liquid-glass-reference-demo"
+path = "src/bin/liquid-glass-reference-demo.rs"
+required-features = ["studio-assets"]
+
+[[bin]]
+name = "liquid-glass-comparison-demo"
+path = "src/bin/liquid-glass-comparison-demo.rs"
+required-features = ["studio-assets"]

@@ -8,13 +8,20 @@ rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+# Embeds reference imagery from a local `liquid-glass-studio` checkout.
+# Requires that checkout to exist next to this repository; off by default so
+# the crate builds standalone with no third-party binary assets.
+studio-assets = []
+
 [dependencies]
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "advanced", "canvas", "svg", "image-without-codecs", "smol"] }
 iced_wgpu = { version = "0.14.0", features = ["svg", "image"] }
 wgpu = { version = "27.0.1", features = ["noop"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
 window-vibrancy = "0.8.0"
-liquid-glass = { package = "bmol-iced", path = "../bmol-iced", version = "0.1.1" }
+liquid-glass = { package = "bmol-iced", path = "../bmol-iced", version = "0.1.2" }
 bmol-window-glass = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.1" }
 bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.1" }
 liquid-glass-native = { package = "bmol-window-native", git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.1" }

@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "bmol-glass-iced"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bmol-iced",
  "bmol-window-glass",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "bmol-iced"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bmol-designs",
  "bmol-window-native",
@@ -1698,7 +1698,7 @@ dependencies = [
 
 [[package]]
 name = "liquid-glass-playground"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bmol-designs",
  "bmol-glass-iced",
@@ -1740,7 +1740,7 @@ dependencies = [
 
 [[package]]
 name = "liquid-glass-ui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bmol-designs",
  "bmol-window-shell",

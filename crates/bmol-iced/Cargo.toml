@@ -18,7 +18,7 @@ bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", tag 
 bmol-window-platform = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.1" }
 bmol-window-native = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.1" }
 bmol-designs = { git = "https://github.com/Erizeez/bmol-designs", tag = "v0.1.1" }
-liquid-glass-ui = { path = "../liquid-glass-ui", version = "0.1.1" }
+liquid-glass-ui = { path = "../liquid-glass-ui", version = "0.1.2" }
 
 [lints]
 workspace = true
