@@ -40,7 +40,7 @@ use iced::{
 };
 use bmol_designs::{dock_metrics, menu_metrics};
 use bmol_window_shell::{
-    TrafficLightsEvent, WindowChromeConfig, WindowShellController, app_icon_png,
+    ShellEvent, TrafficLightsEvent, WindowChromeConfig, WindowShellController, app_icon_png,
     is_system_dark_mode, window_metrics,
 };
 use liquid_glass::{
@@ -2320,7 +2320,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SystemThemeChanged(mode) => {
-            state.controller.set_dark_mode(mode == iced::theme::Mode::Dark);
+            let event = state.controller.handle_system_theme(mode);
+            if let ShellEvent::ThemeChanged { .. } = event {
+                state.theme = UiTheme::new(state.scheme()).iced_theme();
+                state.regenerate_frosted_textures();
+            }
             state.last_action = format!("系统外观: {mode:?}");
             Task::none()
         }

@@ -20,9 +20,9 @@ flate2 = "1.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
 liquid-glass = { package = "bmol-iced", path = "../../crates/bmol-iced", version = "0.1.4" }
 bmol-glass-iced = { path = "../../crates/bmol-glass-iced", version = "0.1.4" }
-liquid-glass-native = { package = "bmol-window-native", git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.3" }
-bmol-designs = { git = "https://github.com/Erizeez/bmol-designs", tag = "v0.1.2" }
-bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.3", features = ["assets", "wallpaper", "theme"] }
+liquid-glass-native = { package = "bmol-window-native", git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.4" }
+bmol-designs = { git = "https://github.com/Erizeez/bmol-designs", tag = "v0.1.3" }
+bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.4", features = ["assets", "wallpaper", "theme"] }
 pollster = "1.0.1"
 spring-rs = { git = "https://github.com/Erizeez/spring-rs.git", tag = "v0.1.0" }
 wgpu = { version = "27.0.1", features = ["noop"] }
