@@ -57,6 +57,7 @@ return_self_not_must_use = "allow"
 no_effect_underscore_binding = "allow"
 field_reassign_with_default = "allow"
 semicolon_if_nothing_returned = "allow"
+manual_midpoint = "allow"
 
 [profile.dev]
 opt-level = 2

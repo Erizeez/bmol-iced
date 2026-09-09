@@ -3544,12 +3544,12 @@ mod tests {
 
     #[test]
     fn test_scheme_a_squircle_icon_integration() {
-        let state = State::default();
+        let _state = State::default();
         #[cfg(target_os = "macos")]
         {
             // At least Finder and Safari should be resolved and processed via squircle-icon-rs
-            assert!(state.app_icons[0].is_some(), "Finder icon should be loaded");
-            assert!(state.app_icons[1].is_some(), "Safari icon should be loaded");
+            assert!(_state.app_icons[0].is_some(), "Finder icon should be loaded");
+            assert!(_state.app_icons[1].is_some(), "Safari icon should be loaded");
         }
     }
 
