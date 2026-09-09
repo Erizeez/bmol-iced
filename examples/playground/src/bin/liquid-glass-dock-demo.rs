@@ -738,9 +738,11 @@ pub fn generate_frosted_plate_texture(
             let vibrant = vibrancy.apply(c);
             let dither = ign_dither_offset(wx, wy);
 
+            let is_capsule = (corner_radius - h as f32 * 0.5).abs() < 1.0;
+            let smoothing = if is_capsule { 0.0 } else { APPLE_CORNER_SMOOTHING };
             let p = SquirclePoint::new(px - w as f32 * 0.5, py - h as f32 * 0.5);
             let half = SquirclePoint::new(w as f32 * 0.5, h as f32 * 0.5);
-            let alpha = squircle_alpha(p, half, corner_radius, APPLE_CORNER_SMOOTHING);
+            let alpha = squircle_alpha(p, half, corner_radius, smoothing);
 
             let out_idx = idx * 4;
             rgba_bytes[out_idx] = ((vibrant[0] + dither).clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -1047,17 +1049,23 @@ pub enum Message {
     TriggerAction(String),
 }
 
-/// Renders the sharp backdrop wallpaper, alignment grid, and 2D frosted blur slices.
-struct LiquidGlassBackdropCanvas {
+/// Single unified Canvas program rendering wallpaper, glass substrate, blur, highlights, and icons in a single pass.
+struct LiquidGlassCanvas {
     style: WallpaperStyle,
     metrics: LayoutMetrics,
     show_grid: bool,
     system_wallpaper: Option<Arc<WallpaperBuffer>>,
     dock_frosted_texture: Option<iced::widget::image::Handle>,
     search_frosted_texture: Option<iced::widget::image::Handle>,
+    enable_highlight: bool,
+    enable_dark_rim: bool,
+    is_dark: bool,
+    transparency: GlassTransparency,
+    floating_menu_rect: Option<Rectangle>,
+    app_icons: [Option<iced::widget::image::Handle>; 9],
 }
 
-impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for LiquidGlassBackdropCanvas {
+impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for LiquidGlassCanvas {
     type State = ();
 
     fn draw(
@@ -1075,11 +1083,9 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
             window_metrics::DEFAULT_CORNER_RADIUS,
         );
 
-        // 1. Draw Base Sharp Wallpaper (Presets)
+        // 1. Draw Base Wallpaper (Presets clipped cleanly to window squircle)
         match self.style {
-            WallpaperStyle::DesktopTransparent => {
-                // 100% transparent to desktop — no opaque rectangular image drawn!
-            }
+            WallpaperStyle::DesktopTransparent => {}
             WallpaperStyle::AuroraMesh => {
                 let grad = Linear::new(Point::ORIGIN, Point::new(bounds.width, bounds.height))
                     .add_stop(0.0, Color::from_rgb(0.12, 0.06, 0.38))
@@ -1183,47 +1189,7 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
             }
         }
 
-        // 3. Draw 2D Frosted Backdrop Texture Slices with sub-pixel Squircle AA mask
-        let s_rect = self.metrics.search_rect;
-        if let Some(texture) = &self.search_frosted_texture {
-            frame.draw_image(s_rect, iced::widget::canvas::Image::new(texture.clone()));
-        }
-
-        let d_rect = self.metrics.dock_rect;
-        if let Some(texture) = &self.dock_frosted_texture {
-            frame.draw_image(d_rect, iced::widget::canvas::Image::new(texture.clone()));
-        }
-
-        vec![frame.into_geometry()]
-    }
-}
-
-/// Renders the Apple Liquid Glass optics, substrate tint, specular bevel, and App icons on top.
-struct LiquidGlassForegroundCanvas {
-    metrics: LayoutMetrics,
-    blur_radius: f32,
-    enable_highlight: bool,
-    enable_dark_rim: bool,
-    is_dark: bool,
-    transparency: GlassTransparency,
-    floating_menu_rect: Option<Rectangle>,
-    app_icons: [Option<iced::widget::image::Handle>; 9],
-}
-
-impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for LiquidGlassForegroundCanvas {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &Self::State,
-        renderer: &iced_backend::Renderer,
-        _theme: &Theme,
-        _bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, _bounds.size());
-
-        // 1. Render Frosted Search Bar Optics
+        // 3. Render Frosted Search Bar Optics in ONE unified pass
         let s_rect = self.metrics.search_rect;
         draw_liquid_glass_plate(
             &mut frame,
@@ -1233,10 +1199,10 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
             self.transparency,
             self.enable_highlight,
             self.enable_dark_rim,
-            self.blur_radius,
+            self.search_frosted_texture.as_ref(),
         );
 
-        // 2. Render Main Frosted Dock Optics (Concentric 23px radius = 13px padding + 10px icon R)
+        // 4. Render Main Frosted Dock Optics in ONE unified pass
         let d_rect = self.metrics.dock_rect;
         draw_liquid_glass_plate(
             &mut frame,
@@ -1246,10 +1212,10 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
             self.transparency,
             self.enable_highlight,
             self.enable_dark_rim,
-            self.blur_radius,
+            self.dock_frosted_texture.as_ref(),
         );
 
-        // 3. Render 9 Authentic macOS Squircle Icons & Interactive Mechanics
+        // 5. Render 9 Authentic macOS Squircle Icons & Interactive Mechanics
         for (i, app) in DockApp::ALL.iter().enumerate() {
             let i_rect = self.metrics.icon_rects[i];
             draw_apple_icon(
@@ -1291,7 +1257,7 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
             }
         }
 
-        // 4. Render Floating Context Menu (if active)
+        // 6. Render Floating Context Menu (if active)
         if let Some(m_rect) = self.floating_menu_rect {
             draw_liquid_glass_plate(
                 &mut frame,
@@ -1301,7 +1267,7 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
                 self.transparency,
                 self.enable_highlight,
                 self.enable_dark_rim,
-                self.blur_radius,
+                None,
             );
         }
 
@@ -1321,12 +1287,17 @@ fn draw_liquid_glass_plate<R: iced::advanced::graphics::geometry::Renderer>(
     transparency: GlassTransparency,
     enable_highlight: bool,
     enable_dark_rim: bool,
-    _blur_radius: f32,
+    frosted_texture: Option<&iced::widget::image::Handle>,
 ) {
     // 1. Soft subtle ambient elevation drop shadow
     draw_elevation_shadow(frame, rect, radius, is_dark, transparency);
 
-    // 2. Base Glass Substrate (Calibrated Apple macOS authentic transparency & intrinsic silver/graphite tint)
+    // 2. Draw 2D Frosted Backdrop Texture Slice (if present)
+    if let Some(texture) = frosted_texture {
+        frame.draw_image(rect, iced::widget::canvas::Image::new(texture.clone()));
+    }
+
+    // 3. Base Glass Substrate (Calibrated Apple macOS authentic transparency & intrinsic silver/graphite tint)
     let path = build_squircle_path(rect, radius);
     let glass_grad = if is_dark {
         let (base_alpha, edge_alpha) = match transparency {
@@ -1588,34 +1559,22 @@ fn draw_elevation_shadow<R: iced::advanced::graphics::geometry::Renderer>(
     rect: Rectangle,
     radius: f32,
     is_dark: bool,
-    transparency: GlassTransparency,
+    _transparency: GlassTransparency,
 ) {
-    let base_alpha = match transparency {
-        GlassTransparency::Ultra => if is_dark { 0.08 } else { 0.05 },
-        GlassTransparency::High => if is_dark { 0.14 } else { 0.09 },
-        GlassTransparency::Frosted => if is_dark { 0.20 } else { 0.14 },
+    let shadow_color = if is_dark {
+        Color::from_rgba(0.0, 0.0, 0.0, 0.20)
+    } else {
+        Color::from_rgba(0.0, 0.0, 0.0, 0.08)
     };
 
-    // Expanding concentric squircle shells with minimal vertical displacement
-    // ensuring the shadow provides soft elevation without creating stepped dark shapes
-    // visible through the 92.5% transparent glass core.
-    let shells: [(f32, f32, f32); 4] = [
-        (1.0, 1.0, 1.2),    // Contact occlusion
-        (2.0, 3.0, 0.8),    // Soft penumbra
-        (4.0, 6.0, 0.45),   // Ambient falloff
-        (6.0, 10.0, 0.20),  // Far diffusion
-    ];
-
-    for (y_off, spread, a_mul) in shells {
-        let shadow_rect = Rectangle {
-            x: rect.x - spread,
-            y: rect.y + y_off,
-            width: rect.width + spread * 2.0,
-            height: rect.height + spread * 1.5,
-        };
-        let shadow_color = Color::from_rgba(0.0, 0.0, 0.0, base_alpha * a_mul);
-        fill_squircle(frame, shadow_rect, radius + spread * 0.75, shadow_color);
-    }
+    // Single subtle, clean elevation drop shadow with matching squircle radius
+    let shadow_rect = Rectangle {
+        x: rect.x,
+        y: rect.y + 4.0,
+        width: rect.width,
+        height: rect.height,
+    };
+    fill_squircle(frame, shadow_rect, radius, shadow_color);
 }
 
 /// Builds an authentic Apple continuous curvature squircle path (G2 continuity) for a rectangle.
@@ -2244,25 +2203,15 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
     });
 
     // -------------------------------------------------------------
-    // Layer 1: Liquid Glass 2D Frosted Backdrop Canvas (Sharp background + 2D Gaussian blurred slices)
+    // Unified Liquid Glass Canvas (Sharp background + Frosted blur + Optics + Icons in ONE pass)
     // -------------------------------------------------------------
-    let backdrop_canvas = Canvas::new(LiquidGlassBackdropCanvas {
+    let glass_canvas = Canvas::new(LiquidGlassCanvas {
         style: state.wallpaper,
         metrics,
         show_grid: state.show_grid,
         system_wallpaper: Some(state.system_wallpaper.clone()),
         dock_frosted_texture: state.dock_frosted_texture.clone(),
         search_frosted_texture: state.search_frosted_texture.clone(),
-    })
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    // -------------------------------------------------------------
-    // Layer 2: Liquid Glass Foreground Optics Canvas (Bevel highlights, substrate tint, icons)
-    // -------------------------------------------------------------
-    let foreground_canvas = Canvas::new(LiquidGlassForegroundCanvas {
-        metrics,
-        blur_radius: state.blur_radius,
         enable_highlight: state.enable_highlight,
         enable_dark_rim: state.enable_dark_rim,
         is_dark,
@@ -2274,7 +2223,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
     .height(Length::Fill);
 
     // -------------------------------------------------------------
-    // Layer 3: Interactive Controls Overlay (Exact Metric Sizing)
+    // Layer 2: Interactive Controls Overlay (Exact Metric Sizing)
     // -------------------------------------------------------------
     let header = view_header(state, is_dark);
     let status_bar = view_status_bar(state, is_dark);
@@ -2297,13 +2246,10 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
 
     let mut layers: Vec<Element<'_, Message, Theme, iced_backend::Renderer>> = Vec::new();
 
-    // Layer 1: Liquid Glass 2D Frosted Backdrop Canvas
-    layers.push(backdrop_canvas.into());
+    // Layer 1: Unified Liquid Glass Canvas
+    layers.push(glass_canvas.into());
 
-    // Layer 2: Liquid Glass Foreground Optics Canvas (Guaranteed on top of backdrop images)
-    layers.push(foreground_canvas.into());
-
-    // Layer 3: Interactive Controls Overlay (Exact Metric Sizing)
+    // Layer 2: Interactive Controls Overlay (Exact Metric Sizing)
     layers.push(page_content.into());
 
     // -------------------------------------------------------------
