@@ -40,11 +40,11 @@ pub use scene::{
 pub use ui::{
     ContextMenu, DEFAULT_WINDOW_CORNER_RADIUS, GlassButton, GlassButtonIcon,
     GlassChrome, GlassContainer, GlassForeground, GlassForegroundRenderer, GlassNavigationControl,
-    GlassRole, GlassSegment, GlassSegmentContent, GlassSegmentedControl, IcedWindowController,
+    GlassPanel, GlassRole, GlassSegment, GlassSegmentContent, GlassSegmentedControl, IcedWindowController,
     IcedWindowPolicy, MenuItem, ScrollbarConfig, SpringScrollState, SpringScrollView,
     UiColorScheme, UiCornerStyle, UiIcon, UiPalette, UiTheme,
-    WindowCommand, WindowDragArea, WindowExpandBehavior, spring_scroll_view,
-    spring_scroll_view_with_config, view_context_menu, popover,
+    WindowCommand, WindowDragArea, WindowExpandBehavior, glass_panel, next_dynamic_glass_id,
+    spring_scroll_view, spring_scroll_view_with_config, view_context_menu, popover,
 };
 
 pub use bmol_window_shell::{

@@ -166,6 +166,7 @@ pub struct Renderer {
     overlay: Option<IcedRenderer>,
     active_layer: RenderLayer,
     interactions: Arc<Mutex<HashMap<GlassId, AnimatedInteraction>>>,
+    dynamic_nodes: Vec<GlassNode>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -197,6 +198,7 @@ impl Renderer {
             overlay: Some(IcedRenderer::new(engine, default_font, default_text_size)),
             active_layer: RenderLayer::Source,
             interactions: Arc::new(Mutex::new(HashMap::new())),
+            dynamic_nodes: Vec::new(),
         }
     }
 
@@ -273,6 +275,16 @@ impl Renderer {
         }
         &mut self.inner
     }
+
+    /// Registers a dynamic glass node for the current frame to be rendered by the compositor.
+    pub fn register_glass_node(&mut self, node: GlassNode) {
+        self.dynamic_nodes.push(node);
+    }
+
+    /// Clears and returns all registered dynamic glass nodes for the current frame.
+    pub fn take_glass_nodes(&mut self) -> Vec<GlassNode> {
+        std::mem::take(&mut self.dynamic_nodes)
+    }
 }
 
 
@@ -291,6 +303,14 @@ impl liquid_glass::GlassForegroundRenderer for Renderer {
 
     fn end_glass_overlay(&mut self) {
         self.active_layer = RenderLayer::Source;
+    }
+
+    fn register_glass_node(&mut self, node: GlassNode) {
+        self.dynamic_nodes.push(node);
+    }
+
+    fn take_glass_nodes(&mut self) -> Vec<GlassNode> {
+        std::mem::take(&mut self.dynamic_nodes)
     }
 
     fn update_glass_interaction(&self, id: GlassId, interaction: GlassInteraction) {
@@ -554,6 +574,7 @@ impl iced::advanced::renderer::Headless for Renderer {
             overlay: None,
             active_layer: RenderLayer::Source,
             interactions: Arc::new(Mutex::new(HashMap::new())),
+            dynamic_nodes: Vec::new(),
         })
     }
 
@@ -1027,7 +1048,7 @@ impl graphics::Compositor for Compositor {
             self.color_scheme = color_scheme;
         }
         let scene_started = Instant::now();
-        let scene = if self.profiler.skip_toolbar && surface_kind == DemoSurface::Settings {
+        let mut scene = if self.profiler.skip_toolbar && surface_kind == DemoSurface::Settings {
             GlassScene::default()
         } else {
             match surface_kind {
@@ -1051,6 +1072,19 @@ impl graphics::Compositor for Compositor {
                 ),
             }
         };
+
+        // Dynamically merge any glass nodes registered by widgets in the current frame
+        let dynamic_nodes = renderer.take_glass_nodes();
+        if !dynamic_nodes.is_empty() {
+            let mut dynamic_scene = GlassScene::default();
+            for node in dynamic_nodes {
+                dynamic_scene.push(node);
+            }
+            scale_scene(&mut dynamic_scene, viewport.scale_factor().max(1.0));
+            for node in dynamic_scene.nodes_in_render_order() {
+                scene.push(node.clone());
+            }
+        }
         let scene_built = Instant::now();
         let layers_iced_started = scene_built;
         if let Some(foreground_texture) = self.iced_foreground.as_ref()
@@ -1493,5 +1527,24 @@ mod tests {
             ]),
             Some(wgpu::TextureFormat::Rgba16Float),
         );
+    }
+
+    #[test]
+    fn dynamic_glass_scene_merges_registered_nodes_correctly() {
+        let mut scene = GlassScene::default();
+        let mut dynamic_scene = GlassScene::default();
+        let dynamic_node = GlassNode::new(GlassId(101), Rect::new(50.0, 60.0, 200.0, 80.0));
+        dynamic_scene.push(dynamic_node);
+
+        scale_scene(&mut dynamic_scene, 2.0);
+
+        for node in dynamic_scene.nodes_in_render_order() {
+            scene.push(node.clone());
+        }
+
+        let nodes = scene.nodes();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].id, GlassId(101));
+        assert_eq!(nodes[0].bounds, Rect::new(100.0, 120.0, 400.0, 160.0));
     }
 }

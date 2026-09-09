@@ -16,6 +16,16 @@ pub mod scroll_view;
 mod theme;
 pub mod window;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_DYNAMIC_GLASS_ID: AtomicU64 = AtomicU64::new(50_000);
+
+/// Generates a globally unique dynamic glass ID.
+#[must_use]
+pub fn next_dynamic_glass_id() -> GlassId {
+    GlassId(NEXT_DYNAMIC_GLASS_ID.fetch_add(1, Ordering::Relaxed))
+}
+
 pub use context_menu::{ContextMenu, MenuItem, view_context_menu};
 pub use popover::{
     align_arrow_to_target, build_popover_path, fill_popover, render_popover_shadow, stroke_popover_rim,
@@ -34,7 +44,7 @@ pub use window::{
 
 use iced::advanced::text::Renderer as TextRenderer;
 use iced::{
-    Background, Border, Color as IcedColor, Event, Length, Pixels, Rectangle, Shadow, Size, Vector,
+    Background, Border, Color as IcedColor, Event, Length, Padding, Pixels, Rectangle, Shadow, Size, Vector,
     advanced::{self, Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget::Tree},
 };
 use liquid_glass_scene::{
@@ -53,6 +63,14 @@ pub trait GlassForegroundRenderer {
     /// Publishes interaction state for the compositor-owned node with `id`.
     /// Renderers that do not own a Liquid Glass compositor may ignore it.
     fn update_glass_interaction(&self, _id: GlassId, _interaction: GlassInteraction) {}
+
+    /// Registers a dynamic glass node for the current frame to be rendered by the compositor.
+    fn register_glass_node(&mut self, _node: GlassNode) {}
+
+    /// Clears and returns all registered dynamic glass nodes for the current frame.
+    fn take_glass_nodes(&mut self) -> Vec<GlassNode> {
+        Vec::new()
+    }
 }
 
 impl GlassForegroundRenderer for () {}
@@ -485,6 +503,9 @@ where
             return;
         }
 
+        // Register the dynamic glass node to the compositor renderer.
+        renderer.register_glass_node(self.scene_node_for(bounds));
+
         // The compositor owns the material fill. Keeping the Iced-side base
         // transparent prevents a tinted rectangle from being composited a
         // second time on top of the shader result.
@@ -547,6 +568,306 @@ where
         } else {
             mouse::Interaction::default()
         }
+    }
+}
+
+pub use glass_panel::{GlassPanel, glass_panel};
+
+mod glass_panel {
+    use super::*;
+
+    /// A Liquid Glass panel widget that wraps child content.
+    ///
+    /// The glass substrate, curvature, refraction, and optical highlights are
+    /// rendered by the GPU compositor, while the child content is drawn in the
+    /// foreground layer above the glass surface.
+    pub struct GlassPanel<'a, Message, Theme, Renderer> {
+        id: GlassId,
+        content: iced::Element<'a, Message, Theme, Renderer>,
+        shape: GlassShape,
+        corner_curve: CornerCurve,
+        material: GlassMaterial,
+        padding: Padding,
+        width: Length,
+        height: Length,
+    }
+
+    impl<'a, Message, Theme, Renderer> GlassPanel<'a, Message, Theme, Renderer> {
+        #[must_use]
+        pub fn new(content: impl Into<iced::Element<'a, Message, Theme, Renderer>>) -> Self {
+            Self {
+                id: next_dynamic_glass_id(),
+                content: content.into(),
+                shape: GlassShape::RoundedRect { radius: 16.0 },
+                corner_curve: CornerCurve::continuous(),
+                material: GlassMaterial::regular(),
+                padding: Padding::ZERO,
+                width: Length::Shrink,
+                height: Length::Shrink,
+            }
+        }
+
+        #[must_use]
+        pub const fn id(mut self, id: GlassId) -> Self {
+            self.id = id;
+            self
+        }
+
+        #[must_use]
+        pub fn shape(mut self, shape: GlassShape) -> Self {
+            self.shape = shape;
+            self
+        }
+
+        #[must_use]
+        pub fn squircle_radius(mut self, radius: f32) -> Self {
+            self.shape = GlassShape::RoundedRect { radius };
+            self.corner_curve = CornerCurve::continuous();
+            self
+        }
+
+        #[must_use]
+        pub const fn corner_curve(mut self, corner_curve: CornerCurve) -> Self {
+            self.corner_curve = corner_curve;
+            self
+        }
+
+        #[must_use]
+        pub const fn material(mut self, material: GlassMaterial) -> Self {
+            self.material = material;
+            self
+        }
+
+        #[must_use]
+        pub fn padding<P: Into<Padding>>(mut self, padding: P) -> Self {
+            self.padding = padding.into();
+            self
+        }
+
+        #[must_use]
+        pub const fn width(mut self, width: Length) -> Self {
+            self.width = width;
+            self
+        }
+
+        #[must_use]
+        pub const fn height(mut self, height: Length) -> Self {
+            self.height = height;
+            self
+        }
+
+        #[must_use]
+        pub const fn node_id(&self) -> GlassId {
+            self.id
+        }
+
+        #[must_use]
+        pub fn node_shape(&self) -> &GlassShape {
+            &self.shape
+        }
+
+        #[must_use]
+        pub const fn node_corner_curve(&self) -> CornerCurve {
+            self.corner_curve
+        }
+
+        #[must_use]
+        pub const fn node_material(&self) -> GlassMaterial {
+            self.material
+        }
+
+        #[must_use]
+        pub const fn node_padding(&self) -> Padding {
+            self.padding
+        }
+    }
+
+    impl<Message, Theme, Renderer> fmt::Debug for GlassPanel<'_, Message, Theme, Renderer> {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter
+                .debug_struct("GlassPanel")
+                .field("id", &self.id)
+                .field("shape", &self.shape)
+                .field("material", &self.material)
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+        for GlassPanel<'_, Message, Theme, Renderer>
+    where
+        Renderer: advanced::Renderer + GlassForegroundRenderer,
+    {
+        fn size(&self) -> Size<Length> {
+            Size::new(self.width, self.height)
+        }
+
+        fn size_hint(&self) -> Size<Length> {
+            Size::new(self.width, self.height)
+        }
+
+        fn layout(
+            &mut self,
+            tree: &mut Tree,
+            renderer: &Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::padded(limits, self.width, self.height, self.padding, |limits| {
+                self.content
+                    .as_widget_mut()
+                    .layout(&mut tree.children[0], renderer, limits)
+            })
+        }
+
+        fn draw(
+            &self,
+            tree: &Tree,
+            renderer: &mut Renderer,
+            theme: &Theme,
+            style: &renderer::Style,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            viewport: &Rectangle,
+        ) {
+            let bounds = layout.bounds();
+            if bounds.intersection(viewport).is_none() {
+                return;
+            }
+
+            // 1. Register dynamic GPU glass node for the compositor
+            let node = GlassNode::new(
+                self.id,
+                Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
+            )
+            .shape(self.shape.clone())
+            .corner_curve(self.corner_curve)
+            .material(self.material);
+
+            renderer.register_glass_node(node);
+
+            // 2. Render children inside the Glass Foreground pass
+            if let Some(child_layout) = layout.children().next() {
+                renderer.begin_glass_foreground();
+                self.content.as_widget().draw(
+                    &tree.children[0],
+                    renderer,
+                    theme,
+                    style,
+                    child_layout,
+                    cursor,
+                    viewport,
+                );
+                renderer.end_glass_foreground();
+            }
+        }
+
+        fn children(&self) -> Vec<Tree> {
+            vec![Tree::new(self.content.as_widget())]
+        }
+
+        fn diff(&self, tree: &mut Tree) {
+            tree.diff_children(&[self.content.as_widget()]);
+        }
+
+        fn operate(
+            &mut self,
+            tree: &mut Tree,
+            layout: Layout<'_>,
+            renderer: &Renderer,
+            operation: &mut dyn advanced::widget::Operation,
+        ) {
+            if let Some(child_layout) = layout.children().next() {
+                self.content
+                    .as_widget_mut()
+                    .operate(&mut tree.children[0], child_layout, renderer, operation);
+            }
+        }
+
+        fn update(
+            &mut self,
+            tree: &mut Tree,
+            event: &Event,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            renderer: &Renderer,
+            clipboard: &mut dyn Clipboard,
+            shell: &mut Shell<'_, Message>,
+            viewport: &Rectangle,
+        ) {
+            if let Some(child_layout) = layout.children().next() {
+                self.content.as_widget_mut().update(
+                    &mut tree.children[0],
+                    event,
+                    child_layout,
+                    cursor,
+                    renderer,
+                    clipboard,
+                    shell,
+                    viewport,
+                );
+            }
+        }
+
+        fn mouse_interaction(
+            &self,
+            tree: &Tree,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            viewport: &Rectangle,
+            renderer: &Renderer,
+        ) -> mouse::Interaction {
+            if let Some(child_layout) = layout.children().next() {
+                self.content.as_widget().mouse_interaction(
+                    &tree.children[0],
+                    child_layout,
+                    cursor,
+                    viewport,
+                    renderer,
+                )
+            } else {
+                mouse::Interaction::default()
+            }
+        }
+
+        fn overlay<'b>(
+            &'b mut self,
+            tree: &'b mut Tree,
+            layout: Layout<'b>,
+            renderer: &Renderer,
+            viewport: &Rectangle,
+            translation: Vector,
+        ) -> Option<advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+            if let Some(child_layout) = layout.children().next() {
+                self.content.as_widget_mut().overlay(
+                    &mut tree.children[0],
+                    child_layout,
+                    renderer,
+                    viewport,
+                    translation,
+                )
+            } else {
+                None
+            }
+        }
+    }
+
+    impl<'a, Message, Theme, Renderer> From<GlassPanel<'a, Message, Theme, Renderer>>
+        for iced::Element<'a, Message, Theme, Renderer>
+    where
+        Message: 'a,
+        Theme: 'a,
+        Renderer: advanced::Renderer + GlassForegroundRenderer + 'a,
+    {
+        fn from(panel: GlassPanel<'a, Message, Theme, Renderer>) -> Self {
+            iced::Element::new(panel)
+        }
+    }
+
+    /// Helper constructor for [`GlassPanel`].
+    pub fn glass_panel<'a, Message, Theme, Renderer>(
+        content: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
+    ) -> GlassPanel<'a, Message, Theme, Renderer> {
+        GlassPanel::new(content)
     }
 }
 
@@ -1608,5 +1929,20 @@ mod tests {
 
         assert_eq!(hovered, None);
         assert!(!divider_touches_hovered(1, hovered));
+    }
+
+    #[test]
+    fn glass_panel_creates_with_unique_ids_and_configuration() {
+        let panel1 = GlassPanel::<(), (), ()>::new(iced::Element::new(GlassContainer::new(GlassId(1), Rect::new(0.0, 0.0, 100.0, 50.0))))
+            .squircle_radius(24.0)
+            .padding(12.0);
+        let panel2 = GlassPanel::<(), (), ()>::new(iced::Element::new(GlassContainer::new(GlassId(2), Rect::new(0.0, 0.0, 100.0, 50.0))))
+            .squircle_radius(18.0);
+
+        assert_ne!(panel1.node_id(), panel2.node_id());
+        assert_eq!(panel1.node_shape(), &GlassShape::RoundedRect { radius: 24.0 });
+        assert_eq!(panel1.node_corner_curve(), CornerCurve::continuous());
+        assert_eq!(panel1.node_padding(), Padding::from(12.0));
+        assert_eq!(panel2.node_shape(), &GlassShape::RoundedRect { radius: 18.0 });
     }
 }
