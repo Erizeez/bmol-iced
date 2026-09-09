@@ -8,12 +8,12 @@ rust-version.workspace = true
 
 [dependencies]
 iced = { version = "0.14.0", default-features = false, features = ["advanced", "canvas", "thread-pool", "svg", "image-without-codecs", "x11", "wayland"] }
-liquid-glass-scene = { path = "../../../liquid-rs/crates/liquid-glass-scene", version = "0.1.0" }
-squircle-rs = { path = "../../../squircle-rs", version = "0.1.1" }
-bmol-designs = { path = "../../../bmol-designs", version = "0.1.0" }
-bmol-window-shell = { path = "../../../bmol-window-shell/crates/bmol-window-shell", version = "0.1.0" }
+liquid-glass-scene = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.0" }
+squircle-rs = { git = "https://github.com/Erizeez/squircle-rs", tag = "v0.1.2" }
+bmol-designs = { git = "https://github.com/Erizeez/bmol-designs", tag = "v0.1.1" }
+bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.1" }
 spring-rs = { git = "https://github.com/Erizeez/spring-rs.git", tag = "v0.1.0" }
-vibrancy-rs = { path = "../../../vibrancy-rs", version = "0.1.0" }
+vibrancy-rs = { git = "https://github.com/Erizeez/vibrancy-rs", tag = "v0.1.0" }
 
 [lints]
 workspace = true

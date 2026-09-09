@@ -12,18 +12,18 @@ iced = { version = "0.14.0", default-features = false, features = ["wgpu", "adva
 iced_wgpu = { version = "0.14.0", features = ["svg", "image"] }
 flate2 = "1.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
-liquid-glass = { package = "bmol-iced", path = "../../crates/bmol-iced", version = "0.1.0" }
-bmol-glass-iced = { path = "../../crates/bmol-glass-iced", version = "0.1.0" }
-liquid-glass-native = { package = "bmol-window-native", path = "../../../bmol-window-shell/crates/bmol-window-native", version = "0.1.0" }
-bmol-designs = { path = "../../../bmol-designs", version = "0.1.0" }
-bmol-window-shell = { path = "../../../bmol-window-shell/crates/bmol-window-shell", version = "0.1.0", features = ["assets", "wallpaper", "theme"] }
+liquid-glass = { package = "bmol-iced", path = "../../crates/bmol-iced", version = "0.1.1" }
+bmol-glass-iced = { path = "../../crates/bmol-glass-iced", version = "0.1.1" }
+liquid-glass-native = { package = "bmol-window-native", git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.1" }
+bmol-designs = { git = "https://github.com/Erizeez/bmol-designs", tag = "v0.1.1" }
+bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.1", features = ["assets", "wallpaper", "theme"] }
 pollster = "1.0.1"
 spring-rs = { git = "https://github.com/Erizeez/spring-rs.git", tag = "v0.1.0" }
 wgpu = { version = "27.0.1", features = ["noop"] }
 window-vibrancy = "0.8.0"
 winit = "0.30.12"
-vibrancy-rs = { path = "../../../vibrancy-rs", version = "0.1.0" }
-squircle-icon-rs = { path = "../../../squircle-icon-rs", version = "0.1.0" }
+vibrancy-rs = { git = "https://github.com/Erizeez/vibrancy-rs", tag = "v0.1.0" }
+squircle-icon-rs = { git = "https://github.com/Erizeez/squircle-icon-rs", tag = "v0.1.13" }
 
 [lints]
 workspace = true
