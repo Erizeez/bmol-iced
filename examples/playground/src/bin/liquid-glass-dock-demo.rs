@@ -1321,42 +1321,39 @@ fn draw_liquid_glass_plate<R: iced::advanced::graphics::geometry::Renderer>(
     transparency: GlassTransparency,
     enable_highlight: bool,
     enable_dark_rim: bool,
-    blur_radius: f32,
+    _blur_radius: f32,
 ) {
     // 1. Soft subtle ambient elevation drop shadow
     draw_elevation_shadow(frame, rect, radius, is_dark, transparency);
 
     // 2. Base Glass Substrate (Calibrated Apple macOS authentic transparency & intrinsic silver/graphite tint)
     let path = build_squircle_path(rect, radius);
-    let frost_factor = (blur_radius / 16.0).clamp(0.0, 1.0);
     let glass_grad = if is_dark {
-        let base_c_mid = transparency.center_alpha_dark();
-        let c_mid = base_c_mid * (0.05 + 0.35 * frost_factor);
-        let c_top = (c_mid + 0.028).min(0.28);
-        let c_bot = (c_mid + 0.012).min(0.26);
+        let (base_alpha, edge_alpha) = match transparency {
+            GlassTransparency::Ultra => (0.35, 0.50),
+            GlassTransparency::High => (0.48, 0.62),
+            GlassTransparency::Frosted => (0.65, 0.78),
+        };
         let tint = Color::from_rgb(0.095, 0.102, 0.125);
-        let edge_tint = Color::from_rgb(0.12, 0.135, 0.16);
+        let edge_tint = Color::from_rgb(0.14, 0.16, 0.20);
         Linear::new(Point::new(rect.x, rect.y), Point::new(rect.x, rect.y + rect.height))
-            .add_stop(0.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_top))
-            .add_stop(0.08, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, (c_top + c_mid) * 0.5))
-            .add_stop(0.22, Color::from_rgba(tint.r, tint.g, tint.b, c_mid))
-            .add_stop(0.78, Color::from_rgba(tint.r, tint.g, tint.b, c_mid))
-            .add_stop(0.92, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, (c_bot + c_mid) * 0.5))
-            .add_stop(1.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_bot))
+            .add_stop(0.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha))
+            .add_stop(0.15, Color::from_rgba(tint.r, tint.g, tint.b, base_alpha))
+            .add_stop(0.85, Color::from_rgba(tint.r, tint.g, tint.b, base_alpha))
+            .add_stop(1.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha * 0.9))
     } else {
-        let base_c_mid = transparency.center_alpha_light();
-        let c_mid = base_c_mid * (0.05 + 0.35 * frost_factor);
-        let c_top = (c_mid + 0.032).min(0.22);
-        let c_bot = (c_mid + 0.014).min(0.20);
-        let tint = Color::from_rgb(0.95, 0.96, 0.98);
-        let edge_tint = Color::from_rgb(0.98, 0.99, 1.0);
+        let (base_alpha, edge_alpha) = match transparency {
+            GlassTransparency::Ultra => (0.35, 0.52),
+            GlassTransparency::High => (0.48, 0.65),
+            GlassTransparency::Frosted => (0.65, 0.80),
+        };
+        let tint = Color::from_rgb(0.96, 0.97, 0.99);
+        let edge_tint = Color::from_rgb(1.0, 1.0, 1.0);
         Linear::new(Point::new(rect.x, rect.y), Point::new(rect.x, rect.y + rect.height))
-            .add_stop(0.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_top))
-            .add_stop(0.08, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, (c_top + c_mid) * 0.5))
-            .add_stop(0.22, Color::from_rgba(tint.r, tint.g, tint.b, c_mid))
-            .add_stop(0.78, Color::from_rgba(tint.r, tint.g, tint.b, c_mid))
-            .add_stop(0.92, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, (c_bot + c_mid) * 0.5))
-            .add_stop(1.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, c_bot))
+            .add_stop(0.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha))
+            .add_stop(0.15, Color::from_rgba(tint.r, tint.g, tint.b, base_alpha))
+            .add_stop(0.85, Color::from_rgba(tint.r, tint.g, tint.b, base_alpha))
+            .add_stop(1.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha * 0.85))
     };
     frame.fill(&path, glass_grad);
 
@@ -1698,7 +1695,7 @@ fn draw_liquid_glass_bevel<R: iced::advanced::graphics::geometry::Renderer>(
         return;
     }
 
-    let stroke_w = 0.5f32;
+    let _stroke_w = 0.5f32;
     let full_path = Path::new(|builder| {
         for cmd in &commands {
             match *cmd {
@@ -1715,53 +1712,22 @@ fn draw_liquid_glass_bevel<R: iced::advanced::graphics::geometry::Renderer>(
     });
 
     if enable_dark_rim {
-        let rim_alpha = if is_dark { 0.25 } else { 0.18 };
+        let rim_alpha = if is_dark { 0.22 } else { 0.14 };
         frame.stroke(
             &full_path,
             Stroke::default()
                 .with_color(Color::from_rgba(0.0, 0.0, 0.0, rim_alpha))
-                .with_width(stroke_w),
+                .with_width(0.5),
         );
     }
 
     if enable_highlight {
-        let highlight_alpha = if is_dark { 0.35 } else { 0.48 };
-        let top_highlight_path = Path::new(|builder| {
-            let mut pen = Point::new(inner_rect.x, inner_rect.y);
-            for cmd in &commands {
-                match *cmd {
-                    PathCommand::MoveTo(p) => {
-                        pen = Point::new(inner_rect.x + p.x, inner_rect.y + p.y);
-                        builder.move_to(pen);
-                    }
-                    PathCommand::LineTo(p) => {
-                        let to = Point::new(inner_rect.x + p.x, inner_rect.y + p.y);
-                        if (pen.y - inner_rect.y).abs() < 1.0 && (to.y - inner_rect.y).abs() < 1.0 {
-                            builder.line_to(to);
-                        }
-                        pen = to;
-                    }
-                    PathCommand::CubicTo { c0, c1, to } => {
-                        let to_pt = Point::new(inner_rect.x + to.x, inner_rect.y + to.y);
-                        if (pen.y - inner_rect.y) < r * 1.5 || (to_pt.y - inner_rect.y) < r * 1.5 {
-                            builder.bezier_curve_to(
-                                Point::new(inner_rect.x + c0.x, inner_rect.y + c0.y),
-                                Point::new(inner_rect.x + c1.x, inner_rect.y + c1.y),
-                                to_pt,
-                            );
-                        }
-                        pen = to_pt;
-                    }
-                    PathCommand::Close => {}
-                }
-            }
-        });
-
+        let highlight_alpha = if is_dark { 0.40 } else { 0.60 };
         frame.stroke(
-            &top_highlight_path,
+            &full_path,
             Stroke::default()
                 .with_color(Color::from_rgba(1.0, 1.0, 1.0, highlight_alpha))
-                .with_width(stroke_w),
+                .with_width(0.75),
         );
     }
 }
@@ -1833,11 +1799,7 @@ impl Default for State {
             controller,
             window_size: Size::new(1240.0, 820.0),
             theme,
-            wallpaper: if std::env::var("WALLPAPER").map(|s| s == "tv").unwrap_or(false) {
-                WallpaperStyle::TvColorBars
-            } else {
-                WallpaperStyle::DesktopTransparent
-            },
+            wallpaper: WallpaperStyle::DesktopTransparent,
             transparency: GlassTransparency::Ultra,
             blur_preset: BlurPreset::Standard16,
             blur_radius: BlurPreset::Standard16.radius(),
@@ -2004,8 +1966,11 @@ fn build_wallpaper_context_menu(state: &State, scheme: UiColorScheme) -> Context
 
 pub fn boot() -> (State, Task<Message>) {
     let mut state = State::default();
+    state.wallpaper = WallpaperStyle::AuroraMesh;
     for arg in std::env::args().skip(1) {
-        if arg == "--bars" || arg == "bars" {
+        if arg == "--transparent" || arg == "transparent" {
+            state.wallpaper = WallpaperStyle::DesktopTransparent;
+        } else if arg == "--bars" || arg == "bars" {
             state.wallpaper = WallpaperStyle::TvColorBars;
         } else if arg == "--grid" || arg == "grid" {
             state.wallpaper = WallpaperStyle::TvColorGrid;
