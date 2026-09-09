@@ -44,7 +44,7 @@ use bmol_window_shell::{
     is_system_dark_mode, window_metrics,
 };
 use liquid_glass::{
-    ContextMenu, CornerCurve, GlassContainer, GlassId,
+    ContextMenu, CornerCurve, GlassChrome, GlassContainer, GlassId,
     GlassRole, GlassShape, MenuItem, Rect, UiColorScheme, UiIcon, UiTheme,
     geometry::{
         squircle_alpha, squircle_path_commands, PathCommand,
@@ -1228,7 +1228,8 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for IconsC
 
         // Render 9 Authentic macOS Squircle Icons & Interactive Mechanics
         for (i, app) in DockApp::ALL.iter().enumerate() {
-            let i_rect = self.metrics.icon_rects[i];
+            let mut i_rect = self.metrics.icon_rects[i];
+            i_rect.y -= self.metrics.header_h;
             draw_apple_icon(
                 &mut frame,
                 *app,
@@ -1250,7 +1251,7 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for IconsC
             );
             if is_running {
                 let dot_cx = i_rect.x + i_rect.width * 0.5;
-                let dot_cy = d_rect.y + d_rect.height - (self.metrics.dock_padding * 0.35);
+                let dot_cy = (d_rect.y - self.metrics.header_h) + d_rect.height - (self.metrics.dock_padding * 0.35);
                 let (dot_color, halo_color) = if self.is_dark {
                     (
                         Color::from_rgba(1.0, 1.0, 1.0, 0.90),
@@ -2483,7 +2484,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
             )
             .shape(GlassShape::Capsule)
             .material(search_mat)
-            .chrome(theme.glass_chrome(GlassRole::SearchField)),
+            .chrome(GlassChrome::transparent()),
         )
         .padding(Padding {
             top: metrics.search_rect.y - metrics.header_h,
@@ -2505,7 +2506,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
             .shape(GlassShape::RoundedRect { radius: metrics.dock_radius })
             .corner_curve(CornerCurve::continuous())
             .material(dock_mat)
-            .chrome(theme.glass_chrome(GlassRole::FloatingControl)),
+            .chrome(GlassChrome::transparent()),
         )
         .padding(Padding {
             top: metrics.dock_rect.y - metrics.header_h,
@@ -2608,7 +2609,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
                 )
                 .shape(GlassShape::RoundedRect { radius: 12.0 })
                 .material(theme.glass_material(GlassRole::ContextMenu))
-                .chrome(theme.glass_chrome(GlassRole::ContextMenu)),
+                .chrome(GlassChrome::transparent()),
             )
             .padding(Padding {
                 top: m_rect.y,

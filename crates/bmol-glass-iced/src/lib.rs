@@ -10,7 +10,7 @@ use std::{
 
 use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
 use liquid_glass::{
-    GlassAccessibility, GlassId, GlassInteraction, GlassNode, GlassRole, GlassScene, GpuRenderer,
+    GlassAccessibility, GlassId, GlassInteraction, GlassNode, GlassRole, GlassScene, GlassShape, GpuRenderer,
     GpuSize, Rect, UiColorScheme, UiTheme,
 };
 pub use bmol_window_glass::{
@@ -1076,11 +1076,17 @@ impl graphics::Compositor for Compositor {
         // Dynamically merge any glass nodes registered by widgets in the current frame
         let dynamic_nodes = renderer.take_glass_nodes();
         if !dynamic_nodes.is_empty() {
+            let scale_factor = viewport.scale_factor().max(1.0);
             let mut dynamic_scene = GlassScene::default();
-            for node in dynamic_nodes {
+            for mut node in dynamic_nodes {
+                if let GlassShape::RoundedRect { radius } = node.shape {
+                    node.shape = GlassShape::RoundedRect {
+                        radius: radius * scale_factor,
+                    };
+                }
                 dynamic_scene.push(node);
             }
-            scale_scene(&mut dynamic_scene, viewport.scale_factor().max(1.0));
+            scale_scene(&mut dynamic_scene, scale_factor);
             for node in dynamic_scene.nodes_in_render_order() {
                 scene.push(node.clone());
             }

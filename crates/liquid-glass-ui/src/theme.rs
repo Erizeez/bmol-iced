@@ -435,6 +435,24 @@ impl UiTheme {
     }
 }
 
+impl GlassChrome {
+    #[must_use]
+    pub const fn transparent() -> Self {
+        Self {
+            border: GlassColor::transparent(),
+            hover_border: GlassColor::transparent(),
+            divider: GlassColor::transparent(),
+            shadow: GlassColor::transparent(),
+            shadow_offset_y: 0.0,
+            shadow_blur: 0.0,
+            text: GlassColor::transparent(),
+            disabled_text: GlassColor::transparent(),
+            hover_overlay: GlassColor::transparent(),
+            pressed_overlay: GlassColor::transparent(),
+        }
+    }
+}
+
 impl Default for GlassChrome {
     fn default() -> Self {
         UiTheme::dark().glass_chrome(GlassRole::FloatingControl)
