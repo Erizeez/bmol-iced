@@ -1035,7 +1035,7 @@ impl GlassTransparency {
 /// Messages for the interactive application.
 #[derive(Debug, Clone)]
 pub enum Message {
-    WindowOpened(window::Id),
+    WindowReady(Option<window::Id>),
     WindowResized(Size),
     WindowEvent((window::Id, iced::window::Event)),
     AnimationFrame(Instant),
@@ -2202,12 +2202,18 @@ pub fn boot() -> (State, Task<Message>) {
     }
     state.rebuild_menu(MenuContext::DockBar);
     state.regenerate_frosted_textures();
-    (state, Task::none())
+    (
+        state,
+        Task::batch([
+            iced::system::theme().map(Message::SystemThemeChanged),
+            liquid_glass::IcedWindowController::latest().map(Message::WindowReady),
+        ]),
+    )
 }
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
-        Message::WindowOpened(id) => {
+        Message::WindowReady(Some(id)) => {
             state.controller.set_window_id(id);
             let controller = state.controller.clone();
             window::run(id, move |w| {
@@ -2217,13 +2223,19 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             })
             .discard()
         }
+        Message::WindowReady(None) => Task::none(),
         Message::WindowResized(size) => {
             state.window_size = size;
             state.controller.handle_resized(size.width, size.height);
             state.regenerate_frosted_textures();
             Task::none()
         }
-        Message::WindowEvent((_id, event)) => {
+        Message::WindowEvent((id, event)) => {
+            if let iced::window::Event::Opened { .. } = event {
+                if state.controller.window_id.is_none() {
+                    return update(state, Message::WindowReady(Some(id)));
+                }
+            }
             if let Some(shell_event) = state.controller.handle_window_event(&event) {
                 match shell_event {
                     bmol_window_shell::ShellEvent::CloseRequested => {
@@ -2387,7 +2399,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
 pub fn subscription(state: &State) -> Subscription<Message> {
     let mut subscriptions = vec![
-        window::open_events().map(Message::WindowOpened),
         window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
         bmol_window_shell::system_theme_subscription(Message::SystemThemeChanged),
         iced::event::listen_with(|event, _status, id| match event {
@@ -3121,6 +3132,7 @@ fn main() -> iced::Result {
         size: Size::new(1240.0, 820.0),
         position: window::Position::Centered,
         transparent: true,
+        blur: true,
         decorations: false,
         ..Default::default()
     };

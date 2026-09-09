@@ -897,6 +897,10 @@ impl graphics::Compositor for Compositor {
         if self.liquid.size() != size {
             self.liquid.resize(size).map_err(|_| graphics::compositor::SurfaceError::Other)?;
         }
+        let scale = viewport.scale_factor().max(1.0);
+        let logical_radius = f32::from(liquid_glass::IcedWindowPolicy::liquid_glass().corner_radius());
+        let physical_radius = (logical_radius * scale).round();
+        self.liquid.set_window_corner_radius(physical_radius);
         self.liquid.set_accessibility(active_accessibility());
         if self.iced_source_size != size {
             self.iced_source = Some(self.device.create_texture(&wgpu::TextureDescriptor {
