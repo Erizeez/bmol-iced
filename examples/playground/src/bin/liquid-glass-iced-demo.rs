@@ -208,17 +208,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::WindowReady(Some(id)) => {
             state.controller.set_window_id(id);
-            let is_dark = state.color_scheme() == UiColorScheme::Dark;
-            let options = liquid_glass::NativeWindowOptions::new()
-                .with_corner_radius(window_metrics::DEFAULT_CORNER_RADIUS as f64)
-                .with_dark_mode(is_dark)
-                .with_shadow(false)
-                .with_edr(true)
-                .with_stage_manager_guard(true);
-
+            let controller = state.controller.clone();
             task = iced::window::run(id, move |w| {
                 if let Ok(handle) = w.window_handle() {
-                    let _ = liquid_glass::setup_native_window(handle.as_raw(), options);
+                    let _ = controller.setup_window(handle.as_raw());
                 }
             })
             .discard();
@@ -308,16 +301,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         iced_backend::set_window_control_origin(origin_x, origin_y);
         iced_backend::set_color_scheme(scheme);
         if let Some(id) = state.controller.window_id {
-            let options = liquid_glass::NativeWindowOptions::new()
-                .with_corner_radius(window_metrics::DEFAULT_CORNER_RADIUS as f64)
-                .with_dark_mode(is_dark)
-                .with_shadow(false)
-                .with_edr(true)
-                .with_stage_manager_guard(true);
-
+            let controller = state.controller.clone();
             let native_task = iced::window::run(id, move |w| {
                 if let Ok(handle) = w.window_handle() {
-                    let _ = liquid_glass::setup_native_window(handle.as_raw(), options);
+                    let _ = controller.setup_window(handle.as_raw());
                 }
             })
             .discard();

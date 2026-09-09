@@ -2209,22 +2209,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::WindowOpened(id) => {
             state.controller.set_window_id(id);
-            let is_dark = state.controller.is_dark;
+            let controller = state.controller.clone();
             window::run(id, move |w| {
                 if let Ok(handle) = w.window_handle() {
-                    let appearance = if is_dark {
-                        bmol_window_shell::native::WindowAppearance::Dark
-                    } else {
-                        bmol_window_shell::native::WindowAppearance::Light
-                    };
-                    let _ = bmol_window_shell::setup_native_window(
-                        handle.as_raw(),
-                        bmol_window_shell::NativeWindowOptions::new()
-                            .with_appearance(appearance)
-                            .with_corner_radius(f64::from(window_metrics::DEFAULT_CORNER_RADIUS))
-                            .with_desktop_blur_radius(0)
-                            .with_stage_manager_guard(false),
-                    );
+                    let _ = controller.setup_window(handle.as_raw());
                 }
             })
             .discard()
@@ -2565,14 +2553,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
 
     let root_stack = container(iced::widget::Stack::with_children(layers))
         .width(Length::Fill)
-        .height(Length::Fill)
-        .style(move |_theme| container::Style {
-            border: Border {
-                radius: window_metrics::DEFAULT_CORNER_RADIUS.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
+        .height(Length::Fill);
 
     state.controller.wrap_window_with_resizer(
         root_stack,

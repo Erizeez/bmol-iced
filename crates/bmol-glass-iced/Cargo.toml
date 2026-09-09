@@ -22,9 +22,9 @@ wgpu = { version = "27.0.1", features = ["noop"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
 window-vibrancy = "0.8.0"
 liquid-glass = { package = "bmol-iced", path = "../bmol-iced", version = "0.1.4" }
-bmol-window-glass = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.5" }
-bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.5" }
-liquid-glass-native = { package = "bmol-window-native", git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.5" }
+bmol-window-glass = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.6" }
+bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.6" }
+liquid-glass-native = { package = "bmol-window-native", git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.6" }
 
 [lints]
 workspace = true

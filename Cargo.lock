@@ -341,8 +341,8 @@ dependencies = [
 
 [[package]]
 name = "bmol-window-glass"
-version = "0.1.5"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.5#46a10ed58cd424f9eb54e54725028e5d0a89a54d"
+version = "0.1.6"
+source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.6#c1bcfcf11668deda708043fa1f9f56dbab46e58d"
 dependencies = [
  "bmol-designs",
  "liquid-glass-scene",
@@ -350,8 +350,8 @@ dependencies = [
 
 [[package]]
 name = "bmol-window-native"
-version = "0.1.5"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.5#46a10ed58cd424f9eb54e54725028e5d0a89a54d"
+version = "0.1.6"
+source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.6#c1bcfcf11668deda708043fa1f9f56dbab46e58d"
 dependencies = [
  "block2 0.6.2",
  "core-graphics",
@@ -366,16 +366,16 @@ dependencies = [
 
 [[package]]
 name = "bmol-window-platform"
-version = "0.1.5"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.5#46a10ed58cd424f9eb54e54725028e5d0a89a54d"
+version = "0.1.6"
+source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.6#c1bcfcf11668deda708043fa1f9f56dbab46e58d"
 dependencies = [
  "bmol-designs",
 ]
 
 [[package]]
 name = "bmol-window-shell"
-version = "0.1.5"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.5#46a10ed58cd424f9eb54e54725028e5d0a89a54d"
+version = "0.1.6"
+source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.6#c1bcfcf11668deda708043fa1f9f56dbab46e58d"
 dependencies = [
  "bmol-window-glass",
  "bmol-window-native",
