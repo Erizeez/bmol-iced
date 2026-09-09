@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "bmol-glass-iced"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bmol-iced",
  "bmol-window-glass",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "bmol-iced"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bmol-designs",
  "bmol-window-native",
@@ -341,8 +341,8 @@ dependencies = [
 
 [[package]]
 name = "bmol-window-glass"
-version = "0.1.2"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.2#3cf613a0e05e03ea08df162982d1fa44ae6cac15"
+version = "0.1.3"
+source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.3#34c06f7d0896e96d3aa689fb2452a3d2334a2d43"
 dependencies = [
  "bmol-designs",
  "liquid-glass-scene",
@@ -350,8 +350,8 @@ dependencies = [
 
 [[package]]
 name = "bmol-window-native"
-version = "0.1.2"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.2#3cf613a0e05e03ea08df162982d1fa44ae6cac15"
+version = "0.1.3"
+source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.3#34c06f7d0896e96d3aa689fb2452a3d2334a2d43"
 dependencies = [
  "block2 0.6.2",
  "core-graphics",
@@ -366,16 +366,16 @@ dependencies = [
 
 [[package]]
 name = "bmol-window-platform"
-version = "0.1.2"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.2#3cf613a0e05e03ea08df162982d1fa44ae6cac15"
+version = "0.1.3"
+source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.3#34c06f7d0896e96d3aa689fb2452a3d2334a2d43"
 dependencies = [
  "bmol-designs",
 ]
 
 [[package]]
 name = "bmol-window-shell"
-version = "0.1.2"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.2#3cf613a0e05e03ea08df162982d1fa44ae6cac15"
+version = "0.1.3"
+source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.3#34c06f7d0896e96d3aa689fb2452a3d2334a2d43"
 dependencies = [
  "bmol-window-glass",
  "bmol-window-native",
@@ -1698,7 +1698,7 @@ dependencies = [
 
 [[package]]
 name = "liquid-glass-playground"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bmol-designs",
  "bmol-glass-iced",
@@ -1740,7 +1740,7 @@ dependencies = [
 
 [[package]]
 name = "liquid-glass-ui"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bmol-designs",
  "bmol-window-shell",
