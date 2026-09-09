@@ -301,8 +301,8 @@ dependencies = [
 
 [[package]]
 name = "bmol-designs"
-version = "0.1.3"
-source = "git+https://github.com/Erizeez/bmol-designs?tag=v0.1.3#dfa4788a1219a5f0222fac6a1e805d99b003fd52"
+version = "0.1.4"
+source = "git+https://github.com/Erizeez/bmol-designs?tag=v0.1.4#debb712c2887277b98cfd5e35bcf0381643efa6b"
 dependencies = [
  "liquid-rs",
  "squircle-rs",
@@ -341,8 +341,8 @@ dependencies = [
 
 [[package]]
 name = "bmol-window-glass"
-version = "0.1.6"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.6#c1bcfcf11668deda708043fa1f9f56dbab46e58d"
+version = "0.1.7"
+source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.7#5b8764eee64b2e5c6092fd2416a76577aa1aa6ed"
 dependencies = [
  "bmol-designs",
  "liquid-glass-scene",
@@ -350,8 +350,8 @@ dependencies = [
 
 [[package]]
 name = "bmol-window-native"
-version = "0.1.6"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.6#c1bcfcf11668deda708043fa1f9f56dbab46e58d"
+version = "0.1.7"
+source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.7#5b8764eee64b2e5c6092fd2416a76577aa1aa6ed"
 dependencies = [
  "block2 0.6.2",
  "core-graphics",
@@ -366,16 +366,16 @@ dependencies = [
 
 [[package]]
 name = "bmol-window-platform"
-version = "0.1.6"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.6#c1bcfcf11668deda708043fa1f9f56dbab46e58d"
+version = "0.1.7"
+source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.7#5b8764eee64b2e5c6092fd2416a76577aa1aa6ed"
 dependencies = [
  "bmol-designs",
 ]
 
 [[package]]
 name = "bmol-window-shell"
-version = "0.1.6"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.6#c1bcfcf11668deda708043fa1f9f56dbab46e58d"
+version = "0.1.7"
+source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.7#5b8764eee64b2e5c6092fd2416a76577aa1aa6ed"
 dependencies = [
  "bmol-window-glass",
  "bmol-window-native",
@@ -383,6 +383,7 @@ dependencies = [
  "iced",
  "raw-window-handle",
  "spring-rs",
+ "squircle-rs",
 ]
 
 [[package]]
@@ -1685,13 +1686,13 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "liquid-glass-animation"
-version = "0.1.1"
-source = "git+https://github.com/Erizeez/liquid-rs?tag=v0.1.1#89f93492190db92a9ff57b0f64de8300d0fc168b"
+version = "0.1.2"
+source = "git+https://github.com/Erizeez/liquid-rs?tag=v0.1.2#963e0b92115e82ce3b9d3b5e4dd9191243309b60"
 
 [[package]]
 name = "liquid-glass-geometry"
-version = "0.1.1"
-source = "git+https://github.com/Erizeez/liquid-rs?tag=v0.1.1#89f93492190db92a9ff57b0f64de8300d0fc168b"
+version = "0.1.2"
+source = "git+https://github.com/Erizeez/liquid-rs?tag=v0.1.2#963e0b92115e82ce3b9d3b5e4dd9191243309b60"
 dependencies = [
  "squircle-rs",
 ]
@@ -1713,7 +1714,7 @@ dependencies = [
  "pollster",
  "spring-rs",
  "squircle-icon-rs",
- "vibrancy-rs 0.1.1",
+ "vibrancy-rs",
  "wgpu",
  "window-vibrancy",
  "winit",
@@ -1721,19 +1722,20 @@ dependencies = [
 
 [[package]]
 name = "liquid-glass-render"
-version = "0.1.1"
-source = "git+https://github.com/Erizeez/liquid-rs?tag=v0.1.1#89f93492190db92a9ff57b0f64de8300d0fc168b"
+version = "0.1.2"
+source = "git+https://github.com/Erizeez/liquid-rs?tag=v0.1.2#963e0b92115e82ce3b9d3b5e4dd9191243309b60"
 dependencies = [
  "bytemuck",
  "liquid-glass-scene",
- "vibrancy-rs 0.1.0",
+ "squircle-rs",
+ "vibrancy-rs",
  "wgpu",
 ]
 
 [[package]]
 name = "liquid-glass-scene"
-version = "0.1.1"
-source = "git+https://github.com/Erizeez/liquid-rs?tag=v0.1.1#89f93492190db92a9ff57b0f64de8300d0fc168b"
+version = "0.1.2"
+source = "git+https://github.com/Erizeez/liquid-rs?tag=v0.1.2#963e0b92115e82ce3b9d3b5e4dd9191243309b60"
 dependencies = [
  "liquid-glass-geometry",
 ]
@@ -1748,13 +1750,13 @@ dependencies = [
  "liquid-glass-scene",
  "spring-rs",
  "squircle-rs",
- "vibrancy-rs 0.1.1",
+ "vibrancy-rs",
 ]
 
 [[package]]
 name = "liquid-rs"
-version = "0.1.1"
-source = "git+https://github.com/Erizeez/liquid-rs?tag=v0.1.1#89f93492190db92a9ff57b0f64de8300d0fc168b"
+version = "0.1.2"
+source = "git+https://github.com/Erizeez/liquid-rs?tag=v0.1.2#963e0b92115e82ce3b9d3b5e4dd9191243309b60"
 dependencies = [
  "liquid-glass-animation",
  "liquid-glass-geometry",
@@ -3404,11 +3406,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "vibrancy-rs"
-version = "0.1.0"
-source = "git+https://github.com/Erizeez/vibrancy-rs?tag=v0.1.0#4ad47c163c6b8df1294d70d3c5755f34966def62"
 
 [[package]]
 name = "vibrancy-rs"
