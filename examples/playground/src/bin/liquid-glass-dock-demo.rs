@@ -3283,7 +3283,7 @@ mod tests {
 
         // Verify standard material specifications from vibrancy-rs
         assert_eq!(MaterialKind::Dock.blur_radius(), 20.0);
-        assert_eq!(MaterialKind::Launchpad.blur_radius(), 36.0);
+        assert_eq!(MaterialKind::Launchpad.blur_radius(), 56.0);
         let dark_tint = MaterialKind::Dock.tint(VibrancyAppearance::Dark);
         assert_eq!(dark_tint, [24, 24, 28, 180]);
     }

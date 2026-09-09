@@ -625,7 +625,7 @@ mod tests {
         let blur_64 = BlurPreset::UltraHeavy64.radius();
         let plan_64 = KawasePassPlan::new(1280, 800, blur_64);
         assert!(plan_64.use_deep_blur, "64pt must trigger 1/8 deep blur tier");
-        assert!(plan_64.offset >= 1.2 && plan_64.offset <= 2.5);
+        assert!(plan_64.offset >= 1.2 && plan_64.offset <= 3.0);
 
         // 3. Pure color consistency verification
         let white_color = sample_analytical_blurred_wallpaper(

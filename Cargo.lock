@@ -1713,7 +1713,7 @@ dependencies = [
  "pollster",
  "spring-rs",
  "squircle-icon-rs",
- "vibrancy-rs",
+ "vibrancy-rs 0.1.1",
  "wgpu",
  "window-vibrancy",
  "winit",
@@ -1726,7 +1726,7 @@ source = "git+https://github.com/Erizeez/liquid-rs?tag=v0.1.1#89f93492190db92a9f
 dependencies = [
  "bytemuck",
  "liquid-glass-scene",
- "vibrancy-rs",
+ "vibrancy-rs 0.1.0",
  "wgpu",
 ]
 
@@ -1748,7 +1748,7 @@ dependencies = [
  "liquid-glass-scene",
  "spring-rs",
  "squircle-rs",
- "vibrancy-rs",
+ "vibrancy-rs 0.1.1",
 ]
 
 [[package]]
@@ -3050,8 +3050,8 @@ source = "git+https://github.com/Erizeez/spring-rs.git?tag=v0.1.0#49d92fe9ee2539
 
 [[package]]
 name = "squircle-icon-rs"
-version = "0.1.13"
-source = "git+https://github.com/Erizeez/squircle-icon-rs?tag=v0.1.13#f18d290c6177b4d36d641967ef300a2c5980ffe1"
+version = "0.1.14"
+source = "git+https://github.com/Erizeez/squircle-icon-rs?tag=v0.1.14#629bed6a037a7b093c4147120d4c7c5ec6422d0e"
 dependencies = [
  "image",
  "png 0.17.16",
@@ -3409,6 +3409,11 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vibrancy-rs"
 version = "0.1.0"
 source = "git+https://github.com/Erizeez/vibrancy-rs?tag=v0.1.0#4ad47c163c6b8df1294d70d3c5755f34966def62"
+
+[[package]]
+name = "vibrancy-rs"
+version = "0.1.1"
+source = "git+https://github.com/Erizeez/vibrancy-rs?tag=v0.1.1#f1dd6b96c074b11327ed28319d0ad35a938f75dd"
 
 [[package]]
 name = "walkdir"

@@ -28,8 +28,8 @@ spring-rs = { git = "https://github.com/Erizeez/spring-rs.git", tag = "v0.1.0" }
 wgpu = { version = "27.0.1", features = ["noop"] }
 window-vibrancy = "0.8.0"
 winit = "0.30.12"
-vibrancy-rs = { git = "https://github.com/Erizeez/vibrancy-rs", tag = "v0.1.0" }
-squircle-icon-rs = { git = "https://github.com/Erizeez/squircle-icon-rs", tag = "v0.1.13" }
+vibrancy-rs = { git = "https://github.com/Erizeez/vibrancy-rs", tag = "v0.1.1" }
+squircle-icon-rs = { git = "https://github.com/Erizeez/squircle-icon-rs", tag = "v0.1.14" }
 
 [lints]
 workspace = true
