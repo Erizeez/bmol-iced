@@ -1070,10 +1070,15 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
 
-        // 1. Draw Base Sharp Wallpaper (Desktop Wallpaper / TV Bars / SMPTE / Grid / Rainbow)
+        let window_squircle = build_squircle_path(
+            Rectangle::new(Point::ORIGIN, bounds.size()),
+            window_metrics::DEFAULT_CORNER_RADIUS,
+        );
+
+        // 1. Draw Base Sharp Wallpaper (Presets)
         match self.style {
             WallpaperStyle::DesktopTransparent => {
-                // Desktop wallpaper drawn in widget Layer 0
+                // 100% transparent to desktop — no opaque rectangular image drawn!
             }
             WallpaperStyle::AuroraMesh => {
                 let grad = Linear::new(Point::ORIGIN, Point::new(bounds.width, bounds.height))
@@ -1083,8 +1088,7 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
                     .add_stop(0.68, Color::from_rgb(0.98, 0.46, 0.15))
                     .add_stop(0.86, Color::from_rgb(0.95, 0.80, 0.22))
                     .add_stop(1.0, Color::from_rgb(0.12, 0.78, 0.82));
-                let path = Path::rectangle(Point::ORIGIN, bounds.size());
-                frame.fill(&path, grad);
+                frame.fill(&window_squircle, grad);
             }
             WallpaperStyle::SunsetGaze => {
                 let grad = Linear::new(Point::new(bounds.width * 0.15, 0.0), Point::new(bounds.width * 0.85, bounds.height))
@@ -1093,8 +1097,7 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
                     .add_stop(0.60, Color::from_rgb(0.82, 0.22, 0.35))
                     .add_stop(0.82, Color::from_rgb(0.96, 0.52, 0.18))
                     .add_stop(1.0, Color::from_rgb(1.0, 0.82, 0.45));
-                let path = Path::rectangle(Point::ORIGIN, bounds.size());
-                frame.fill(&path, grad);
+                frame.fill(&window_squircle, grad);
             }
             WallpaperStyle::TvColorBars => {
                 let n = 8.0;
@@ -1157,10 +1160,10 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
                 }
             }
             WallpaperStyle::PureWhite => {
-                frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::WHITE);
+                frame.fill(&window_squircle, Color::WHITE);
             }
             WallpaperStyle::PureBlack => {
-                frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::BLACK);
+                frame.fill(&window_squircle, Color::BLACK);
             }
         }
 
@@ -2328,15 +2331,6 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
         .height(Length::Fill);
 
     let mut layers: Vec<Element<'_, Message, Theme, iced_backend::Renderer>> = Vec::new();
-
-    // Layer 0: Real System Wallpaper backdrop (placed in widget stack so it stays strictly underneath canvas meshes)
-    if state.wallpaper == WallpaperStyle::DesktopTransparent {
-        let wallpaper_widget = iced::widget::image(&state.system_wallpaper.handle)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .content_fit(iced::ContentFit::Fill);
-        layers.push(wallpaper_widget.into());
-    }
 
     // Layer 1: Liquid Glass 2D Frosted Backdrop Canvas
     layers.push(backdrop_canvas.into());
