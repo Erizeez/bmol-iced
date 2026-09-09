@@ -87,7 +87,9 @@ impl MenuContentPreset {
     pub const fn menu_size(self) -> (f32, f32) {
         match self {
             Self::FullShowcase => (demo_metrics::MENU_WIDTH, demo_metrics::MENU_HEIGHT),
-            Self::DockReference1To1 => (demo_metrics::DOCK_REF_WIDTH, demo_metrics::DOCK_REF_HEIGHT),
+            Self::DockReference1To1 => {
+                (demo_metrics::DOCK_REF_WIDTH, demo_metrics::DOCK_REF_HEIGHT)
+            }
         }
     }
 
@@ -141,8 +143,7 @@ pub mod demo_metrics {
 
     /// 1:1 macOS Dock reference arrow left anchor offset: 27.0 pt / 154.0 pt ≈ 0.1753.
     /// (Places arrow apex at native macOS Dock menu default 27.0 pt from left card boundary)
-    pub const DOCK_REF_ARROW_OFFSET: f32 =
-        super::DOCK_MENU_ARROW_CENTER_OFFSET / DOCK_REF_WIDTH;
+    pub const DOCK_REF_ARROW_OFFSET: f32 = super::DOCK_MENU_ARROW_CENTER_OFFSET / DOCK_REF_WIDTH;
 
     /// Corner radius of the 1:1 macOS Dock reference menu (strictly 10.0 pt continuous squircle, matching native macOS).
     pub const DOCK_REF_CORNER_RADIUS: f32 = menu_metrics::CONTAINER_CORNER_RADIUS_CLASSIC;
@@ -165,14 +166,8 @@ pub fn build_demo_menu(state: &State) -> ContextMenu<Message> {
                 MenuItem::action("显示所有窗口")
                     .on_press(Message::TriggerAction(MenuAction::QuickLook)),
             )
-            .item(
-                MenuItem::action("隐藏")
-                    .on_press(Message::TriggerAction(MenuAction::Cut)),
-            )
-            .item(
-                MenuItem::action("退出")
-                    .on_press(Message::WindowControl(ControlAction::Close)),
-            );
+            .item(MenuItem::action("隐藏").on_press(Message::TriggerAction(MenuAction::Cut)))
+            .item(MenuItem::action("退出").on_press(Message::WindowControl(ControlAction::Close)));
     }
 
     ContextMenu::new()

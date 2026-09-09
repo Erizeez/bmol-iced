@@ -2,22 +2,16 @@
 
 use std::time::Instant;
 
-use iced::{
-    Point, Size, Subscription, Task, Theme, window,
-};
-use bmol_designs::popover_metrics::{
-    PopoverArrowConfig, PopoverArrowEdge, PopoverArrowPreset,
-};
+use bmol_designs::popover_metrics::{PopoverArrowConfig, PopoverArrowEdge, PopoverArrowPreset};
 use bmol_window_shell::{
     TrafficLightsEvent, WindowChromeConfig, WindowShellController, is_system_dark_mode,
     window_metrics,
 };
-use liquid_glass::{
-    ContextMenu, ControlAction, UiColorScheme, UiPalette, UiTheme,
-};
+use iced::{Point, Size, Subscription, Task, Theme, window};
+use liquid_glass::{ContextMenu, ControlAction, UiColorScheme, UiPalette, UiTheme};
 
 use crate::menu_content::{
-    build_demo_menu, demo_metrics, FloatingAppearance, MenuAction, MenuContentPreset,
+    FloatingAppearance, MenuAction, MenuContentPreset, build_demo_menu, demo_metrics,
 };
 use crate::vibrancy::{BlurPreset, WallpaperStyle};
 
@@ -96,11 +90,7 @@ impl Default for State {
         let is_dark = is_system_dark_mode();
         let config = WindowChromeConfig::unified_header(window_metrics::FUSED_HEADER_HEIGHT);
         let controller = WindowShellController::new(config, is_dark);
-        let scheme = if is_dark {
-            UiColorScheme::Dark
-        } else {
-            UiColorScheme::Light
-        };
+        let scheme = if is_dark { UiColorScheme::Dark } else { UiColorScheme::Light };
         let theme = UiTheme::new(scheme).iced_theme();
         let palette = UiTheme::new(scheme).palette();
 
@@ -142,11 +132,7 @@ impl State {
 
     #[must_use]
     pub fn scheme(&self) -> UiColorScheme {
-        if self.controller.is_dark {
-            UiColorScheme::Dark
-        } else {
-            UiColorScheme::Light
-        }
+        if self.controller.is_dark { UiColorScheme::Dark } else { UiColorScheme::Light }
     }
 
     pub fn rebuild_menus(&mut self) {
@@ -270,10 +256,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 DragTarget::LightCard => state.light_pos,
                 DragTarget::DarkCard => state.dark_pos,
             };
-            let offset = Point::new(
-                state.cursor_pos.x - origin.x,
-                state.cursor_pos.y - origin.y,
-            );
+            let offset = Point::new(state.cursor_pos.x - origin.x, state.cursor_pos.y - origin.y);
             state.active_drag = Some((target, offset));
             state.top_card = target;
             state.last_action = Some(format!(
@@ -297,7 +280,8 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                         DragTarget::LightCard => "浅色模式菜单",
                         DragTarget::DarkCard => "深色模式菜单",
                     },
-                    pos.x, pos.y
+                    pos.x,
+                    pos.y
                 ));
             }
             Task::none()
@@ -390,7 +374,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::SetPopoverArrow(edge) => {
             state.popover_arrow_edge = edge;
-            state.arrow_offset = if state.menu_preset == MenuContentPreset::DockReference1To1 && edge == PopoverArrowEdge::Bottom {
+            state.arrow_offset = if state.menu_preset == MenuContentPreset::DockReference1To1
+                && edge == PopoverArrowEdge::Bottom
+            {
                 demo_metrics::DOCK_REF_ARROW_OFFSET
             } else {
                 0.5
@@ -412,7 +398,8 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 MenuContentPreset::FullShowcase => {
                     state.popover_arrow_edge = PopoverArrowEdge::Bottom;
                     state.arrow_offset = demo_metrics::DOCK_REF_ARROW_OFFSET;
-                    state.last_action = Some("已切换为: 🍎 1:1 原生 macOS Dock 菜单模式 (偏左圆润触角)".into());
+                    state.last_action =
+                        Some("已切换为: 🍎 1:1 原生 macOS Dock 菜单模式 (偏左圆润触角)".into());
                     MenuContentPreset::DockReference1To1
                 }
                 MenuContentPreset::DockReference1To1 => {
@@ -427,19 +414,27 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::CycleArrowPreset => {
             state.arrow_preset = match state.arrow_preset {
                 PopoverArrowPreset::MenuWide => {
-                    state.last_action = Some("已切换触角预设: 🎯 原生 Dock 气泡细触角 (20×7 pt, 细腰紧凑温润)".into());
+                    state.last_action = Some(
+                        "已切换触角预设: 🎯 原生 Dock 气泡细触角 (20×7 pt, 细腰紧凑温润)".into(),
+                    );
                     PopoverArrowPreset::TooltipNarrow
                 }
                 PopoverArrowPreset::TooltipNarrow => {
-                    state.last_action = Some("已切换触角预设: 📐 系统原生 AppKit NSPopover (27.5×13 pt, 标准挑角)".into());
+                    state.last_action = Some(
+                        "已切换触角预设: 📐 系统原生 AppKit NSPopover (27.5×13 pt, 标准挑角)"
+                            .into(),
+                    );
                     PopoverArrowPreset::AppKitStandard
                 }
                 PopoverArrowPreset::AppKitStandard => {
-                    state.last_action = Some("已切换触角预设: 🔹 微型提示指针 (12×5 pt, 超紧凑)".into());
+                    state.last_action =
+                        Some("已切换触角预设: 🔹 微型提示指针 (12×5 pt, 超紧凑)".into());
                     PopoverArrowPreset::SubtleCompact
                 }
                 PopoverArrowPreset::SubtleCompact => {
-                    state.last_action = Some("已切换触角预设: 🍎 原生 macOS 菜单触角 (21×9 pt, 柔和高阶喇叭口)".into());
+                    state.last_action = Some(
+                        "已切换触角预设: 🍎 原生 macOS 菜单触角 (21×9 pt, 柔和高阶喇叭口)".into(),
+                    );
                     PopoverArrowPreset::MenuWide
                 }
             };
@@ -453,9 +448,7 @@ pub fn subscription(state: &State) -> Subscription<Message> {
         window::open_events().map(Message::WindowOpened),
         window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
         iced::event::listen_with(|event, _status, id| match event {
-            iced::Event::Window(w_event) => {
-                Some(Message::WindowEvent((id, w_event)))
-            }
+            iced::Event::Window(w_event) => Some(Message::WindowEvent((id, w_event))),
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)) => {
                 Some(Message::RightClicked)
             }

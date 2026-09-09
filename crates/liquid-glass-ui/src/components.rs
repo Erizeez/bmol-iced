@@ -609,12 +609,9 @@ where
     Message: 'a,
     R: CoreRenderer + GlassForegroundRenderer + 'a,
 {
-    container(
-        column(items.into_iter().map(glass_foreground).collect::<Vec<_>>())
-            .spacing(2),
-    )
-    .width(Length::Fill)
-    .into()
+    container(column(items.into_iter().map(glass_foreground).collect::<Vec<_>>()).spacing(2))
+        .width(Length::Fill)
+        .into()
 }
 
 /// Standard spacing gap between sidebar groups.
@@ -635,9 +632,7 @@ where
     text(title)
         .size(font::size::CAPTION)
         .font(font::ui_font(iced::font::Weight::Bold))
-        .style(|theme: &Theme| text::Style {
-            color: Some(palette(theme).text_secondary),
-        })
+        .style(|theme: &Theme| text::Style { color: Some(palette(theme).text_secondary) })
         .into()
 }
 

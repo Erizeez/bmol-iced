@@ -1,6 +1,10 @@
 #[path = "../iced_backend.rs"]
 mod iced_backend;
 
+use bmol_window_shell::{
+    ShellEvent, TrafficLightsEvent, WindowChromeConfig, WindowShellController, window_metrics,
+    window_rim,
+};
 use iced::{
     Color, Element, Length, Subscription, Task, Theme,
     widget::{button, column, container, row, scrollable, space, stack, text},
@@ -9,10 +13,6 @@ use iced_backend::{
     FUSED_TOP_BAR_HEIGHT, Renderer, SIDEBAR_CONTENT_INSET, SIDEBAR_CONTENT_WIDTH,
     SIDEBAR_LIST_BOTTOM_INSET, SIDEBAR_SCROLLBAR_BOTTOM_INSET, SIDEBAR_SEARCH_HEIGHT,
     SIDEBAR_SEARCH_TOP, SIDEBAR_WIDTH, TOP_BAR_BUTTON_SIZE, WINDOW_CONTROL_NATIVE_IDS,
-};
-use bmol_window_shell::{
-    ShellEvent, TrafficLightsEvent, WindowChromeConfig, WindowShellController, window_metrics,
-    window_rim,
 };
 use liquid_glass::{
     GlassAccessibility, GlassId, Rect, ScrollbarConfig, UiColorScheme, UiIcon, UiTheme,
@@ -37,11 +37,7 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         let initial_dark = bmol_window_shell::is_system_dark_mode();
-        let initial_scheme = if initial_dark {
-            UiColorScheme::Dark
-        } else {
-            UiColorScheme::Light
-        };
+        let initial_scheme = if initial_dark { UiColorScheme::Dark } else { UiColorScheme::Light };
         let config = WindowChromeConfig::unified_header(window_metrics::FUSED_HEADER_HEIGHT);
         let controller = WindowShellController::new(config, initial_dark);
         Self {
@@ -217,27 +213,25 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             .discard();
         }
         Message::WindowReady(None) => {}
-        Message::WindowEvent((id, event)) => {
-            match event {
-                iced::window::Event::Opened { .. } => {
-                    if state.controller.window_id.is_none() {
-                        return update(state, Message::WindowReady(Some(id)));
-                    }
+        Message::WindowEvent((id, event)) => match event {
+            iced::window::Event::Opened { .. } => {
+                if state.controller.window_id.is_none() {
+                    return update(state, Message::WindowReady(Some(id)));
                 }
-                _ => {
-                    if state.controller.window_id == Some(id) {
-                        if let Some(shell_event) = state.controller.handle_window_event(&event) {
-                            match shell_event {
-                                ShellEvent::Focused => iced_backend::set_window_inactive(false),
-                                ShellEvent::Unfocused => iced_backend::set_window_inactive(true),
-                                ShellEvent::CloseRequested => task = iced::window::close(id),
-                                _ => {}
-                            }
+            }
+            _ => {
+                if state.controller.window_id == Some(id) {
+                    if let Some(shell_event) = state.controller.handle_window_event(&event) {
+                        match shell_event {
+                            ShellEvent::Focused => iced_backend::set_window_inactive(false),
+                            ShellEvent::Unfocused => iced_backend::set_window_inactive(true),
+                            ShellEvent::CloseRequested => task = iced::window::close(id),
+                            _ => {}
                         }
                     }
                 }
             }
-        }
+        },
         Message::ResizeWindow(direction) => {
             if let Some(id) = state.controller.window_id {
                 task = iced::window::drag_resize(id, direction);
@@ -282,11 +276,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::SystemThemeChanged(mode) => {
             let event = state.controller.handle_system_theme(mode);
             if let ShellEvent::ThemeChanged { is_dark } = event {
-                state.system_scheme = if is_dark {
-                    UiColorScheme::Dark
-                } else {
-                    UiColorScheme::Light
-                };
+                state.system_scheme =
+                    if is_dark { UiColorScheme::Dark } else { UiColorScheme::Light };
             }
         }
     }
@@ -295,7 +286,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         let is_dark = scheme == UiColorScheme::Dark;
         state.controller.set_dark_mode(is_dark);
         let rim_insets: f32 = window_rim::rim_thickness(is_dark);
-        let symmetric_margin = (FUSED_TOP_BAR_HEIGHT - bmol_designs::traffic_lights::DIAMETER) * 0.5;
+        let symmetric_margin =
+            (FUSED_TOP_BAR_HEIGHT - bmol_designs::traffic_lights::DIAMETER) * 0.5;
         let origin_x = rim_insets + symmetric_margin;
         let origin_y = rim_insets + symmetric_margin;
         iced_backend::set_window_control_origin(origin_x, origin_y);
@@ -441,32 +433,30 @@ fn view(state: &State) -> AppElement<'_> {
     iced_backend::set_window_control_origin(origin_x, origin_y);
     bmol_window_shell::set_glass_passthrough(true);
 
-    let traffic_lights = components::glass_overlay(
-        state.controller.traffic_lights_view(Message::TrafficLights),
-    );
+    let traffic_lights =
+        components::glass_overlay(state.controller.traffic_lights_view(Message::TrafficLights));
 
-    let draggable_sidebar_top = container(
-        state.controller.loyal_drag_bar(
-            FUSED_TOP_BAR_HEIGHT,
-            traffic_lights,
-            Message::DragWindow,
-            Some(Message::ToggleMaximize),
-        )
-    )
+    let draggable_sidebar_top = container(state.controller.loyal_drag_bar(
+        FUSED_TOP_BAR_HEIGHT,
+        traffic_lights,
+        Message::DragWindow,
+        Some(Message::ToggleMaximize),
+    ))
     .width(Length::Fixed(SIDEBAR_WIDTH))
     .height(Length::Fixed(FUSED_TOP_BAR_HEIGHT));
 
-    let sidebar: AppElement<'_> = container(stack![sidebar_scroll, search_overlay, draggable_sidebar_top])
-        .width(Length::Fixed(SIDEBAR_WIDTH))
-        .height(Length::Fill)
-        .padding(iced::Padding {
-            top: 0.0,
-            right: 0.0,
-            bottom: SIDEBAR_LIST_BOTTOM_INSET,
-            left: 0.0,
-        })
-        .style(components::transparent_surface)
-        .into();
+    let sidebar: AppElement<'_> =
+        container(stack![sidebar_scroll, search_overlay, draggable_sidebar_top])
+            .width(Length::Fixed(SIDEBAR_WIDTH))
+            .height(Length::Fill)
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: SIDEBAR_LIST_BOTTOM_INSET,
+                left: 0.0,
+            })
+            .style(components::transparent_surface)
+            .into();
 
     let toolbar_text_color = match state.color_scheme() {
         UiColorScheme::Light => Color::from_rgb8(76, 76, 76),
@@ -512,14 +502,12 @@ fn view(state: &State) -> AppElement<'_> {
     );
 
     let toolbar_content = stack![toolbar, toolbar_title];
-    let draggable_toolbar = container(
-        liquid_glass::loyal_drag_bar(
-            FUSED_TOP_BAR_HEIGHT,
-            toolbar_content,
-            Message::DragWindow,
-            Some(Message::ToggleMaximize),
-        )
-    )
+    let draggable_toolbar = container(liquid_glass::loyal_drag_bar(
+        FUSED_TOP_BAR_HEIGHT,
+        toolbar_content,
+        Message::DragWindow,
+        Some(Message::ToggleMaximize),
+    ))
     .width(Length::Fill)
     .height(Length::Fixed(FUSED_TOP_BAR_HEIGHT));
 
@@ -562,10 +550,7 @@ fn sidebar_scrollbar_top() -> f32 {
 
 fn sidebar_group(sections: &[Section], active: Section) -> AppElement<'static> {
     components::sidebar_group(
-        sections
-            .iter()
-            .copied()
-            .map(|section| sidebar_entry(section, active)),
+        sections.iter().copied().map(|section| sidebar_entry(section, active)),
     )
 }
 
@@ -1014,13 +999,10 @@ fn main() -> iced::Result {
 
 #[cfg(test)]
 mod sidebar_scrollbar_tests {
-    use std::time::Instant;
-    use iced::{Point, Size};
-    use liquid_glass::ui::{
-        SpringScrollState, SpringScrollView,
-        scroll_view::scrollbar_opacity,
-    };
     use super::*;
+    use iced::{Point, Size};
+    use liquid_glass::ui::{SpringScrollState, SpringScrollView, scroll_view::scrollbar_opacity};
+    use std::time::Instant;
 
     const TEST_SLOT_WIDTH: f32 = 15.0;
 
@@ -1089,9 +1071,7 @@ mod sidebar_scrollbar_tests {
 
         assert_eq!(
             top.x,
-            TEST_SLOT_WIDTH
-                - SIDEBAR_SCROLLBAR_EDGE_INSET
-                - SIDEBAR_SCROLLBAR_THUMB_WIDTH
+            TEST_SLOT_WIDTH - SIDEBAR_SCROLLBAR_EDGE_INSET - SIDEBAR_SCROLLBAR_THUMB_WIDTH
         );
         assert_eq!(top.width, SIDEBAR_SCROLLBAR_THUMB_WIDTH);
         assert_eq!(top.y, sidebar_scrollbar_top());
@@ -1137,17 +1117,36 @@ mod sidebar_scrollbar_tests {
     #[test]
     fn scrollbar_is_hidden_until_the_list_moves() {
         let config = sidebar_config();
-        assert_eq!(scrollbar_opacity(None, Instant::now(), config.hold_duration, config.fade_duration), 0.0);
+        assert_eq!(
+            scrollbar_opacity(None, Instant::now(), config.hold_duration, config.fade_duration),
+            0.0
+        );
     }
 
     #[test]
     fn scrollbar_holds_then_fades_out() {
         let started = Instant::now();
         let config = sidebar_config();
-        assert_eq!(scrollbar_opacity(Some(started), started, config.hold_duration, config.fade_duration), 1.0);
-        assert_eq!(scrollbar_opacity(Some(started), started + config.hold_duration, config.hold_duration, config.fade_duration), 1.0);
+        assert_eq!(
+            scrollbar_opacity(Some(started), started, config.hold_duration, config.fade_duration),
+            1.0
+        );
+        assert_eq!(
+            scrollbar_opacity(
+                Some(started),
+                started + config.hold_duration,
+                config.hold_duration,
+                config.fade_duration
+            ),
+            1.0
+        );
         let halfway = started + config.hold_duration + config.fade_duration / 2;
-        assert!((scrollbar_opacity(Some(started), halfway, config.hold_duration, config.fade_duration) - 0.5).abs() < 0.01);
+        assert!(
+            (scrollbar_opacity(Some(started), halfway, config.hold_duration, config.fade_duration)
+                - 0.5)
+                .abs()
+                < 0.01
+        );
         assert_eq!(
             scrollbar_opacity(
                 Some(started),
@@ -1234,4 +1233,3 @@ mod window_and_traffic_lights_tests {
         assert_eq!(state.controller.traffic_lights.hover_target, 0.0);
     }
 }
-

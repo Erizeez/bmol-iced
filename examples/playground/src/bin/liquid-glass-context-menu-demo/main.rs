@@ -39,11 +39,7 @@ use bmol_window_shell::window_metrics;
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Rectangle, Size, Theme,
     font::Weight,
-    widget::{
-        button,
-        canvas::Canvas,
-        column, container, row, space, stack, text,
-    },
+    widget::{button, canvas::Canvas, column, container, row, space, stack, text},
     window,
 };
 use liquid_glass::{UiColorScheme, ui::font};
@@ -63,11 +59,17 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
 
     let (card_w, card_h) = state.menu_preset.menu_size();
     let (light_title, light_sub) = match state.menu_preset {
-        MenuContentPreset::DockReference1To1 => ("☀️ 1:1 Dock 菜单 (浅色)", "参考截图 1:1 还原: 154×117 pt"),
-        MenuContentPreset::FullShowcase => ("☀️ Light Mode Menu", "校准值: 白255 | 黑185 (α=72.5%)"),
+        MenuContentPreset::DockReference1To1 => {
+            ("☀️ 1:1 Dock 菜单 (浅色)", "参考截图 1:1 还原: 154×117 pt")
+        }
+        MenuContentPreset::FullShowcase => {
+            ("☀️ Light Mode Menu", "校准值: 白255 | 黑185 (α=72.5%)")
+        }
     };
     let (dark_title, dark_sub) = match state.menu_preset {
-        MenuContentPreset::DockReference1To1 => ("🌙 1:1 Dock 菜单 (深色)", "参考截图 1:1 还原: 154×117 pt"),
+        MenuContentPreset::DockReference1To1 => {
+            ("🌙 1:1 Dock 菜单 (深色)", "参考截图 1:1 还原: 154×117 pt")
+        }
         MenuContentPreset::FullShowcase => ("🌙 Dark Mode Menu", "校准值: 白86 | 黑33 (α=79.2%)"),
     };
 
@@ -188,13 +190,9 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-    let wallpaper_layer = container(wallpaper_canvas)
-        .width(Length::Fill)
-        .height(Length::Fill);
+    let wallpaper_layer = container(wallpaper_canvas).width(Length::Fill).height(Length::Fill);
 
-    let stage_stack = stack![wallpaper_layer, cards_stack]
-        .width(Length::Fill)
-        .height(Length::Fill);
+    let stage_stack = stack![wallpaper_layer, cards_stack].width(Length::Fill).height(Length::Fill);
 
     // Calibration guide and reset toolbar
     let guide_bar = row![
@@ -217,12 +215,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
             .font(font::ui_font(Weight::Medium))
             .color(palette.text_primary),
         )
-        .padding(Padding {
-            top: 3.0,
-            right: 8.0,
-            bottom: 3.0,
-            left: 8.0,
-        })
+        .padding(Padding { top: 3.0, right: 8.0, bottom: 3.0, left: 8.0 })
         .style(move |_theme, _status| button::Style {
             background: Some(Background::Color(if is_dark {
                 Color::from_rgba(1.0, 1.0, 1.0, 0.10)
@@ -239,12 +232,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
                 .font(font::ui_font(Weight::Medium))
                 .color(palette.text_primary)
         )
-        .padding(Padding {
-            top: 3.0,
-            right: 8.0,
-            bottom: 3.0,
-            left: 8.0,
-        })
+        .padding(Padding { top: 3.0, right: 8.0, bottom: 3.0, left: 8.0 })
         .style(move |_theme, _status| button::Style {
             background: Some(Background::Color(if is_dark {
                 Color::from_rgba(1.0, 1.0, 1.0, 0.10)
@@ -258,16 +246,10 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
     ]
     .spacing(8.0)
     .align_y(Alignment::Center)
-    .padding(Padding {
-        top: 4.0,
-        right: 14.0,
-        bottom: 4.0,
-        left: 14.0,
-    });
+    .padding(Padding { top: 4.0, right: 14.0, bottom: 4.0, left: 14.0 });
 
-    let guide_container = container(guide_bar)
-        .width(Length::Fill)
-        .style(move |_theme| container::Style {
+    let guide_container =
+        container(guide_bar).width(Length::Fill).style(move |_theme| container::Style {
             background: Some(Background::Color(if is_dark {
                 Color::from_rgba(0.10, 0.10, 0.14, 0.85)
             } else {
@@ -298,12 +280,9 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
 
     // 3. Optional floating context menu at cursor
     if let Some(pos) = state.floating_menu {
-        let dismiss_backdrop = iced::widget::mouse_area(
-            container(space())
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .on_press(Message::DismissFloatingMenu);
+        let dismiss_backdrop =
+            iced::widget::mouse_area(container(space()).width(Length::Fill).height(Length::Fill))
+                .on_press(Message::DismissFloatingMenu);
 
         let floating_menu_widget = state.floating_menu_cached.view::<iced::Renderer>(theme);
 
@@ -321,9 +300,8 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced::Renderer> {
         .width(Length::Fill)
         .height(Length::Fill);
 
-        let overlay_stack = stack![dismiss_backdrop, positioned_menu]
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let overlay_stack =
+            stack![dismiss_backdrop, positioned_menu].width(Length::Fill).height(Length::Fill);
 
         layers.push(overlay_stack.into());
     }
@@ -392,12 +370,12 @@ mod tests {
         menu_metrics,
         popover_metrics::{PopoverArrowConfig, PopoverArrowEdge, PopoverArrowPreset},
     };
+    use iced::{Point, Size, window};
     use liquid_glass::{
         MenuItem,
-        geometry::{squircle_path_commands, SquircleParams, APPLE_CORNER_SMOOTHING},
+        geometry::{APPLE_CORNER_SMOOTHING, SquircleParams, squircle_path_commands},
     };
     use vibrancy_rs::KawasePassPlan;
-    use iced::{Point, Size, window};
 
     #[test]
     fn test_initial_state_defaults() {
@@ -447,16 +425,10 @@ mod tests {
         assert_eq!(state.controller.traffic_lights.hover_target, 0.0);
 
         // 4. Focus/Unfocus handling
-        let _ = update(
-            &mut state,
-            Message::WindowEvent((test_id, window::Event::Unfocused)),
-        );
+        let _ = update(&mut state, Message::WindowEvent((test_id, window::Event::Unfocused)));
         assert!(!state.controller.is_focused);
 
-        let _ = update(
-            &mut state,
-            Message::WindowEvent((test_id, window::Event::Focused)),
-        );
+        let _ = update(&mut state, Message::WindowEvent((test_id, window::Event::Focused)));
         assert!(state.controller.is_focused);
     }
 
@@ -588,25 +560,36 @@ mod tests {
         let tv_bars: &[(&str, [u8; 3], [u8; 3], [u8; 3])] = &[
             // (Bar, Background RGB, Expected Dark Mode RGB, Expected Light Mode RGB)
             ("Pure White", [255, 255, 255], [86, 86, 86], [255, 255, 255]),
-            ("Yellow",     [255, 255,   0], [86, 86, 33], [255, 255, 185]),
-            ("Cyan",       [  0, 255, 255], [33, 86, 86], [185, 255, 255]),
-            ("Green",      [  0, 255,   0], [33, 86, 33], [185, 255, 185]),
-            ("Magenta",    [255,   0, 255], [86, 33, 86], [255, 185, 255]),
-            ("Red",        [255,   0,   0], [86, 33, 33], [255, 185, 185]),
-            ("Blue",       [  0,   0, 255], [33, 33, 86], [185, 185, 255]),
-            ("Pure Black", [  0,   0,   0], [33, 33, 33], [185, 185, 185]),
+            ("Yellow", [255, 255, 0], [86, 86, 33], [255, 255, 185]),
+            ("Cyan", [0, 255, 255], [33, 86, 86], [185, 255, 255]),
+            ("Green", [0, 255, 0], [33, 86, 33], [185, 255, 185]),
+            ("Magenta", [255, 0, 255], [86, 33, 86], [255, 185, 255]),
+            ("Red", [255, 0, 0], [86, 33, 33], [255, 185, 185]),
+            ("Blue", [0, 0, 255], [33, 33, 86], [185, 185, 255]),
+            ("Pure Black", [0, 0, 0], [33, 33, 33], [185, 185, 185]),
         ];
 
         for &(name, bg, exp_dark, exp_light) in tv_bars {
-            let calc_dark_r = (dark_r * 255.0 * dark_a + f32::from(bg[0]) * (1.0 - dark_a)).round() as u8;
-            let calc_dark_g = (dark_r * 255.0 * dark_a + f32::from(bg[1]) * (1.0 - dark_a)).round() as u8;
-            let calc_dark_b = (dark_r * 255.0 * dark_a + f32::from(bg[2]) * (1.0 - dark_a)).round() as u8;
+            let calc_dark_r =
+                (dark_r * 255.0 * dark_a + f32::from(bg[0]) * (1.0 - dark_a)).round() as u8;
+            let calc_dark_g =
+                (dark_r * 255.0 * dark_a + f32::from(bg[1]) * (1.0 - dark_a)).round() as u8;
+            let calc_dark_b =
+                (dark_r * 255.0 * dark_a + f32::from(bg[2]) * (1.0 - dark_a)).round() as u8;
             assert_eq!([calc_dark_r, calc_dark_g, calc_dark_b], exp_dark, "Dark mode on {}", name);
 
-            let calc_light_r = (light_r * 255.0 * light_a + f32::from(bg[0]) * (1.0 - light_a)).round() as u8;
-            let calc_light_g = (light_r * 255.0 * light_a + f32::from(bg[1]) * (1.0 - light_a)).round() as u8;
-            let calc_light_b = (light_r * 255.0 * light_a + f32::from(bg[2]) * (1.0 - light_a)).round() as u8;
-            assert_eq!([calc_light_r, calc_light_g, calc_light_b], exp_light, "Light mode on {}", name);
+            let calc_light_r =
+                (light_r * 255.0 * light_a + f32::from(bg[0]) * (1.0 - light_a)).round() as u8;
+            let calc_light_g =
+                (light_r * 255.0 * light_a + f32::from(bg[1]) * (1.0 - light_a)).round() as u8;
+            let calc_light_b =
+                (light_r * 255.0 * light_a + f32::from(bg[2]) * (1.0 - light_a)).round() as u8;
+            assert_eq!(
+                [calc_light_r, calc_light_g, calc_light_b],
+                exp_light,
+                "Light mode on {}",
+                name
+            );
         }
     }
 
@@ -682,7 +665,8 @@ mod tests {
         assert_eq!(dock_separators, 1);
 
         let dock_items_height = dock_actions as f32 * menu_metrics::ITEM_HEIGHT;
-        let dock_separators_height = dock_separators as f32 * (menu_metrics::SEPARATOR_HEIGHT + menu_metrics::SEPARATOR_MARGIN_V * 2.0);
+        let dock_separators_height = dock_separators as f32
+            * (menu_metrics::SEPARATOR_HEIGHT + menu_metrics::SEPARATOR_MARGIN_V * 2.0);
         let dock_gaps = (items_dock.len() - 1) as f32 * 1.0;
         let dock_padding = menu_metrics::CONTAINER_PADDING * 2.0;
         let dock_total = dock_items_height + dock_separators_height + dock_gaps + dock_padding;
@@ -717,10 +701,15 @@ mod tests {
 
         let expected_sections = section_count as f32 * menu_metrics::SECTION_HEADER_HEIGHT;
         let expected_items = action_count as f32 * menu_metrics::ITEM_HEIGHT;
-        let expected_separators = separator_count as f32 * (menu_metrics::SEPARATOR_HEIGHT + menu_metrics::SEPARATOR_MARGIN_V * 2.0);
+        let expected_separators = separator_count as f32
+            * (menu_metrics::SEPARATOR_HEIGHT + menu_metrics::SEPARATOR_MARGIN_V * 2.0);
         let expected_gaps = (items_full.len() - 1) as f32 * 1.0;
         let container_padding = menu_metrics::CONTAINER_PADDING * 2.0;
-        let total_exact = expected_sections + expected_items + expected_separators + expected_gaps + container_padding;
+        let total_exact = expected_sections
+            + expected_items
+            + expected_separators
+            + expected_gaps
+            + container_padding;
 
         assert_eq!(
             total_exact,
@@ -799,8 +788,8 @@ mod tests {
         let r = demo_metrics::MENU_CORNER_RADIUS;
 
         // 1. Verify SquircleParams generates non-empty Apple continuous commands
-        let params = SquircleParams::new(rect.width, rect.height, r)
-            .with_smoothing(APPLE_CORNER_SMOOTHING);
+        let params =
+            SquircleParams::new(rect.width, rect.height, r).with_smoothing(APPLE_CORNER_SMOOTHING);
         let commands = squircle_path_commands(&params);
         assert!(!commands.is_empty(), "Squircle commands must not be empty");
 

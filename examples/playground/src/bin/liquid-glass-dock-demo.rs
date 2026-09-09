@@ -26,6 +26,12 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use bmol_designs::{dock_metrics, menu_metrics};
+use bmol_window_shell::{
+    ShellEvent, TrafficLightsEvent, WindowChromeConfig, WindowShellController, app_icon_png,
+    is_system_dark_mode, window_metrics,
+};
+use iced::advanced::graphics::gradient::Linear;
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Point, Radians, Rectangle,
     Shadow, Size, Subscription, Task, Theme, Vector,
@@ -38,22 +44,16 @@ use iced::{
     },
     window,
 };
-use bmol_designs::{dock_metrics, menu_metrics};
-use bmol_window_shell::{
-    ShellEvent, TrafficLightsEvent, WindowChromeConfig, WindowShellController, app_icon_png,
-    is_system_dark_mode, window_metrics,
-};
 use liquid_glass::{
-    ContextMenu, CornerCurve, GlassChrome, GlassContainer, GlassId,
-    GlassRole, GlassShape, MenuItem, Rect, UiColorScheme, UiIcon, UiTheme,
+    ContextMenu, CornerCurve, GlassChrome, GlassContainer, GlassId, GlassRole, GlassShape,
+    MenuItem, Rect, UiColorScheme, UiIcon, UiTheme,
     geometry::{
-        squircle_alpha, squircle_path_commands, PathCommand,
-        Point as SquirclePoint, SquircleParams, APPLE_CORNER_SMOOTHING,
+        APPLE_CORNER_SMOOTHING, PathCommand, Point as SquirclePoint, SquircleParams,
+        squircle_alpha, squircle_path_commands,
     },
     ui::font,
 };
-use iced::advanced::graphics::gradient::Linear;
-use vibrancy_rs::{ign_dither_offset, KawasePassPlan, VibrancyConfig};
+use vibrancy_rs::{KawasePassPlan, VibrancyConfig, ign_dither_offset};
 #[cfg(test)]
 use vibrancy_rs::{MaterialKind, VibrancyAppearance};
 
@@ -281,7 +281,11 @@ fn create_procedural_redwood_buffer(width: u32, height: u32) -> WallpaperBuffer 
 
             // 1. Golden Tyndall sunbeam + mist atmosphere
             let sky_beam = ((u * 6.28 - 1.2).sin() * 0.5 + 0.5).powf(2.5) * (1.0 - v * 0.6);
-            let sky_grad = lerp_rgb([0.16, 0.26, 0.38], [0.88, 0.76, 0.52], sky_beam * 0.75 + (1.0 - v).powf(1.6) * 0.25);
+            let sky_grad = lerp_rgb(
+                [0.16, 0.26, 0.38],
+                [0.88, 0.76, 0.52],
+                sky_beam * 0.75 + (1.0 - v).powf(1.6) * 0.25,
+            );
 
             // 2. Redwood tree trunks (strong vertical silhouette contrast)
             let trunk1 = ((u * 18.0).sin() * 0.5 + 0.5).powf(6.0) * (v * 0.9 + 0.1);
@@ -441,11 +445,7 @@ impl WallpaperStyle {
 #[inline]
 fn lerp_rgb(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     let t = t.clamp(0.0, 1.0);
-    [
-        a[0] + (b[0] - a[0]) * t,
-        a[1] + (b[1] - a[1]) * t,
-        a[2] + (b[2] - a[2]) * t,
-    ]
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
 }
 
 /// Computes the unblurred base wallpaper RGB color at coordinate `(x, y)`.
@@ -588,13 +588,17 @@ fn sample_sharp_wallpaper(
     }
 }
 
-
 /// Performs a true 2D Separable Gaussian Convolution on an RGB float buffer.
 ///
 /// Executes two 1D passes (Horizontal then Vertical), with time complexity O(2 * K * W * H),
 /// completely eliminating high-frequency textures (pebbles, foam, sharp edges)
 /// in strict accordance with physical light diffusion.
-pub fn perform_separable_gaussian_blur(src: &[[f32; 3]], w: usize, h: usize, radius: f32) -> Vec<[f32; 3]> {
+pub fn perform_separable_gaussian_blur(
+    src: &[[f32; 3]],
+    w: usize,
+    h: usize,
+    radius: f32,
+) -> Vec<[f32; 3]> {
     if radius <= 0.5 {
         return src.to_vec();
     }
@@ -816,42 +820,21 @@ impl DockApp {
     #[must_use]
     pub const fn gradient_colors(self) -> (Color, Color) {
         match self {
-            Self::Finder => (
-                Color::from_rgb(0.24, 0.65, 0.98),
-                Color::from_rgb(0.10, 0.42, 0.88),
-            ),
-            Self::Safari => (
-                Color::from_rgb(0.18, 0.70, 0.98),
-                Color::from_rgb(0.06, 0.45, 0.92),
-            ),
-            Self::Messages => (
-                Color::from_rgb(0.34, 0.86, 0.42),
-                Color::from_rgb(0.15, 0.72, 0.28),
-            ),
-            Self::Mail => (
-                Color::from_rgb(0.22, 0.72, 0.98),
-                Color::from_rgb(0.06, 0.52, 0.92),
-            ),
-            Self::Music => (
-                Color::from_rgb(0.98, 0.26, 0.42),
-                Color::from_rgb(0.90, 0.12, 0.28),
-            ),
-            Self::Photos => (
-                Color::from_rgb(1.0, 1.0, 1.0),
-                Color::from_rgb(0.92, 0.93, 0.96),
-            ),
-            Self::Terminal => (
-                Color::from_rgb(0.20, 0.21, 0.24),
-                Color::from_rgb(0.08, 0.08, 0.10),
-            ),
-            Self::Settings => (
-                Color::from_rgb(0.70, 0.72, 0.76),
-                Color::from_rgb(0.48, 0.50, 0.55),
-            ),
-            Self::Trash => (
-                Color::from_rgb(0.56, 0.58, 0.62),
-                Color::from_rgb(0.38, 0.40, 0.45),
-            ),
+            Self::Finder => (Color::from_rgb(0.24, 0.65, 0.98), Color::from_rgb(0.10, 0.42, 0.88)),
+            Self::Safari => (Color::from_rgb(0.18, 0.70, 0.98), Color::from_rgb(0.06, 0.45, 0.92)),
+            Self::Messages => {
+                (Color::from_rgb(0.34, 0.86, 0.42), Color::from_rgb(0.15, 0.72, 0.28))
+            }
+            Self::Mail => (Color::from_rgb(0.22, 0.72, 0.98), Color::from_rgb(0.06, 0.52, 0.92)),
+            Self::Music => (Color::from_rgb(0.98, 0.26, 0.42), Color::from_rgb(0.90, 0.12, 0.28)),
+            Self::Photos => (Color::from_rgb(1.0, 1.0, 1.0), Color::from_rgb(0.92, 0.93, 0.96)),
+            Self::Terminal => {
+                (Color::from_rgb(0.20, 0.21, 0.24), Color::from_rgb(0.08, 0.08, 0.10))
+            }
+            Self::Settings => {
+                (Color::from_rgb(0.70, 0.72, 0.76), Color::from_rgb(0.48, 0.50, 0.55))
+            }
+            Self::Trash => (Color::from_rgb(0.56, 0.58, 0.62), Color::from_rgb(0.38, 0.40, 0.45)),
         }
     }
 
@@ -917,12 +900,7 @@ impl LayoutMetrics {
 
         let dock_y = (window_size.height - status_h - 16.0 - dock_h).max(header_h + 120.0);
         let dock_x = (window_size.width - dock_w) * 0.5;
-        let dock_rect = Rectangle {
-            x: dock_x,
-            y: dock_y,
-            width: dock_w,
-            height: dock_h,
-        };
+        let dock_rect = Rectangle { x: dock_x, y: dock_y, width: dock_w, height: dock_h };
 
         // 3. Symmetrically Padded 9 Icon Squircles
         let start_x = dock_x + dock_padding;
@@ -938,12 +916,7 @@ impl LayoutMetrics {
             let x = start_x + i as f32 * (base_icon_size + icon_gap) - offset_x;
             let y = base_y - offset_y;
 
-            icon_rects[i] = Rectangle {
-                x,
-                y,
-                width: size,
-                height: size,
-            };
+            icon_rects[i] = Rectangle { x, y, width: size, height: size };
         }
 
         Self {
@@ -1107,19 +1080,28 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Wallpa
                 frame.fill(&window_squircle, grad);
             }
             WallpaperStyle::SunsetGaze => {
-                let grad = Linear::new(Point::new(bounds.width * 0.15, 0.0), Point::new(bounds.width * 0.85, bounds.height))
-                    .add_stop(0.0, Color::from_rgb(0.06, 0.10, 0.25))
-                    .add_stop(0.30, Color::from_rgb(0.35, 0.12, 0.42))
-                    .add_stop(0.60, Color::from_rgb(0.82, 0.22, 0.35))
-                    .add_stop(0.82, Color::from_rgb(0.96, 0.52, 0.18))
-                    .add_stop(1.0, Color::from_rgb(1.0, 0.82, 0.45));
+                let grad = Linear::new(
+                    Point::new(bounds.width * 0.15, 0.0),
+                    Point::new(bounds.width * 0.85, bounds.height),
+                )
+                .add_stop(0.0, Color::from_rgb(0.06, 0.10, 0.25))
+                .add_stop(0.30, Color::from_rgb(0.35, 0.12, 0.42))
+                .add_stop(0.60, Color::from_rgb(0.82, 0.22, 0.35))
+                .add_stop(0.82, Color::from_rgb(0.96, 0.52, 0.18))
+                .add_stop(1.0, Color::from_rgb(1.0, 0.82, 0.45));
                 frame.fill(&window_squircle, grad);
             }
             WallpaperStyle::TvColorBars => {
                 let n = 8.0;
                 let bar_w = bounds.width / n;
                 for i in 0..8 {
-                    let c = sample_sharp_wallpaper(self.style, (i as f32 + 0.5) * bar_w, 0.0, bounds.size(), self.system_wallpaper.as_deref());
+                    let c = sample_sharp_wallpaper(
+                        self.style,
+                        (i as f32 + 0.5) * bar_w,
+                        0.0,
+                        bounds.size(),
+                        self.system_wallpaper.as_deref(),
+                    );
                     frame.fill_rectangle(
                         Point::new(i as f32 * bar_w, 0.0),
                         Size::new(bar_w + 1.0, bounds.height),
@@ -1134,7 +1116,13 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Wallpa
                 let n_top = 7.0;
                 let bar_w_top = bounds.width / n_top;
                 for i in 0..7 {
-                    let c = sample_sharp_wallpaper(self.style, (i as f32 + 0.5) * bar_w_top, 10.0, bounds.size(), self.system_wallpaper.as_deref());
+                    let c = sample_sharp_wallpaper(
+                        self.style,
+                        (i as f32 + 0.5) * bar_w_top,
+                        10.0,
+                        bounds.size(),
+                        self.system_wallpaper.as_deref(),
+                    );
                     frame.fill_rectangle(
                         Point::new(i as f32 * bar_w_top, 0.0),
                         Size::new(bar_w_top + 1.0, top_h),
@@ -1145,7 +1133,13 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Wallpa
                 let n_bot = 8.0;
                 let bar_w_bot = bounds.width / n_bot;
                 for i in 0..8 {
-                    let c = sample_sharp_wallpaper(self.style, (i as f32 + 0.5) * bar_w_bot, top_h + 10.0, bounds.size(), self.system_wallpaper.as_deref());
+                    let c = sample_sharp_wallpaper(
+                        self.style,
+                        (i as f32 + 0.5) * bar_w_bot,
+                        top_h + 10.0,
+                        bounds.size(),
+                        self.system_wallpaper.as_deref(),
+                    );
                     frame.fill_rectangle(
                         Point::new(i as f32 * bar_w_bot, top_h),
                         Size::new(bar_w_bot + 1.0, bot_h),
@@ -1184,7 +1178,9 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Wallpa
         }
 
         // 2. Alignment Calibration Grid Lines
-        if self.show_grid && !matches!(self.style, WallpaperStyle::PureWhite | WallpaperStyle::PureBlack) {
+        if self.show_grid
+            && !matches!(self.style, WallpaperStyle::PureWhite | WallpaperStyle::PureBlack)
+        {
             let grid_step = 36.0f32;
             let line_color = Color::from_rgba(1.0, 1.0, 1.0, 0.16);
             let mut x = grid_step;
@@ -1251,12 +1247,10 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for IconsC
             );
             if is_running {
                 let dot_cx = i_rect.x + i_rect.width * 0.5;
-                let dot_cy = (d_rect.y - self.metrics.header_h) + d_rect.height - (self.metrics.dock_padding * 0.35);
+                let dot_cy = (d_rect.y - self.metrics.header_h) + d_rect.height
+                    - (self.metrics.dock_padding * 0.35);
                 let (dot_color, halo_color) = if self.is_dark {
-                    (
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.90),
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.18),
-                    )
+                    (Color::from_rgba(1.0, 1.0, 1.0, 0.90), Color::from_rgba(1.0, 1.0, 1.0, 0.18))
                 } else {
                     (
                         Color::from_rgba(0.08, 0.09, 0.12, 0.65),
@@ -1321,19 +1315,28 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
                 frame.fill(&window_squircle, grad);
             }
             WallpaperStyle::SunsetGaze => {
-                let grad = Linear::new(Point::new(bounds.width * 0.15, 0.0), Point::new(bounds.width * 0.85, bounds.height))
-                    .add_stop(0.0, Color::from_rgb(0.06, 0.10, 0.25))
-                    .add_stop(0.30, Color::from_rgb(0.35, 0.12, 0.42))
-                    .add_stop(0.60, Color::from_rgb(0.82, 0.22, 0.35))
-                    .add_stop(0.82, Color::from_rgb(0.96, 0.52, 0.18))
-                    .add_stop(1.0, Color::from_rgb(1.0, 0.82, 0.45));
+                let grad = Linear::new(
+                    Point::new(bounds.width * 0.15, 0.0),
+                    Point::new(bounds.width * 0.85, bounds.height),
+                )
+                .add_stop(0.0, Color::from_rgb(0.06, 0.10, 0.25))
+                .add_stop(0.30, Color::from_rgb(0.35, 0.12, 0.42))
+                .add_stop(0.60, Color::from_rgb(0.82, 0.22, 0.35))
+                .add_stop(0.82, Color::from_rgb(0.96, 0.52, 0.18))
+                .add_stop(1.0, Color::from_rgb(1.0, 0.82, 0.45));
                 frame.fill(&window_squircle, grad);
             }
             WallpaperStyle::TvColorBars => {
                 let n = 8.0;
                 let bar_w = bounds.width / n;
                 for i in 0..8 {
-                    let c = sample_sharp_wallpaper(self.style, (i as f32 + 0.5) * bar_w, 0.0, bounds.size(), self.system_wallpaper.as_deref());
+                    let c = sample_sharp_wallpaper(
+                        self.style,
+                        (i as f32 + 0.5) * bar_w,
+                        0.0,
+                        bounds.size(),
+                        self.system_wallpaper.as_deref(),
+                    );
                     frame.fill_rectangle(
                         Point::new(i as f32 * bar_w, 0.0),
                         Size::new(bar_w + 1.0, bounds.height),
@@ -1348,7 +1351,13 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
                 let n_top = 7.0;
                 let bar_w_top = bounds.width / n_top;
                 for i in 0..7 {
-                    let c = sample_sharp_wallpaper(self.style, (i as f32 + 0.5) * bar_w_top, 10.0, bounds.size(), self.system_wallpaper.as_deref());
+                    let c = sample_sharp_wallpaper(
+                        self.style,
+                        (i as f32 + 0.5) * bar_w_top,
+                        10.0,
+                        bounds.size(),
+                        self.system_wallpaper.as_deref(),
+                    );
                     frame.fill_rectangle(
                         Point::new(i as f32 * bar_w_top, 0.0),
                         Size::new(bar_w_top + 1.0, top_h),
@@ -1359,7 +1368,13 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
                 let n_bot = 8.0;
                 let bar_w_bot = bounds.width / n_bot;
                 for i in 0..8 {
-                    let c = sample_sharp_wallpaper(self.style, (i as f32 + 0.5) * bar_w_bot, top_h + 10.0, bounds.size(), self.system_wallpaper.as_deref());
+                    let c = sample_sharp_wallpaper(
+                        self.style,
+                        (i as f32 + 0.5) * bar_w_bot,
+                        top_h + 10.0,
+                        bounds.size(),
+                        self.system_wallpaper.as_deref(),
+                    );
                     frame.fill_rectangle(
                         Point::new(i as f32 * bar_w_bot, top_h),
                         Size::new(bar_w_bot + 1.0, bot_h),
@@ -1398,7 +1413,9 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
         }
 
         // 2. Alignment Calibration Grid Lines
-        if self.show_grid && !matches!(self.style, WallpaperStyle::PureWhite | WallpaperStyle::PureBlack) {
+        if self.show_grid
+            && !matches!(self.style, WallpaperStyle::PureWhite | WallpaperStyle::PureBlack)
+        {
             let grid_step = 36.0f32;
             let line_color = Color::from_rgba(1.0, 1.0, 1.0, 0.16);
             let mut x = grid_step;
@@ -1466,10 +1483,7 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
                 let dot_cx = i_rect.x + i_rect.width * 0.5;
                 let dot_cy = d_rect.y + d_rect.height - (self.metrics.dock_padding * 0.35);
                 let (dot_color, halo_color) = if self.is_dark {
-                    (
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.90),
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.18),
-                    )
+                    (Color::from_rgba(1.0, 1.0, 1.0, 0.90), Color::from_rgba(1.0, 1.0, 1.0, 0.18))
                 } else {
                     (
                         Color::from_rgba(0.08, 0.09, 0.12, 0.65),
@@ -1498,8 +1512,6 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Liquid
         vec![frame.into_geometry()]
     }
 }
-
-
 
 /// Renders a complete authentic Apple Liquid Glass Plate (frosted substrate, specular highlight, rim darkening)
 /// with 100% continuous G2 curvature, multi-tier Gaussian shadow, and physical optics.
@@ -1535,7 +1547,10 @@ fn draw_liquid_glass_plate<R: iced::advanced::graphics::geometry::Renderer>(
             .add_stop(0.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha))
             .add_stop(0.15, Color::from_rgba(tint.r, tint.g, tint.b, base_alpha))
             .add_stop(0.85, Color::from_rgba(tint.r, tint.g, tint.b, base_alpha))
-            .add_stop(1.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha * 0.9))
+            .add_stop(
+                1.0,
+                Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha * 0.9),
+            )
     } else {
         let (base_alpha, edge_alpha) = match transparency {
             GlassTransparency::Ultra => (0.35, 0.52),
@@ -1548,7 +1563,10 @@ fn draw_liquid_glass_plate<R: iced::advanced::graphics::geometry::Renderer>(
             .add_stop(0.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha))
             .add_stop(0.15, Color::from_rgba(tint.r, tint.g, tint.b, base_alpha))
             .add_stop(0.85, Color::from_rgba(tint.r, tint.g, tint.b, base_alpha))
-            .add_stop(1.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha * 0.85))
+            .add_stop(
+                1.0,
+                Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha * 0.85),
+            )
     };
     frame.fill(&path, glass_grad);
 
@@ -1586,12 +1604,7 @@ fn draw_apple_icon<R: iced::advanced::graphics::geometry::Renderer>(
     );
     fill_squircle(
         frame,
-        Rectangle {
-            x: rect.x,
-            y: rect.y + 2.0,
-            width: rect.width,
-            height: rect.height,
-        },
+        Rectangle { x: rect.x, y: rect.y + 2.0, width: rect.width, height: rect.height },
         r,
         shadow_color_2,
     );
@@ -1603,9 +1616,10 @@ fn draw_apple_icon<R: iced::advanced::graphics::geometry::Renderer>(
         // Fallback: Standalone vector squircle plate & glyph illustration
         let path = build_squircle_path(rect, r);
         let (c_top, c_bot) = app.gradient_colors();
-        let grad = Linear::new(Point::new(rect.x, rect.y), Point::new(rect.x, rect.y + rect.height))
-            .add_stop(0.0, c_top)
-            .add_stop(1.0, c_bot);
+        let grad =
+            Linear::new(Point::new(rect.x, rect.y), Point::new(rect.x, rect.y + rect.height))
+                .add_stop(0.0, c_top)
+                .add_stop(1.0, c_bot);
         frame.fill(&path, grad);
 
         let cx = rect.x + rect.width * 0.5;
@@ -1613,164 +1627,209 @@ fn draw_apple_icon<R: iced::advanced::graphics::geometry::Renderer>(
         let s = rect.width;
 
         match app {
-        DockApp::Finder => {
-            // Authentic Finder split face dividing line & nose
-            let nose = Path::new(|b| {
-                b.move_to(Point::new(cx, cy - s * 0.24));
-                b.line_to(Point::new(cx, cy + s * 0.01));
-                b.line_to(Point::new(cx + s * 0.05, cy + s * 0.05));
-                b.line_to(Point::new(cx, cy + s * 0.07));
-                b.line_to(Point::new(cx, cy + s * 0.12));
-            });
-            frame.stroke(&nose, Stroke::default().with_color(Color::WHITE).with_width(s * 0.045));
-
-            // Eyes
-            frame.fill(&Path::circle(Point::new(cx - s * 0.15, cy - s * 0.08), s * 0.045), Color::WHITE);
-            frame.fill(&Path::circle(Point::new(cx + s * 0.15, cy - s * 0.08), s * 0.045), Color::WHITE);
-
-            // Smile curve
-            let smile = Path::new(|b| {
-                b.move_to(Point::new(cx - s * 0.18, cy + s * 0.10));
-                b.bezier_curve_to(
-                    Point::new(cx - s * 0.10, cy + s * 0.24),
-                    Point::new(cx + s * 0.10, cy + s * 0.24),
-                    Point::new(cx + s * 0.18, cy + s * 0.10),
-                );
-            });
-            frame.stroke(&smile, Stroke::default().with_color(Color::WHITE).with_width(s * 0.055));
-        }
-        DockApp::Safari => {
-            // Compass dial
-            let dial_r = s * 0.32;
-            frame.stroke(
-                &Path::circle(Point::new(cx, cy), dial_r),
-                Stroke::default().with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.60)).with_width(1.5),
-            );
-            // Needles
-            let needle_red = Path::new(|b| {
-                b.move_to(Point::new(cx, cy - s * 0.28));
-                b.line_to(Point::new(cx + s * 0.06, cy));
-                b.line_to(Point::new(cx - s * 0.06, cy));
-                b.close();
-            });
-            frame.fill(&needle_red, Color::from_rgb(0.95, 0.22, 0.22));
-            let needle_white = Path::new(|b| {
-                b.move_to(Point::new(cx, cy + s * 0.28));
-                b.line_to(Point::new(cx + s * 0.06, cy));
-                b.line_to(Point::new(cx - s * 0.06, cy));
-                b.close();
-            });
-            frame.fill(&needle_white, Color::WHITE);
-            frame.fill(&Path::circle(Point::new(cx, cy), s * 0.04), Color::from_rgb(0.85, 0.85, 0.85));
-        }
-        DockApp::Messages => {
-            let bubble = Path::new(|b| {
-                b.arc(canvas::path::Arc {
-                    center: Point::new(cx, cy - s * 0.03),
-                    radius: s * 0.24,
-                    start_angle: Radians(0.0),
-                    end_angle: Radians(std::f32::consts::TAU),
+            DockApp::Finder => {
+                // Authentic Finder split face dividing line & nose
+                let nose = Path::new(|b| {
+                    b.move_to(Point::new(cx, cy - s * 0.24));
+                    b.line_to(Point::new(cx, cy + s * 0.01));
+                    b.line_to(Point::new(cx + s * 0.05, cy + s * 0.05));
+                    b.line_to(Point::new(cx, cy + s * 0.07));
+                    b.line_to(Point::new(cx, cy + s * 0.12));
                 });
-                b.move_to(Point::new(cx - s * 0.14, cy + s * 0.12));
-                b.line_to(Point::new(cx - s * 0.22, cy + s * 0.25));
-                b.line_to(Point::new(cx - s * 0.04, cy + s * 0.20));
-                b.close();
-            });
-            frame.fill(&bubble, Color::WHITE);
-            frame.fill(&Path::circle(Point::new(cx - s * 0.10, cy - s * 0.03), s * 0.035), Color::from_rgb(0.20, 0.75, 0.35));
-            frame.fill(&Path::circle(Point::new(cx, cy - s * 0.03), s * 0.035), Color::from_rgb(0.20, 0.75, 0.35));
-            frame.fill(&Path::circle(Point::new(cx + s * 0.10, cy - s * 0.03), s * 0.035), Color::from_rgb(0.20, 0.75, 0.35));
-        }
-        DockApp::Mail => {
-            let env_rect = Rectangle {
-                x: cx - s * 0.28,
-                y: cy - s * 0.18,
-                width: s * 0.56,
-                height: s * 0.36,
-            };
-            fill_squircle(frame, env_rect, 4.0, Color::WHITE);
-            let flap = Path::new(|b| {
-                b.move_to(Point::new(env_rect.x, env_rect.y));
-                b.line_to(Point::new(cx, cy + s * 0.04));
-                b.line_to(Point::new(env_rect.x + env_rect.width, env_rect.y));
-            });
-            frame.stroke(&flap, Stroke::default().with_color(Color::from_rgb(0.12, 0.55, 0.90)).with_width(2.0));
-        }
-        DockApp::Music => {
-            let note = Path::new(|b| {
-                b.move_to(Point::new(cx - s * 0.10, cy + s * 0.10));
-                b.line_to(Point::new(cx - s * 0.10, cy - s * 0.16));
-                b.line_to(Point::new(cx + s * 0.14, cy - s * 0.22));
-                b.line_to(Point::new(cx + s * 0.14, cy + s * 0.04));
-            });
-            frame.stroke(&note, Stroke::default().with_color(Color::WHITE).with_width(3.0));
-            frame.fill(&Path::circle(Point::new(cx - s * 0.14, cy + s * 0.12), s * 0.07), Color::WHITE);
-            frame.fill(&Path::circle(Point::new(cx + s * 0.10, cy + s * 0.06), s * 0.07), Color::WHITE);
-        }
-        DockApp::Photos => {
-            let petal_colors = [
-                Color::from_rgb(0.95, 0.25, 0.25),
-                Color::from_rgb(0.98, 0.55, 0.15),
-                Color::from_rgb(0.98, 0.85, 0.10),
-                Color::from_rgb(0.35, 0.82, 0.35),
-                Color::from_rgb(0.15, 0.80, 0.85),
-                Color::from_rgb(0.20, 0.55, 0.95),
-                Color::from_rgb(0.65, 0.30, 0.90),
-                Color::from_rgb(0.90, 0.25, 0.70),
-            ];
-            for (k, c) in petal_colors.iter().enumerate() {
-                let ang = k as f32 * std::f32::consts::FRAC_PI_4;
-                let px = cx + (ang.cos() * s * 0.12);
-                let py = cy + (ang.sin() * s * 0.12);
-                frame.fill(&Path::circle(Point::new(px, py), s * 0.09), *c);
+                frame.stroke(
+                    &nose,
+                    Stroke::default().with_color(Color::WHITE).with_width(s * 0.045),
+                );
+
+                // Eyes
+                frame.fill(
+                    &Path::circle(Point::new(cx - s * 0.15, cy - s * 0.08), s * 0.045),
+                    Color::WHITE,
+                );
+                frame.fill(
+                    &Path::circle(Point::new(cx + s * 0.15, cy - s * 0.08), s * 0.045),
+                    Color::WHITE,
+                );
+
+                // Smile curve
+                let smile = Path::new(|b| {
+                    b.move_to(Point::new(cx - s * 0.18, cy + s * 0.10));
+                    b.bezier_curve_to(
+                        Point::new(cx - s * 0.10, cy + s * 0.24),
+                        Point::new(cx + s * 0.10, cy + s * 0.24),
+                        Point::new(cx + s * 0.18, cy + s * 0.10),
+                    );
+                });
+                frame.stroke(
+                    &smile,
+                    Stroke::default().with_color(Color::WHITE).with_width(s * 0.055),
+                );
             }
-            frame.fill(&Path::circle(Point::new(cx, cy), s * 0.05), Color::WHITE);
-        }
-        DockApp::Terminal => {
-            let prompt = Path::new(|b| {
-                b.move_to(Point::new(cx - s * 0.22, cy - s * 0.14));
-                b.line_to(Point::new(cx - s * 0.08, cy - s * 0.04));
-                b.line_to(Point::new(cx - s * 0.22, cy + s * 0.06));
-            });
-            frame.stroke(&prompt, Stroke::default().with_color(Color::from_rgb(0.25, 0.95, 0.45)).with_width(3.0));
-            frame.fill_rectangle(
-                Point::new(cx, cy + s * 0.04),
-                Size::new(s * 0.18, 3.0),
-                Color::from_rgb(0.25, 0.95, 0.45),
-            );
-        }
-        DockApp::Settings => {
-            frame.stroke(
-                &Path::circle(Point::new(cx, cy), s * 0.16),
-                Stroke::default().with_color(Color::WHITE).with_width(s * 0.07),
-            );
-            for k in 0..6 {
-                let ang = k as f32 * std::f32::consts::PI / 3.0;
-                let tx = cx + ang.cos() * s * 0.22;
-                let ty = cy + ang.sin() * s * 0.22;
-                frame.fill(&Path::circle(Point::new(tx, ty), s * 0.045), Color::WHITE);
+            DockApp::Safari => {
+                // Compass dial
+                let dial_r = s * 0.32;
+                frame.stroke(
+                    &Path::circle(Point::new(cx, cy), dial_r),
+                    Stroke::default()
+                        .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.60))
+                        .with_width(1.5),
+                );
+                // Needles
+                let needle_red = Path::new(|b| {
+                    b.move_to(Point::new(cx, cy - s * 0.28));
+                    b.line_to(Point::new(cx + s * 0.06, cy));
+                    b.line_to(Point::new(cx - s * 0.06, cy));
+                    b.close();
+                });
+                frame.fill(&needle_red, Color::from_rgb(0.95, 0.22, 0.22));
+                let needle_white = Path::new(|b| {
+                    b.move_to(Point::new(cx, cy + s * 0.28));
+                    b.line_to(Point::new(cx + s * 0.06, cy));
+                    b.line_to(Point::new(cx - s * 0.06, cy));
+                    b.close();
+                });
+                frame.fill(&needle_white, Color::WHITE);
+                frame.fill(
+                    &Path::circle(Point::new(cx, cy), s * 0.04),
+                    Color::from_rgb(0.85, 0.85, 0.85),
+                );
             }
-            frame.fill(&Path::circle(Point::new(cx, cy), s * 0.07), Color::from_rgb(0.55, 0.57, 0.62));
+            DockApp::Messages => {
+                let bubble = Path::new(|b| {
+                    b.arc(canvas::path::Arc {
+                        center: Point::new(cx, cy - s * 0.03),
+                        radius: s * 0.24,
+                        start_angle: Radians(0.0),
+                        end_angle: Radians(std::f32::consts::TAU),
+                    });
+                    b.move_to(Point::new(cx - s * 0.14, cy + s * 0.12));
+                    b.line_to(Point::new(cx - s * 0.22, cy + s * 0.25));
+                    b.line_to(Point::new(cx - s * 0.04, cy + s * 0.20));
+                    b.close();
+                });
+                frame.fill(&bubble, Color::WHITE);
+                frame.fill(
+                    &Path::circle(Point::new(cx - s * 0.10, cy - s * 0.03), s * 0.035),
+                    Color::from_rgb(0.20, 0.75, 0.35),
+                );
+                frame.fill(
+                    &Path::circle(Point::new(cx, cy - s * 0.03), s * 0.035),
+                    Color::from_rgb(0.20, 0.75, 0.35),
+                );
+                frame.fill(
+                    &Path::circle(Point::new(cx + s * 0.10, cy - s * 0.03), s * 0.035),
+                    Color::from_rgb(0.20, 0.75, 0.35),
+                );
+            }
+            DockApp::Mail => {
+                let env_rect = Rectangle {
+                    x: cx - s * 0.28,
+                    y: cy - s * 0.18,
+                    width: s * 0.56,
+                    height: s * 0.36,
+                };
+                fill_squircle(frame, env_rect, 4.0, Color::WHITE);
+                let flap = Path::new(|b| {
+                    b.move_to(Point::new(env_rect.x, env_rect.y));
+                    b.line_to(Point::new(cx, cy + s * 0.04));
+                    b.line_to(Point::new(env_rect.x + env_rect.width, env_rect.y));
+                });
+                frame.stroke(
+                    &flap,
+                    Stroke::default().with_color(Color::from_rgb(0.12, 0.55, 0.90)).with_width(2.0),
+                );
+            }
+            DockApp::Music => {
+                let note = Path::new(|b| {
+                    b.move_to(Point::new(cx - s * 0.10, cy + s * 0.10));
+                    b.line_to(Point::new(cx - s * 0.10, cy - s * 0.16));
+                    b.line_to(Point::new(cx + s * 0.14, cy - s * 0.22));
+                    b.line_to(Point::new(cx + s * 0.14, cy + s * 0.04));
+                });
+                frame.stroke(&note, Stroke::default().with_color(Color::WHITE).with_width(3.0));
+                frame.fill(
+                    &Path::circle(Point::new(cx - s * 0.14, cy + s * 0.12), s * 0.07),
+                    Color::WHITE,
+                );
+                frame.fill(
+                    &Path::circle(Point::new(cx + s * 0.10, cy + s * 0.06), s * 0.07),
+                    Color::WHITE,
+                );
+            }
+            DockApp::Photos => {
+                let petal_colors = [
+                    Color::from_rgb(0.95, 0.25, 0.25),
+                    Color::from_rgb(0.98, 0.55, 0.15),
+                    Color::from_rgb(0.98, 0.85, 0.10),
+                    Color::from_rgb(0.35, 0.82, 0.35),
+                    Color::from_rgb(0.15, 0.80, 0.85),
+                    Color::from_rgb(0.20, 0.55, 0.95),
+                    Color::from_rgb(0.65, 0.30, 0.90),
+                    Color::from_rgb(0.90, 0.25, 0.70),
+                ];
+                for (k, c) in petal_colors.iter().enumerate() {
+                    let ang = k as f32 * std::f32::consts::FRAC_PI_4;
+                    let px = cx + (ang.cos() * s * 0.12);
+                    let py = cy + (ang.sin() * s * 0.12);
+                    frame.fill(&Path::circle(Point::new(px, py), s * 0.09), *c);
+                }
+                frame.fill(&Path::circle(Point::new(cx, cy), s * 0.05), Color::WHITE);
+            }
+            DockApp::Terminal => {
+                let prompt = Path::new(|b| {
+                    b.move_to(Point::new(cx - s * 0.22, cy - s * 0.14));
+                    b.line_to(Point::new(cx - s * 0.08, cy - s * 0.04));
+                    b.line_to(Point::new(cx - s * 0.22, cy + s * 0.06));
+                });
+                frame.stroke(
+                    &prompt,
+                    Stroke::default().with_color(Color::from_rgb(0.25, 0.95, 0.45)).with_width(3.0),
+                );
+                frame.fill_rectangle(
+                    Point::new(cx, cy + s * 0.04),
+                    Size::new(s * 0.18, 3.0),
+                    Color::from_rgb(0.25, 0.95, 0.45),
+                );
+            }
+            DockApp::Settings => {
+                frame.stroke(
+                    &Path::circle(Point::new(cx, cy), s * 0.16),
+                    Stroke::default().with_color(Color::WHITE).with_width(s * 0.07),
+                );
+                for k in 0..6 {
+                    let ang = k as f32 * std::f32::consts::PI / 3.0;
+                    let tx = cx + ang.cos() * s * 0.22;
+                    let ty = cy + ang.sin() * s * 0.22;
+                    frame.fill(&Path::circle(Point::new(tx, ty), s * 0.045), Color::WHITE);
+                }
+                frame.fill(
+                    &Path::circle(Point::new(cx, cy), s * 0.07),
+                    Color::from_rgb(0.55, 0.57, 0.62),
+                );
+            }
+            DockApp::Trash => {
+                let rim_rect =
+                    Rectangle { x: cx - s * 0.22, y: cy - s * 0.18, width: s * 0.44, height: 4.0 };
+                fill_squircle(frame, rim_rect, 2.0, Color::WHITE);
+                let bin = Path::new(|b| {
+                    b.move_to(Point::new(cx - s * 0.18, cy - s * 0.14));
+                    b.line_to(Point::new(cx - s * 0.14, cy + s * 0.20));
+                    b.line_to(Point::new(cx + s * 0.14, cy + s * 0.20));
+                    b.line_to(Point::new(cx + s * 0.18, cy - s * 0.14));
+                });
+                frame.stroke(&bin, Stroke::default().with_color(Color::WHITE).with_width(2.5));
+                frame.fill_rectangle(
+                    Point::new(cx - s * 0.06, cy - s * 0.12),
+                    Size::new(2.0, s * 0.30),
+                    Color::WHITE,
+                );
+                frame.fill_rectangle(
+                    Point::new(cx + s * 0.06, cy - s * 0.12),
+                    Size::new(2.0, s * 0.30),
+                    Color::WHITE,
+                );
+            }
         }
-        DockApp::Trash => {
-            let rim_rect = Rectangle {
-                x: cx - s * 0.22,
-                y: cy - s * 0.18,
-                width: s * 0.44,
-                height: 4.0,
-            };
-            fill_squircle(frame, rim_rect, 2.0, Color::WHITE);
-            let bin = Path::new(|b| {
-                b.move_to(Point::new(cx - s * 0.18, cy - s * 0.14));
-                b.line_to(Point::new(cx - s * 0.14, cy + s * 0.20));
-                b.line_to(Point::new(cx + s * 0.14, cy + s * 0.20));
-                b.line_to(Point::new(cx + s * 0.18, cy - s * 0.14));
-            });
-            frame.stroke(&bin, Stroke::default().with_color(Color::WHITE).with_width(2.5));
-            frame.fill_rectangle(Point::new(cx - s * 0.06, cy - s * 0.12), Size::new(2.0, s * 0.30), Color::WHITE);
-            frame.fill_rectangle(Point::new(cx + s * 0.06, cy - s * 0.12), Size::new(2.0, s * 0.30), Color::WHITE);
-        }
-    }
     }
 
     // 4. THE SIGNATURE APPLE LIQUID GLASS BEVEL & OPTICS RIGHT ON THE SQUIRCLE ICON!
@@ -1792,12 +1851,8 @@ fn draw_elevation_shadow<R: iced::advanced::graphics::geometry::Renderer>(
     };
 
     // Single subtle, clean elevation drop shadow with matching squircle radius
-    let shadow_rect = Rectangle {
-        x: rect.x,
-        y: rect.y + 4.0,
-        width: rect.width,
-        height: rect.height,
-    };
+    let shadow_rect =
+        Rectangle { x: rect.x, y: rect.y + 4.0, width: rect.width, height: rect.height };
     fill_squircle(frame, shadow_rect, radius, shadow_color);
 }
 
@@ -1808,8 +1863,7 @@ fn build_squircle_path(rect: Rectangle, radius: f32) -> Path {
     // for true semicircular capsule geometry; otherwise use Apple continuous curvature G2 smoothing.
     let is_capsule = (r - rect.height * 0.5).abs() < 1.0;
     let smoothing = if is_capsule { 0.0 } else { APPLE_CORNER_SMOOTHING };
-    let params = SquircleParams::new(rect.width, rect.height, r)
-        .with_smoothing(smoothing);
+    let params = SquircleParams::new(rect.width, rect.height, r).with_smoothing(smoothing);
     let commands = squircle_path_commands(&params);
 
     Path::new(move |b| {
@@ -1829,7 +1883,12 @@ fn build_squircle_path(rect: Rectangle, radius: f32) -> Path {
 }
 
 /// Fills an authentic Apple squircle on the frame using our continuous curvature library.
-fn fill_squircle<R: iced::advanced::graphics::geometry::Renderer>(frame: &mut Frame<R>, rect: Rectangle, radius: f32, color: Color) {
+fn fill_squircle<R: iced::advanced::graphics::geometry::Renderer>(
+    frame: &mut Frame<R>,
+    rect: Rectangle,
+    radius: f32,
+    color: Color,
+) {
     if rect.width <= 0.0 || rect.height <= 0.0 {
         return;
     }
@@ -1871,19 +1930,22 @@ fn draw_liquid_glass_bevel<R: iced::advanced::graphics::geometry::Renderer>(
 
     let is_capsule = (r - inner_rect.height * 0.5).abs() < 1.0;
     let smoothing = if is_capsule { 0.0 } else { APPLE_CORNER_SMOOTHING };
-    let params = SquircleParams::new(inner_rect.width, inner_rect.height, r)
-        .with_smoothing(smoothing);
+    let params =
+        SquircleParams::new(inner_rect.width, inner_rect.height, r).with_smoothing(smoothing);
     let commands = squircle_path_commands(&params);
     if commands.is_empty() {
         return;
     }
 
-    let _stroke_w = 0.5f32;
     let full_path = Path::new(|builder| {
         for cmd in &commands {
             match *cmd {
-                PathCommand::MoveTo(p) => builder.move_to(Point::new(inner_rect.x + p.x, inner_rect.y + p.y)),
-                PathCommand::LineTo(p) => builder.line_to(Point::new(inner_rect.x + p.x, inner_rect.y + p.y)),
+                PathCommand::MoveTo(p) => {
+                    builder.move_to(Point::new(inner_rect.x + p.x, inner_rect.y + p.y));
+                }
+                PathCommand::LineTo(p) => {
+                    builder.line_to(Point::new(inner_rect.x + p.x, inner_rect.y + p.y));
+                }
                 PathCommand::CubicTo { c0, c1, to } => builder.bezier_curve_to(
                     Point::new(inner_rect.x + c0.x, inner_rect.y + c0.y),
                     Point::new(inner_rect.x + c1.x, inner_rect.y + c1.y),
@@ -1970,11 +2032,7 @@ impl Default for State {
         let is_dark = is_system_dark_mode();
         let config = WindowChromeConfig::unified_header(window_metrics::FUSED_HEADER_HEIGHT);
         let controller = WindowShellController::new(config, is_dark);
-        let scheme = if is_dark {
-            UiColorScheme::Dark
-        } else {
-            UiColorScheme::Light
-        };
+        let scheme = if is_dark { UiColorScheme::Dark } else { UiColorScheme::Light };
         let theme = UiTheme::new(scheme).iced_theme();
         let system_wallpaper = load_or_create_wallpaper(1240, 820);
         let app_icons = load_real_app_icons();
@@ -2041,11 +2099,7 @@ impl State {
 
     #[must_use]
     pub fn scheme(&self) -> UiColorScheme {
-        if self.is_dark() {
-            UiColorScheme::Dark
-        } else {
-            UiColorScheme::Light
-        }
+        if self.is_dark() { UiColorScheme::Dark } else { UiColorScheme::Light }
     }
 
     pub fn rebuild_menu(&mut self, context: MenuContext) {
@@ -2140,9 +2194,13 @@ fn build_wallpaper_context_menu(state: &State, scheme: UiColorScheme) -> Context
                 .on_press(Message::TriggerAction("点击顶栏切换壁纸".to_string())),
         )
         .item(
-            MenuItem::action(if state.is_dark() { "切换至浅色模式" } else { "切换至深色模式" })
-                .with_shortcut("⇧⌘D")
-                .on_press(Message::ToggleTheme),
+            MenuItem::action(if state.is_dark() {
+                "切换至浅色模式"
+            } else {
+                "切换至深色模式"
+            })
+            .with_shortcut("⇧⌘D")
+            .on_press(Message::ToggleTheme),
         )
         .item(MenuItem::separator())
         .item(
@@ -2251,7 +2309,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::ToggleTheme => {
             state.controller.is_dark = !state.controller.is_dark;
             state.theme = UiTheme::new(state.scheme()).iced_theme();
-            state.last_action = format!("切换外观: {}", if state.is_dark() { "深色 (Dark)" } else { "浅色 (Light)" });
+            state.last_action = format!(
+                "切换外观: {}",
+                if state.is_dark() { "深色 (Dark)" } else { "浅色 (Light)" }
+            );
             state.regenerate_frosted_textures();
             Task::none()
         }
@@ -2267,12 +2328,14 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::ToggleHighlight(val) => {
             state.enable_highlight = val;
-            state.last_action = format!("边缘高光 (Highlight): {}", if val { "开启" } else { "关闭" });
+            state.last_action =
+                format!("边缘高光 (Highlight): {}", if val { "开启" } else { "关闭" });
             Task::none()
         }
         Message::ToggleDarkRim(val) => {
             state.enable_dark_rim = val;
-            state.last_action = format!("左右深色描边 (Dark Rim): {}", if val { "开启" } else { "关闭" });
+            state.last_action =
+                format!("左右深色描边 (Dark Rim): {}", if val { "开启" } else { "关闭" });
             Task::none()
         }
         Message::ToggleGrid(val) => {
@@ -2294,8 +2357,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::ToggleDocumentEdited => {
             state.document_edited = !state.document_edited;
             bmol_window_shell::set_document_edited(state.document_edited);
-            state.last_action =
-                format!("NSWindow.isDocumentEdited = {}", state.document_edited);
+            state.last_action = format!("NSWindow.isDocumentEdited = {}", state.document_edited);
             Task::none()
         }
         Message::SystemThemeChanged(mode) => {
@@ -2331,8 +2393,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             let mut context = MenuContext::Wallpaper;
             for (i, app) in DockApp::ALL.iter().enumerate() {
                 let rect = metrics.icon_rects[i];
-                if cursor.x >= rect.x && cursor.x <= rect.x + rect.width
-                    && cursor.y >= rect.y && cursor.y <= rect.y + rect.height
+                if cursor.x >= rect.x
+                    && cursor.x <= rect.x + rect.width
+                    && cursor.y >= rect.y
+                    && cursor.y <= rect.y + rect.height
                 {
                     context = MenuContext::App(*app);
                     break;
@@ -2342,8 +2406,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // Check if right-click hit the Dock bar
             if context == MenuContext::Wallpaper {
                 let d = metrics.dock_rect;
-                if cursor.x >= d.x && cursor.x <= d.x + d.width
-                    && cursor.y >= d.y && cursor.y <= d.y + d.height
+                if cursor.x >= d.x
+                    && cursor.x <= d.x + d.width
+                    && cursor.y >= d.y
+                    && cursor.y <= d.y + d.height
                 {
                     context = MenuContext::DockBar;
                 }
@@ -2352,8 +2418,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // Check if right-click hit the Search bar
             if context == MenuContext::Wallpaper {
                 let s = metrics.search_rect;
-                if cursor.x >= s.x && cursor.x <= s.x + s.width
-                    && cursor.y >= s.y && cursor.y <= s.y + s.height
+                if cursor.x >= s.x
+                    && cursor.x <= s.x + s.width
+                    && cursor.y >= s.y
+                    && cursor.y <= s.y + s.height
                 {
                     context = MenuContext::SearchBar;
                 }
@@ -2433,13 +2501,9 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
         let item_count = state.floating_menu_cached.len();
         let menu_h = (item_count as f32 * 26.5 + 16.0).max(60.0);
         let menu_x = (pos.x - 12.0).clamp(10.0, state.window_size.width - menu_w - 10.0);
-        let menu_y = (pos.y - 12.0).clamp(metrics.header_h + 10.0, state.window_size.height - menu_h - 10.0);
-        Rectangle {
-            x: menu_x,
-            y: menu_y,
-            width: menu_w,
-            height: menu_h,
-        }
+        let menu_y =
+            (pos.y - 12.0).clamp(metrics.header_h + 10.0, state.window_size.height - menu_h - 10.0);
+        Rectangle { x: menu_x, y: menu_y, width: menu_w, height: menu_h }
     });
 
     // Search bar input positioned right over metrics.search_rect
@@ -2568,9 +2632,8 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
     let header = view_header(state, is_dark);
     let status_bar = view_status_bar(state, is_dark);
 
-    let page_content = column![header, stage_area, status_bar]
-        .width(Length::Fill)
-        .height(Length::Fill);
+    let page_content =
+        column![header, stage_area, status_bar].width(Length::Fill).height(Length::Fill);
 
     let mut layers: Vec<Element<'_, Message, Theme, iced_backend::Renderer>> = Vec::new();
 
@@ -2584,21 +2647,17 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
     // Layer 3: Floating Context Menu (at mouse cursor)
     // -------------------------------------------------------------
     if let (Some((_pos, _)), Some(m_rect)) = (state.floating_menu, floating_menu_rect) {
-        let dismiss_backdrop = iced::widget::mouse_area(
-            container(space())
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .on_press(Message::DismissFloatingMenu);
+        let dismiss_backdrop =
+            iced::widget::mouse_area(container(space()).width(Length::Fill).height(Length::Fill))
+                .on_press(Message::DismissFloatingMenu);
 
         let menu_view = state.floating_menu_cached.view::<iced_backend::Renderer>(&state.theme);
 
-        let positioned_menu = container(menu_view)
-            .padding(Padding {
-                top: m_rect.y,
-                left: m_rect.x,
-                ..Padding::ZERO
-            });
+        let positioned_menu = container(menu_view).padding(Padding {
+            top: m_rect.y,
+            left: m_rect.x,
+            ..Padding::ZERO
+        });
 
         if state.pipeline_mode == PipelineMode::GpuLiquidRs {
             let theme = UiTheme::new(state.scheme());
@@ -2611,11 +2670,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
                 .material(theme.glass_material(GlassRole::ContextMenu))
                 .chrome(GlassChrome::transparent()),
             )
-            .padding(Padding {
-                top: m_rect.y,
-                left: m_rect.x,
-                ..Padding::ZERO
-            });
+            .padding(Padding { top: m_rect.y, left: m_rect.x, ..Padding::ZERO });
 
             let overlay_stack = iced::widget::Stack::new()
                 .push(dismiss_backdrop)
@@ -2624,9 +2679,8 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
 
             layers.push(overlay_stack.into());
         } else {
-            let overlay_stack = iced::widget::Stack::new()
-                .push(dismiss_backdrop)
-                .push(positioned_menu);
+            let overlay_stack =
+                iced::widget::Stack::new().push(dismiss_backdrop).push(positioned_menu);
 
             layers.push(overlay_stack.into());
         }
@@ -2644,7 +2698,10 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
 }
 
 /// Builds the top titlebar with macOS Traffic Lights, Title, and Tuning Bar.
-fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced_backend::Renderer> {
+fn view_header(
+    state: &State,
+    is_dark: bool,
+) -> Element<'_, Message, Theme, iced_backend::Renderer> {
     // The glyphs sit above the GPU glass composition (overlay layer). The
     // wrapper publishes their measured layout origin so the spheres follow it.
     let traffic_lights = liquid_glass::ui::components::glass_overlay(
@@ -2661,12 +2718,7 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
                 Color::from_rgba(0.0, 0.0, 0.0, 0.88)
             }),
     )
-    .padding(Padding {
-        top: 3.0,
-        right: 10.0,
-        bottom: 3.0,
-        left: 10.0,
-    })
+    .padding(Padding { top: 3.0, right: 10.0, bottom: 3.0, left: 10.0 })
     .style(move |_theme| container::Style {
         background: Some(Background::Color(if is_dark {
             Color::from_rgba(0.08, 0.09, 0.12, 0.45)
@@ -2685,21 +2737,15 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
     // Active Pipeline Selection Pill
     let pipeline_pill = container(
         button(
-            text(state.pipeline_mode.label())
-                .size(11)
-                .font(font::ui_font(Weight::Semibold))
-                .color(if state.pipeline_mode == PipelineMode::GpuLiquidRs {
+            text(state.pipeline_mode.label()).size(11).font(font::ui_font(Weight::Semibold)).color(
+                if state.pipeline_mode == PipelineMode::GpuLiquidRs {
                     Color::from_rgb(0.20, 0.85, 0.55)
                 } else {
                     Color::from_rgb(1.0, 0.70, 0.25)
-                }),
+                },
+            ),
         )
-        .padding(Padding {
-            top: 3.0,
-            right: 8.0,
-            bottom: 3.0,
-            left: 8.0,
-        })
+        .padding(Padding { top: 3.0, right: 8.0, bottom: 3.0, left: 8.0 })
         .style(move |_theme, _status| button::Style {
             background: Some(Background::Color(if is_dark {
                 Color::from_rgba(0.12, 0.14, 0.18, 0.75)
@@ -2717,52 +2763,36 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
     );
 
     let wallpaper_pill = container(
-        row(WallpaperStyle::ALL
-            .iter()
-            .map(|&s| {
-                let is_selected = state.wallpaper == s;
-                button(
-                    text(s.label())
-                        .size(11)
-                        .font(font::ui_font(if is_selected {
-                            Weight::Bold
-                        } else {
-                            Weight::Normal
-                        }))
-                        .color(if is_selected {
-                            Color::WHITE
-                        } else if is_dark {
-                            Color::from_rgba(1.0, 1.0, 1.0, 0.75)
-                        } else {
-                            Color::from_rgba(0.0, 0.0, 0.0, 0.75)
-                        }),
-                )
-                .padding(Padding {
-                    top: 3.0,
-                    right: 5.0,
-                    bottom: 3.0,
-                    left: 5.0,
-                })
-                .style(move |_theme, _status| button::Style {
-                    background: if is_selected {
-                        Some(Background::Color(Color::from_rgb(0.0, 0.48, 1.0)))
+        row(WallpaperStyle::ALL.iter().map(|&s| {
+            let is_selected = state.wallpaper == s;
+            button(
+                text(s.label())
+                    .size(11)
+                    .font(font::ui_font(if is_selected { Weight::Bold } else { Weight::Normal }))
+                    .color(if is_selected {
+                        Color::WHITE
+                    } else if is_dark {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.75)
                     } else {
-                        None
-                    },
-                    border: Border::default().rounded(12.0),
-                    ..Default::default()
-                })
-                .on_press(Message::SetWallpaper(s))
-                .into()
-            }))
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.75)
+                    }),
+            )
+            .padding(Padding { top: 3.0, right: 5.0, bottom: 3.0, left: 5.0 })
+            .style(move |_theme, _status| button::Style {
+                background: if is_selected {
+                    Some(Background::Color(Color::from_rgb(0.0, 0.48, 1.0)))
+                } else {
+                    None
+                },
+                border: Border::default().rounded(12.0),
+                ..Default::default()
+            })
+            .on_press(Message::SetWallpaper(s))
+            .into()
+        }))
         .spacing(1.5),
     )
-    .padding(Padding {
-        top: 2.0,
-        right: 4.0,
-        bottom: 2.0,
-        left: 4.0,
-    })
+    .padding(Padding { top: 2.0, right: 4.0, bottom: 2.0, left: 4.0 })
     .style(move |_theme| container::Style {
         background: Some(Background::Color(if is_dark {
             Color::from_rgba(0.0, 0.0, 0.0, 0.35)
@@ -2779,52 +2809,36 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
 
     // Blur Presets Pill (vibrancy-rs Dual Kawase & Gaussian convolution)
     let blur_pill = container(
-        row(BlurPreset::ALL
-            .iter()
-            .map(|&p| {
-                let is_selected = state.blur_preset == p;
-                button(
-                    text(p.short_label())
-                        .size(11)
-                        .font(font::ui_font(if is_selected {
-                            Weight::Bold
-                        } else {
-                            Weight::Normal
-                        }))
-                        .color(if is_selected {
-                            Color::WHITE
-                        } else if is_dark {
-                            Color::from_rgba(1.0, 1.0, 1.0, 0.75)
-                        } else {
-                            Color::from_rgba(0.0, 0.0, 0.0, 0.75)
-                        }),
-                )
-                .padding(Padding {
-                    top: 3.0,
-                    right: 5.0,
-                    bottom: 3.0,
-                    left: 5.0,
-                })
-                .style(move |_theme, _status| button::Style {
-                    background: if is_selected {
-                        Some(Background::Color(Color::from_rgb(0.55, 0.25, 0.85)))
+        row(BlurPreset::ALL.iter().map(|&p| {
+            let is_selected = state.blur_preset == p;
+            button(
+                text(p.short_label())
+                    .size(11)
+                    .font(font::ui_font(if is_selected { Weight::Bold } else { Weight::Normal }))
+                    .color(if is_selected {
+                        Color::WHITE
+                    } else if is_dark {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.75)
                     } else {
-                        None
-                    },
-                    border: Border::default().rounded(12.0),
-                    ..Default::default()
-                })
-                .on_press(Message::SetBlurPreset(p))
-                .into()
-            }))
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.75)
+                    }),
+            )
+            .padding(Padding { top: 3.0, right: 5.0, bottom: 3.0, left: 5.0 })
+            .style(move |_theme, _status| button::Style {
+                background: if is_selected {
+                    Some(Background::Color(Color::from_rgb(0.55, 0.25, 0.85)))
+                } else {
+                    None
+                },
+                border: Border::default().rounded(12.0),
+                ..Default::default()
+            })
+            .on_press(Message::SetBlurPreset(p))
+            .into()
+        }))
         .spacing(1.5),
     )
-    .padding(Padding {
-        top: 2.0,
-        right: 4.0,
-        bottom: 2.0,
-        left: 4.0,
-    })
+    .padding(Padding { top: 2.0, right: 4.0, bottom: 2.0, left: 4.0 })
     .style(move |_theme| container::Style {
         background: Some(Background::Color(if is_dark {
             Color::from_rgba(0.0, 0.0, 0.0, 0.35)
@@ -2840,55 +2854,40 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
     });
 
     // Toggle Highlight & Dark Rim Pill
-    let toggle_highlight_btn = button(
-        text("高光")
-            .size(11)
-            .font(font::ui_font(Weight::Medium))
-            .color(if state.enable_highlight {
+    let toggle_highlight_btn =
+        button(text("高光").size(11).font(font::ui_font(Weight::Medium)).color(
+            if state.enable_highlight {
                 Color::WHITE
             } else if is_dark {
                 Color::from_rgba(1.0, 1.0, 1.0, 0.6)
             } else {
                 Color::from_rgba(0.0, 0.0, 0.0, 0.6)
-            }),
-    )
-    .padding(Padding {
-        top: 4.0,
-        right: 8.0,
-        bottom: 4.0,
-        left: 8.0,
-    })
-    .style(move |_theme, _status| button::Style {
-        background: Some(Background::Color(if state.enable_highlight {
-            Color::from_rgb(0.18, 0.75, 0.38)
-        } else if is_dark {
-            Color::from_rgba(1.0, 1.0, 1.0, 0.12)
-        } else {
-            Color::from_rgba(0.0, 0.0, 0.0, 0.10)
-        })),
-        border: Border::default().rounded(14.0),
-        ..Default::default()
-    })
-    .on_press(Message::ToggleHighlight(!state.enable_highlight));
+            },
+        ))
+        .padding(Padding { top: 4.0, right: 8.0, bottom: 4.0, left: 8.0 })
+        .style(move |_theme, _status| button::Style {
+            background: Some(Background::Color(if state.enable_highlight {
+                Color::from_rgb(0.18, 0.75, 0.38)
+            } else if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.10)
+            })),
+            border: Border::default().rounded(14.0),
+            ..Default::default()
+        })
+        .on_press(Message::ToggleHighlight(!state.enable_highlight));
 
-    let toggle_rim_btn = button(
-        text("暗边")
-            .size(11)
-            .font(font::ui_font(Weight::Medium))
-            .color(if state.enable_dark_rim {
-                Color::WHITE
-            } else if is_dark {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.6)
-            } else {
-                Color::from_rgba(0.0, 0.0, 0.0, 0.6)
-            }),
-    )
-    .padding(Padding {
-        top: 4.0,
-        right: 8.0,
-        bottom: 4.0,
-        left: 8.0,
-    })
+    let toggle_rim_btn = button(text("暗边").size(11).font(font::ui_font(Weight::Medium)).color(
+        if state.enable_dark_rim {
+            Color::WHITE
+        } else if is_dark {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.6)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.6)
+        },
+    ))
+    .padding(Padding { top: 4.0, right: 8.0, bottom: 4.0, left: 8.0 })
     .style(move |_theme, _status| button::Style {
         background: Some(Background::Color(if state.enable_dark_rim {
             Color::from_rgb(0.18, 0.52, 0.95)
@@ -2903,58 +2902,47 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
     .on_press(Message::ToggleDarkRim(!state.enable_dark_rim));
 
     // Mirrors NSWindow.isDocumentEdited: shows the close button's dirty dot.
-    let document_edited_btn = button(
-        text("未保存")
-            .size(11)
-            .font(font::ui_font(Weight::Medium))
-            .color(if state.document_edited {
+    let document_edited_btn =
+        button(text("未保存").size(11).font(font::ui_font(Weight::Medium)).color(
+            if state.document_edited {
                 Color::WHITE
             } else if is_dark {
                 Color::from_rgba(1.0, 1.0, 1.0, 0.6)
             } else {
                 Color::from_rgba(0.0, 0.0, 0.0, 0.6)
-            }),
-    )
-    .padding(Padding {
-        top: 4.0,
-        right: 8.0,
-        bottom: 4.0,
-        left: 8.0,
-    })
-    .style(move |_theme, _status| button::Style {
-        background: Some(Background::Color(if state.document_edited {
-            Color::from_rgb(0.85, 0.25, 0.20)
-        } else if is_dark {
-            Color::from_rgba(1.0, 1.0, 1.0, 0.12)
-        } else {
-            Color::from_rgba(0.0, 0.0, 0.0, 0.10)
-        })),
-        border: Border::default().rounded(14.0),
-        ..Default::default()
-    })
-    .on_press(Message::ToggleDocumentEdited);
+            },
+        ))
+        .padding(Padding { top: 4.0, right: 8.0, bottom: 4.0, left: 8.0 })
+        .style(move |_theme, _status| button::Style {
+            background: Some(Background::Color(if state.document_edited {
+                Color::from_rgb(0.85, 0.25, 0.20)
+            } else if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.10)
+            })),
+            border: Border::default().rounded(14.0),
+            ..Default::default()
+        })
+        .on_press(Message::ToggleDocumentEdited);
 
-    let theme_btn = button(
-        text(if is_dark { "☀️ 浅色" } else { "🌙 深色" })
-            .size(11)
-            .color(if is_dark { Color::WHITE } else { Color::BLACK }),
-    )
-    .padding(Padding {
-        top: 4.0,
-        right: 8.0,
-        bottom: 4.0,
-        left: 8.0,
-    })
-    .style(move |_theme, _status| button::Style {
-        background: Some(Background::Color(if is_dark {
-            Color::from_rgba(1.0, 1.0, 1.0, 0.15)
+    let theme_btn =
+        button(text(if is_dark { "☀️ 浅色" } else { "🌙 深色" }).size(11).color(if is_dark {
+            Color::WHITE
         } else {
-            Color::from_rgba(0.0, 0.0, 0.0, 0.10)
-        })),
-        border: Border::default().rounded(14.0),
-        ..Default::default()
-    })
-    .on_press(Message::ToggleTheme);
+            Color::BLACK
+        }))
+        .padding(Padding { top: 4.0, right: 8.0, bottom: 4.0, left: 8.0 })
+        .style(move |_theme, _status| button::Style {
+            background: Some(Background::Color(if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.15)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.10)
+            })),
+            border: Border::default().rounded(14.0),
+            ..Default::default()
+        })
+        .on_press(Message::ToggleTheme);
 
     let transparency_btn = button(
         text(state.transparency.label())
@@ -2962,12 +2950,7 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
             .font(font::ui_font(Weight::Medium))
             .color(Color::WHITE),
     )
-    .padding(Padding {
-        top: 4.0,
-        right: 8.0,
-        bottom: 4.0,
-        left: 8.0,
-    })
+    .padding(Padding { top: 4.0, right: 8.0, bottom: 4.0, left: 8.0 })
     .style(move |_theme, _status| button::Style {
         background: Some(Background::Color(match state.transparency {
             GlassTransparency::High => Color::from_rgb(0.0, 0.48, 1.0),
@@ -2998,12 +2981,7 @@ fn view_header(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced
     ]
     .spacing(4.0)
     .align_y(Alignment::Center)
-    .padding(Padding {
-        top: 8.0,
-        right: 14.0,
-        bottom: 8.0,
-        left: 14.0,
-    });
+    .padding(Padding { top: 8.0, right: 14.0, bottom: 8.0, left: 14.0 });
 
     state.controller.loyal_drag_bar(
         44.0,
@@ -3040,40 +3018,26 @@ fn view_search_input(
             icon: Color::TRANSPARENT,
         });
 
-    let badge = container(
-        text("⌘K")
-            .size(10)
-            .font(font::ui_font(Weight::Semibold))
-            .color(if is_dark {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.55)
-            } else {
-                Color::from_rgba(0.0, 0.0, 0.0, 0.50)
-            }),
-    )
-    .padding(Padding {
-        top: 2.0,
-        right: 6.0,
-        bottom: 2.0,
-        left: 6.0,
-    })
-    .style(move |_theme: &Theme| container::Style {
-        background: Some(Background::Color(if is_dark {
-            Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+    let badge =
+        container(text("⌘K").size(10).font(font::ui_font(Weight::Semibold)).color(if is_dark {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.55)
         } else {
-            Color::from_rgba(0.0, 0.0, 0.0, 0.08)
-        })),
-        border: Border::default().rounded(4.0),
-        ..Default::default()
-    });
+            Color::from_rgba(0.0, 0.0, 0.0, 0.50)
+        }))
+        .padding(Padding { top: 2.0, right: 6.0, bottom: 2.0, left: 6.0 })
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(Background::Color(if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.08)
+            })),
+            border: Border::default().rounded(4.0),
+            ..Default::default()
+        });
 
     let content = row![search_icon, space().width(8.0), input, space().width(8.0), badge]
         .align_y(Alignment::Center)
-        .padding(Padding {
-            top: 4.0,
-            right: 14.0,
-            bottom: 4.0,
-            left: 14.0,
-        })
+        .padding(Padding { top: 4.0, right: 14.0, bottom: 4.0, left: 14.0 })
         .width(Length::Fixed(search_rect.width))
         .height(Length::Fixed(search_rect.height));
 
@@ -3100,9 +3064,7 @@ fn view_dock_hitboxes(
         let is_hovered = state.hovered_app == Some(app);
 
         let click_target = iced::widget::mouse_area(
-            container(space())
-                .width(Length::Fixed(rect.width))
-                .height(Length::Fixed(rect.height)),
+            container(space()).width(Length::Fixed(rect.width)).height(Length::Fixed(rect.height)),
         )
         .on_enter(Message::IconHovered(Some(app)))
         .on_exit(Message::IconHovered(None))
@@ -3119,20 +3081,15 @@ fn view_dock_hitboxes(
         // Hover tooltip pill floating above the hovered icon
         if is_hovered {
             let tooltip_pill = container(
-                text(app.name())
-                    .size(11)
-                    .font(font::ui_font(Weight::Semibold))
-                    .color(Color::WHITE),
+                text(app.name()).size(11).font(font::ui_font(Weight::Semibold)).color(Color::WHITE),
             )
-            .padding(Padding {
-                top: 4.0,
-                right: 8.0,
-                bottom: 4.0,
-                left: 8.0,
-            })
+            .padding(Padding { top: 4.0, right: 8.0, bottom: 4.0, left: 8.0 })
             .style(move |_theme: &Theme| container::Style {
                 background: Some(Background::Color(Color::from_rgba(0.10, 0.10, 0.14, 0.92))),
-                border: Border::default().rounded(6.0).width(0.5).color(Color::from_rgba(1.0, 1.0, 1.0, 0.22)),
+                border: Border::default()
+                    .rounded(6.0)
+                    .width(0.5)
+                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.22)),
                 shadow: Shadow {
                     color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
                     offset: Vector::new(0.0, 4.0),
@@ -3158,62 +3115,56 @@ fn view_dock_hitboxes(
 }
 
 /// Builds the bottom status bar displaying metrics and user action feedbacks.
-fn view_status_bar(state: &State, is_dark: bool) -> Element<'_, Message, Theme, iced_backend::Renderer> {
-    let status_text = text(&state.last_action)
-        .size(11)
-        .font(font::ui_font(Weight::Normal))
-        .color(if is_dark {
+fn view_status_bar(
+    state: &State,
+    is_dark: bool,
+) -> Element<'_, Message, Theme, iced_backend::Renderer> {
+    let status_text =
+        text(&state.last_action).size(11).font(font::ui_font(Weight::Normal)).color(if is_dark {
             Color::from_rgba(1.0, 1.0, 1.0, 0.88)
         } else {
             Color::from_rgba(0.0, 0.0, 0.0, 0.82)
         });
 
-    let plan = KawasePassPlan::new(state.window_size.width as i32, state.window_size.height as i32, state.blur_radius);
+    let plan = KawasePassPlan::new(
+        state.window_size.width as i32,
+        state.window_size.height as i32,
+        state.blur_radius,
+    );
     let pass_desc = if plan.use_deep_blur { "3级深度金字塔" } else { "2级标准金字塔" };
-    let hint_text = text(format!("✨ vibrancy-rs: 模糊 {:.0}pt | {} | +25%饱和度提升 & IGN抗色带抖动", state.blur_radius, pass_desc))
-        .size(11)
-        .font(font::ui_font(Weight::Medium))
-        .color(if is_dark {
-            Color::from_rgba(1.0, 1.0, 1.0, 0.70)
-        } else {
-            Color::from_rgba(0.0, 0.0, 0.0, 0.65)
-        });
+    let hint_text = text(format!(
+        "✨ vibrancy-rs: 模糊 {:.0}pt | {} | +25%饱和度提升 & IGN抗色带抖动",
+        state.blur_radius, pass_desc
+    ))
+    .size(11)
+    .font(font::ui_font(Weight::Medium))
+    .color(if is_dark {
+        Color::from_rgba(1.0, 1.0, 1.0, 0.70)
+    } else {
+        Color::from_rgba(0.0, 0.0, 0.0, 0.65)
+    });
 
-    let bar = row![status_text, space().width(Length::Fill), hint_text]
-        .align_y(Alignment::Center);
+    let bar = row![status_text, space().width(Length::Fill), hint_text].align_y(Alignment::Center);
 
     let bar_pill = container(bar)
-        .padding(Padding {
-            top: 3.0,
-            right: 14.0,
-            bottom: 3.0,
-            left: 14.0,
-        })
+        .padding(Padding { top: 3.0, right: 14.0, bottom: 3.0, left: 14.0 })
         .style(move |_theme| container::Style {
             background: Some(Background::Color(if is_dark {
                 Color::from_rgba(0.08, 0.09, 0.12, 0.45)
             } else {
                 Color::from_rgba(1.0, 1.0, 1.0, 0.45)
             })),
-            border: Border::default()
-                .rounded(12.0)
-                .width(0.5)
-                .color(if is_dark {
-                    Color::from_rgba(1.0, 1.0, 1.0, 0.16)
-                } else {
-                    Color::from_rgba(0.0, 0.0, 0.0, 0.10)
-                }),
+            border: Border::default().rounded(12.0).width(0.5).color(if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.16)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.10)
+            }),
             ..Default::default()
         });
 
     container(bar_pill)
         .width(Length::Fill)
-        .padding(Padding {
-            top: 2.0,
-            right: 14.0,
-            bottom: 6.0,
-            left: 14.0,
-        })
+        .padding(Padding { top: 2.0, right: 14.0, bottom: 6.0, left: 14.0 })
         .into()
 }
 
@@ -3243,12 +3194,13 @@ fn main() -> iced::Result {
         ..Default::default()
     };
 
-    let mut app = iced::application::<State, Message, Theme, iced_backend::Renderer>(boot, update, view)
-        .title("Liquid Glass Optics & Dock Showcase - bmol-iced")
-        .theme(app_theme)
-        .style(app_style)
-        .subscription(subscription)
-        .window(window_settings);
+    let mut app =
+        iced::application::<State, Message, Theme, iced_backend::Renderer>(boot, update, view)
+            .title("Liquid Glass Optics & Dock Showcase - bmol-iced")
+            .theme(app_theme)
+            .style(app_style)
+            .subscription(subscription)
+            .window(window_settings);
 
     for bytes in &fonts.bytes {
         app = app.font(bytes.clone());
@@ -3327,7 +3279,8 @@ mod tests {
         assert_eq!(metrics.icon_rects[0].y, metrics.dock_rect.y + 13.0);
         assert_eq!(metrics.icon_rects[0].x, metrics.dock_rect.x + 13.0);
         let last_idx = metrics.icon_rects.len() - 1;
-        let right_padding = (metrics.dock_rect.x + metrics.dock_rect.width) - (metrics.icon_rects[last_idx].x + metrics.icon_rects[last_idx].width);
+        let right_padding = (metrics.dock_rect.x + metrics.dock_rect.width)
+            - (metrics.icon_rects[last_idx].x + metrics.icon_rects[last_idx].width);
         assert!((right_padding - 13.0).abs() < 1e-4, "Right padding must be exactly 13px");
     }
 
@@ -3443,9 +3396,12 @@ mod tests {
         assert!(u_vertical <= INNER_ARC_CUTOFF, "Vertical edge must have 0 inner highlight");
         let vert_comp_vertical = u_vertical;
         let rim_factor_vertical = if vert_comp_vertical < 0.90 {
-            let corner_soften = 1.0 - 0.65 * (vert_comp_vertical * std::f32::consts::PI * 0.5).sin().powf(1.2);
+            let corner_soften =
+                1.0 - 0.65 * (vert_comp_vertical * std::f32::consts::PI * 0.5).sin().powf(1.2);
             corner_soften.clamp(0.20, 1.0)
-        } else { 0.0 };
+        } else {
+            0.0
+        };
         assert_eq!(rim_factor_vertical, 1.0, "Vertical edge must have 100% dark rim");
 
         // At curved arc (theta = 45°, u = 0.707)
@@ -3454,8 +3410,13 @@ mod tests {
         let rim_factor_arc = if u_arc < 0.90 {
             let corner_soften = 1.0 - 0.65 * (u_arc * std::f32::consts::PI * 0.5).sin().powf(1.2);
             corner_soften.clamp(0.20, 1.0)
-        } else { 0.0 };
-        assert!(rim_factor_arc < 0.60 && rim_factor_arc > 0.35, "Curved arc dark rim must soften gracefully");
+        } else {
+            0.0
+        };
+        assert!(
+            rim_factor_arc < 0.60 && rim_factor_arc > 0.35,
+            "Curved arc dark rim must soften gracefully"
+        );
         // But inner secondary highlight extends through arc!
         assert!(u_arc > INNER_ARC_CUTOFF, "Inner secondary highlight extends into corner arc");
 
@@ -3466,10 +3427,16 @@ mod tests {
         // On straight horizontal segment, factors are exactly 1.0 (perfectly uniform peak brightness)
         let norm_u_flat = (u_horizontal - SPEC_CUTOFF) / (1.0 - SPEC_CUTOFF);
         let spec_factor_flat = (norm_u_flat * std::f32::consts::PI * 0.5).sin().powf(1.6);
-        assert!((spec_factor_flat - 1.0).abs() < 1e-5, "Straight line must have 100% uniform specular highlight");
+        assert!(
+            (spec_factor_flat - 1.0).abs() < 1e-5,
+            "Straight line must have 100% uniform specular highlight"
+        );
         let norm_arc_flat = (u_horizontal - INNER_ARC_CUTOFF) / (1.0 - INNER_ARC_CUTOFF);
         let inner_factor_flat = (norm_arc_flat * std::f32::consts::PI * 0.5).sin().powf(1.6);
-        assert!((inner_factor_flat - 1.0).abs() < 1e-5, "Straight line must have 100% uniform inner highlight");
+        assert!(
+            (inner_factor_flat - 1.0).abs() < 1e-5,
+            "Straight line must have 100% uniform inner highlight"
+        );
 
         // Ahead of R corner: Pre-corner lead-in smooth decay ("早于R角开始变化")
         let r = 24.0f32;
@@ -3490,20 +3457,32 @@ mod tests {
         assert_eq!(calc_lead_in(lead_in_dist + 50.0), 1.0, "Central plateau must be 100% constant");
         // Ahead of R corner (e.g. 15pt before tangent):
         let factor_ahead = calc_lead_in(15.0);
-        assert!(factor_ahead < 1.0 && factor_ahead > 0.85, "Highlight begins smoothly decaying ahead of R corner");
+        assert!(
+            factor_ahead < 1.0 && factor_ahead > 0.85,
+            "Highlight begins smoothly decaying ahead of R corner"
+        );
         // Exactly at tangent:
-        assert!((calc_lead_in(0.0) - 0.85).abs() < 1e-5, "Smoothly arrives at ~0.85 at R corner tangent");
+        assert!(
+            (calc_lead_in(0.0) - 0.85).abs() < 1e-5,
+            "Smoothly arrives at ~0.85 at R corner tangent"
+        );
 
         // Entering R corner arc (u begins decreasing from 1.0 down towards 0.0):
         // Monotonic smooth attenuation continues along the corner arc!
         let u_corner_entry = 0.96f32;
         let norm_u_entry = (u_corner_entry - SPEC_CUTOFF) / (1.0 - SPEC_CUTOFF);
         let spec_factor_entry = (norm_u_entry * std::f32::consts::PI * 0.5).sin().powf(1.6);
-        assert!(spec_factor_entry < spec_factor_flat, "Specular highlight strictly decays upon entering R corner");
+        assert!(
+            spec_factor_entry < spec_factor_flat,
+            "Specular highlight strictly decays upon entering R corner"
+        );
 
         let norm_arc_entry = (u_corner_entry - INNER_ARC_CUTOFF) / (1.0 - INNER_ARC_CUTOFF);
         let inner_factor_entry = (norm_arc_entry * std::f32::consts::PI * 0.5).sin().powf(1.6);
-        assert!(inner_factor_entry < inner_factor_flat, "Inner highlight strictly decays upon entering R corner");
+        assert!(
+            inner_factor_entry < inner_factor_flat,
+            "Inner highlight strictly decays upon entering R corner"
+        );
 
         let rim_factor_horizontal = if u_horizontal < 0.90 {
             1.0f32
@@ -3511,7 +3490,10 @@ mod tests {
             let norm = (1.0 - u_horizontal) / (1.0 - 0.90);
             (norm * std::f32::consts::PI * 0.5).sin().powf(1.5)
         };
-        assert!((rim_factor_horizontal - 0.0).abs() < 1e-5, "Top horizontal edge must have 0 dark rim");
+        assert!(
+            (rim_factor_horizontal - 0.0).abs() < 1e-5,
+            "Top horizontal edge must have 0 dark rim"
+        );
 
         // Calibrated light mode base alpha
         assert_eq!(GlassTransparency::High.center_alpha_light(), 0.13);
@@ -3531,12 +3513,7 @@ mod tests {
     #[test]
     fn test_generate_frosted_plate_texture_blur_progression() {
         let wallpaper = load_or_create_wallpaper(1240, 820);
-        let rect = Rectangle {
-            x: 210.0,
-            y: 700.0,
-            width: 820.0,
-            height: 80.0,
-        };
+        let rect = Rectangle { x: 210.0, y: 700.0, width: 820.0, height: 80.0 };
         let window_size = Size::new(1240.0, 820.0);
 
         // 1. Generate 0pt clear slice
@@ -3588,7 +3565,10 @@ mod tests {
         assert!(state.controller.is_animating());
 
         // Unfocus window event automatically clears hover
-        let _ = update(&mut state, Message::WindowEvent((window::Id::unique(), window::Event::Unfocused)));
+        let _ = update(
+            &mut state,
+            Message::WindowEvent((window::Id::unique(), window::Event::Unfocused)),
+        );
         assert_eq!(state.controller.traffic_lights.hover_target, 0.0);
 
         // Animation frame steps physics
@@ -3609,6 +3589,3 @@ mod tests {
         assert_eq!(state.pipeline_mode, PipelineMode::GpuLiquidRs);
     }
 }
-
-
-

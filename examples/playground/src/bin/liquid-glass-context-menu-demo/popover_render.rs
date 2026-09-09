@@ -1,20 +1,18 @@
 //! Popover squircle path generation, multi-tier soft shadows, and canvas program.
 
+use bmol_designs::{
+    menu_metrics,
+    popover_metrics::{
+        PopoverArrowConfig, PopoverArrowEdge, popover_arrow_profile_height_with_spline,
+    },
+};
 use iced::{
     Color, Point, Rectangle, Size, Theme, mouse,
     widget::canvas::{self, Frame, Geometry},
 };
-use bmol_designs::{
-    menu_metrics,
-    popover_metrics::{
-        popover_arrow_profile_height_with_spline, PopoverArrowConfig, PopoverArrowEdge,
-    },
-};
 use liquid_glass::geometry::APPLE_CORNER_SMOOTHING;
 
-use crate::vibrancy::{
-    sample_analytical_blurred_wallpaper, BlurPreset, WallpaperStyle,
-};
+use crate::vibrancy::{BlurPreset, WallpaperStyle, sample_analytical_blurred_wallpaper};
 
 /// An occlusion region where a context menu card or popup overlays the wallpaper,
 /// requiring genuine continuous backdrop blur spatial convolution.
@@ -27,16 +25,12 @@ pub struct MenuOcclusion {
 }
 
 pub use liquid_glass::popover::{
-    build_popover_path as build_popover_squircle_path,
-    fill_popover, stroke_popover_rim,
+    build_popover_path as build_popover_squircle_path, fill_popover, stroke_popover_rim,
 };
 
 /// Renders multi-layer soft drop shadows matching macOS Popover Window shadow geometry,
 /// continuously wrapping both the squircle menu body and the popover arrow (触角).
-pub fn render_soft_menu_shadow(
-    frame: &mut Frame,
-    occ: &MenuOcclusion,
-) {
+pub fn render_soft_menu_shadow(frame: &mut Frame, occ: &MenuOcclusion) {
     liquid_glass::popover::render_popover_shadow(
         frame,
         occ.bounds,
@@ -118,14 +112,18 @@ pub fn render_blurred_occlusion(
             0.0
         };
 
-        let top_extension = if arrow.edge == PopoverArrowEdge::Top && (sample_x - arrow_center_x).abs() < arrow_half_w {
+        let top_extension = if arrow.edge == PopoverArrowEdge::Top
+            && (sample_x - arrow_center_x).abs() < arrow_half_w
+        {
             let dist = ((sample_x - arrow_center_x).abs() / arrow_half_w).clamp(0.0, 1.0);
             popover_arrow_profile_height_with_spline(&arrow.spline, dist) * arrow.height
         } else {
             0.0
         };
 
-        let bottom_extension = if arrow.edge == PopoverArrowEdge::Bottom && (sample_x - arrow_center_x).abs() < arrow_half_w {
+        let bottom_extension = if arrow.edge == PopoverArrowEdge::Bottom
+            && (sample_x - arrow_center_x).abs() < arrow_half_w
+        {
             let dist = ((sample_x - arrow_center_x).abs() / arrow_half_w).clamp(0.0, 1.0);
             popover_arrow_profile_height_with_spline(&arrow.spline, dist) * arrow.height
         } else {
@@ -141,7 +139,8 @@ pub fn render_blurred_occlusion(
             } else {
                 (sample_x - (rect.x + rect.width)) / arrow.height
             };
-            let bell = popover_arrow_profile_height_with_spline(&arrow.spline, dist_x.clamp(0.0, 1.0));
+            let bell =
+                popover_arrow_profile_height_with_spline(&arrow.spline, dist_x.clamp(0.0, 1.0));
             let current_half_w = arrow_half_w * bell;
             (arrow_center_y - current_half_w, current_half_w * 2.0)
         } else {
@@ -174,7 +173,13 @@ pub fn render_blurred_occlusion(
     } else {
         menu_metrics::LIGHT_MENU_BASE_RGBA_F32
     };
-    fill_popover(frame, rect, corner_radius, arrow, Color::from_rgba(base_r, base_g, base_b, base_a));
+    fill_popover(
+        frame,
+        rect,
+        corner_radius,
+        arrow,
+        Color::from_rgba(base_r, base_g, base_b, base_a),
+    );
 
     // 1px fine rim highlight tracing the complete unified silhouette
     let rim_color = if is_dark {
@@ -225,16 +230,9 @@ impl<Message> canvas::Program<Message> for WallpaperCanvas {
                 let bar_w = bounds.width / n;
                 for (i, &c) in colors.iter().enumerate() {
                     let x = i as f32 * bar_w;
-                    let rect_w = if i == colors.len() - 1 {
-                        bounds.width - x
-                    } else {
-                        bar_w.ceil()
-                    };
-                    frame.fill_rectangle(
-                        Point::new(x, 0.0),
-                        Size::new(rect_w, bounds.height),
-                        c,
-                    );
+                    let rect_w =
+                        if i == colors.len() - 1 { bounds.width - x } else { bar_w.ceil() };
+                    frame.fill_rectangle(Point::new(x, 0.0), Size::new(rect_w, bounds.height), c);
                 }
             }
             WallpaperStyle::TvSmpteSplit => {
@@ -254,11 +252,7 @@ impl<Message> canvas::Program<Message> for WallpaperCanvas {
                 let top_bar_w = bounds.width / top_n;
                 for (i, &c) in top_colors.iter().enumerate() {
                     let x = i as f32 * top_bar_w;
-                    frame.fill_rectangle(
-                        Point::new(x, 0.0),
-                        Size::new(top_bar_w.ceil(), top_h),
-                        c,
-                    );
+                    frame.fill_rectangle(Point::new(x, 0.0), Size::new(top_bar_w.ceil(), top_h), c);
                 }
 
                 let bot_colors = [
@@ -340,15 +334,27 @@ impl<Message> canvas::Program<Message> for WallpaperCanvas {
             // Horizontal fine grid lines
             let mut y = grid_step;
             while y < bounds.height {
-                frame.fill_rectangle(Point::new(0.0, y), Size::new(bounds.width, 1.0), dark_line_color);
+                frame.fill_rectangle(
+                    Point::new(0.0, y),
+                    Size::new(bounds.width, 1.0),
+                    dark_line_color,
+                );
                 y += grid_step;
             }
 
             // Central crosshair & calibration test target
             let cx = (bounds.width * 0.5).round();
             let cy = (bounds.height * 0.5).round();
-            frame.fill_rectangle(Point::new(cx - 60.0, cy - 1.0), Size::new(120.0, 2.0), Color::WHITE);
-            frame.fill_rectangle(Point::new(cx - 1.0, cy - 60.0), Size::new(2.0, 120.0), Color::WHITE);
+            frame.fill_rectangle(
+                Point::new(cx - 60.0, cy - 1.0),
+                Size::new(120.0, 2.0),
+                Color::WHITE,
+            );
+            frame.fill_rectangle(
+                Point::new(cx - 1.0, cy - 60.0),
+                Size::new(2.0, 120.0),
+                Color::WHITE,
+            );
         }
 
         // 3. Render authentic Apple multi-tier soft drop shadows and continuous analytical backdrop blur
@@ -362,13 +368,7 @@ impl<Message> canvas::Program<Message> for WallpaperCanvas {
 
             // Step 3b: Continuous analytical backdrop blur inside each menu container squircle + arrow
             for occ in &self.occlusions {
-                render_blurred_occlusion(
-                    &mut frame,
-                    self.style,
-                    occ,
-                    blur_radius,
-                    bounds.size(),
-                );
+                render_blurred_occlusion(&mut frame, self.style, occ, blur_radius, bounds.size());
             }
         }
 

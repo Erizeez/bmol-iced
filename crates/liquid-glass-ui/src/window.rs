@@ -13,7 +13,6 @@ pub use bmol_window_shell::{
     loyal_drag_bar, setup_native_window, wrap_border_resizer, wrap_window_rim,
 };
 
-
 use iced::{Element, Subscription, Task, window};
 
 /// Default radius of a borderless Liquid Glass window in logical points (`H / 2`).
@@ -335,11 +334,7 @@ impl<'a, Message, Theme, Renderer> WindowDragArea<'a, Message, Theme, Renderer> 
         content: impl Into<Element<'a, Message, Theme, Renderer>>,
         on_press: Message,
     ) -> Self {
-        Self {
-            content: content.into(),
-            on_press,
-            on_double_click: None,
-        }
+        Self { content: content.into(), on_press, on_double_click: None }
     }
 
     /// Attaches an optional double-click action (e.g. toggle maximize).

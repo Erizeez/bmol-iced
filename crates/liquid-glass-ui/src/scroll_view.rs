@@ -15,7 +15,7 @@ use iced::{
     keyboard, mouse::ScrollDelta, window,
 };
 use spring_rs::{
-    apple_rubber_band, inverse_rubber_band, Spring, SpringMotion, APPLE_RUBBER_BAND_COEFFICIENT,
+    APPLE_RUBBER_BAND_COEFFICIENT, Spring, SpringMotion, apple_rubber_band, inverse_rubber_band,
 };
 
 use crate::{GlassForegroundRenderer, UiColorScheme, UiCornerStyle};
@@ -388,9 +388,7 @@ impl SpringScrollState {
             self.mode = ScrollMode::Bouncing;
         } else if release_velocity.abs() >= 60.0 {
             // In bounds with significant momentum: initiate inertial deceleration
-            self.mode = ScrollMode::Decelerating {
-                velocity: release_velocity,
-            };
+            self.mode = ScrollMode::Decelerating { velocity: release_velocity };
         } else {
             // Settled at rest within bounds
             self.velocity = 0.0;
@@ -403,9 +401,7 @@ impl SpringScrollState {
     pub fn advance_spring(&mut self, now: Instant) -> bool {
         let dt = self
             .last_frame
-            .map_or(1.0 / 60.0, |last| {
-                now.saturating_duration_since(last).as_secs_f32()
-            })
+            .map_or(1.0 / 60.0, |last| now.saturating_duration_since(last).as_secs_f32())
             .clamp(1.0 / 240.0, 0.05);
         self.last_frame = Some(now);
 
@@ -422,9 +418,9 @@ impl SpringScrollState {
                     Duration::from_millis(45)
                 };
 
-                let is_idle = self.last_input_time.is_none_or(|t| {
-                    now.saturating_duration_since(t) >= idle_threshold
-                });
+                let is_idle = self
+                    .last_input_time
+                    .is_none_or(|t| now.saturating_duration_since(t) >= idle_threshold);
                 if is_idle {
                     self.transition_from_interacting();
                     self.mode != ScrollMode::Idle
@@ -525,11 +521,7 @@ impl<'a, Message, Theme, Renderer> SpringScrollView<'a, Message, Theme, Renderer
         content: impl Into<Element<'a, Message, Theme, Renderer>>,
         color_scheme: UiColorScheme,
     ) -> Self {
-        Self {
-            content: content.into(),
-            color_scheme,
-            config: ScrollbarConfig::default(),
-        }
+        Self { content: content.into(), color_scheme, config: ScrollbarConfig::default() }
     }
 
     /// Customizes the scrollbar geometry configuration.
@@ -554,11 +546,7 @@ impl<'a, Message, Theme, Renderer> SpringScrollView<'a, Message, Theme, Renderer
 
     /// Computes thumb bounds using the configured resting thumb width.
     #[must_use]
-    pub fn thumb_bounds(
-        &self,
-        state: &SpringScrollState,
-        bounds: Rectangle,
-    ) -> Option<Rectangle> {
+    pub fn thumb_bounds(&self, state: &SpringScrollState, bounds: Rectangle) -> Option<Rectangle> {
         self.thumb_bounds_with_width(state, bounds, self.config.thumb_width)
     }
 
@@ -708,7 +696,8 @@ where
         state.content_height = content.size().height;
 
         let max_displacement = overscroll_dimension(state.viewport_height) * 1.5;
-        state.offset = state.offset.clamp(-max_displacement, state.scroll_range() + max_displacement);
+        state.offset =
+            state.offset.clamp(-max_displacement, state.scroll_range() + max_displacement);
         layout::Node::with_children(size, vec![content])
     }
 
@@ -720,9 +709,12 @@ where
         operation: &mut dyn advanced::widget::Operation,
     ) {
         let content_layout = layout.child(0);
-        self.content
-            .as_widget_mut()
-            .operate(&mut tree.children[0], content_layout, renderer, operation);
+        self.content.as_widget_mut().operate(
+            &mut tree.children[0],
+            content_layout,
+            renderer,
+            operation,
+        );
     }
 
     fn update(
@@ -772,23 +764,18 @@ where
                         && pointer.y >= scrollbar.y
                         && pointer.y <= scrollbar.y + scrollbar.height;
                     if in_slot {
-                        if let Some(thumb) = self.thumb_bounds_with_width(
-                            state,
-                            bounds,
-                            self.config.thumb_width,
-                        ) {
+                        if let Some(thumb) =
+                            self.thumb_bounds_with_width(state, bounds, self.config.thumb_width)
+                        {
                             let grabbed_at = if thumb.contains(pointer) {
                                 pointer.y - thumb.y
                             } else {
                                 thumb.height * 0.5
                             };
                             state.grabbed_at = Some(grabbed_at);
-                            state.set_offset(self.requested_offset(
-                                state,
-                                bounds,
-                                pointer.y,
-                                grabbed_at,
-                            ));
+                            state.set_offset(
+                                self.requested_offset(state, bounds, pointer.y, grabbed_at),
+                            );
                             Self::mark_activity(state, shell);
                             shell.capture_event();
                             return;
@@ -888,11 +875,7 @@ where
                     && position.y <= scrollbar.y + scrollbar.height
             });
         let expanded = scrollbar_hovered || state.grabbed_at.is_some();
-        let thumb_width = if expanded {
-            self.config.hover_width
-        } else {
-            self.config.thumb_width
-        };
+        let thumb_width = if expanded { self.config.hover_width } else { self.config.thumb_width };
         let track_width = thumb_width;
         let visual_opacity = if expanded { 1.0 } else { state.opacity };
 
@@ -938,8 +921,9 @@ where
             0.34
         };
         let color = match self.color_scheme {
-            UiColorScheme::Light => Color::from_rgb8(0, 0, 0)
-                .scale_alpha((1.0 - LIGHT_THUMB_TARGET) * visual_opacity),
+            UiColorScheme::Light => {
+                Color::from_rgb8(0, 0, 0).scale_alpha((1.0 - LIGHT_THUMB_TARGET) * visual_opacity)
+            }
             UiColorScheme::Dark => {
                 Color::from_rgba(0.92, 0.92, 0.94, (emphasis + 0.08) * visual_opacity)
             }

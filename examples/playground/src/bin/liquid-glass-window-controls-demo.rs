@@ -18,19 +18,16 @@ use iced::{
     widget::{button, column, container, row, scrollable, space, stack, text},
 };
 use iced_backend::{
-    DemoSurface, Renderer, WINDOW_CONTROL_DISABLED_IDS,
-    WINDOW_CONTROL_DISABLED_X, WINDOW_CONTROL_DISABLED_Y,
-    WINDOW_CONTROL_INACTIVE_IDS, WINDOW_CONTROL_INACTIVE_X, WINDOW_CONTROL_INACTIVE_Y,
-    WINDOW_CONTROL_LARGE_IDS,
-    WINDOW_CONTROL_LARGE_X, WINDOW_CONTROL_LARGE_Y, WINDOW_CONTROL_NATIVE_IDS,
-    WINDOW_CONTROL_NATIVE_X, WINDOW_CONTROL_NATIVE_Y,
-    WINDOW_CONTROL_REFERENCE_IDS, WINDOW_CONTROL_REFERENCE_X, WINDOW_CONTROL_REFERENCE_Y,
-    WindowControlTuning,
+    DemoSurface, Renderer, WINDOW_CONTROL_DISABLED_IDS, WINDOW_CONTROL_DISABLED_X,
+    WINDOW_CONTROL_DISABLED_Y, WINDOW_CONTROL_INACTIVE_IDS, WINDOW_CONTROL_INACTIVE_X,
+    WINDOW_CONTROL_INACTIVE_Y, WINDOW_CONTROL_LARGE_IDS, WINDOW_CONTROL_LARGE_X,
+    WINDOW_CONTROL_LARGE_Y, WINDOW_CONTROL_NATIVE_IDS, WINDOW_CONTROL_NATIVE_X,
+    WINDOW_CONTROL_NATIVE_Y, WINDOW_CONTROL_REFERENCE_IDS, WINDOW_CONTROL_REFERENCE_X,
+    WINDOW_CONTROL_REFERENCE_Y, WindowControlTuning,
 };
 use liquid_glass::{
-    GlassId, IcedWindowController,
-    IcedWindowPolicy, UiColorScheme, UiCornerStyle, UiTheme, WindowCommand,
-    WindowDragArea, WindowExpandBehavior,
+    GlassId, IcedWindowController, IcedWindowPolicy, UiColorScheme, UiCornerStyle, UiTheme,
+    WindowCommand, WindowDragArea, WindowExpandBehavior,
     ui::{components, font},
 };
 use spring_rs::{Spring, SpringMotion};
@@ -184,7 +181,9 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 let command = match action {
                     ControlAction::Close => WindowCommand::Close,
                     ControlAction::Minimize => WindowCommand::Minimize,
-                    ControlAction::Expand | ControlAction::Zoom => state.window_policy.expand_command(),
+                    ControlAction::Expand | ControlAction::Zoom => {
+                        state.window_policy.expand_command()
+                    }
                 };
                 return state.window.task(command);
             }
@@ -315,8 +314,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
 }
 
 fn subscription(state: &State) -> Subscription<Message> {
-    let theme_changes =
-        bmol_window_shell::system_theme_subscription(Message::SystemThemeChanged);
+    let theme_changes = bmol_window_shell::system_theme_subscription(Message::SystemThemeChanged);
     let window_events = IcedWindowController::events().map(Message::WindowEvent);
     let animation_active = state
         .hover_targets
@@ -894,14 +892,10 @@ mod tests {
 
     #[test]
     fn inactive_window_glyphs_use_a_separate_pale_tone() {
-        let active_light =
-            window_control_glyph_color(false, ControlAction::Close, false, 1.0);
-        let inactive_light =
-            window_control_glyph_color(false, ControlAction::Close, true, 0.0);
-        let active_dark =
-            window_control_glyph_color(true, ControlAction::Close, false, 1.0);
-        let inactive_dark =
-            window_control_glyph_color(true, ControlAction::Close, true, 0.0);
+        let active_light = window_control_glyph_color(false, ControlAction::Close, false, 1.0);
+        let inactive_light = window_control_glyph_color(false, ControlAction::Close, true, 0.0);
+        let active_dark = window_control_glyph_color(true, ControlAction::Close, false, 1.0);
+        let inactive_dark = window_control_glyph_color(true, ControlAction::Close, true, 0.0);
 
         assert!(inactive_light.r > active_light.r);
         assert!(inactive_light.g > active_light.g);

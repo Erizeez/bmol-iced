@@ -14,18 +14,15 @@ use iced::{
     Color, Point, Rectangle,
     widget::canvas::{self, Frame, Path},
 };
-use squircle_rs::{
-    squircle_popover_path_commands, PathCommand, SquircleParams,
-};
+use squircle_rs::{PathCommand, SquircleParams, squircle_popover_path_commands};
 
 pub use bmol_designs::popover_metrics::{
+    DOCK_MENU_ARROW_CENTER_OFFSET, PopoverArrowConfig, PopoverArrowEdge, PopoverArrowPreset,
     popover_arrow_profile_height, popover_arrow_profile_height_with_spline,
-    PopoverArrowConfig, PopoverArrowEdge, PopoverArrowPreset,
-    DOCK_MENU_ARROW_CENTER_OFFSET,
 };
 pub use squircle_rs::{
-    APPLE_CORNER_SMOOTHING, MENU_WIDE_SPLINE, TOOLTIP_NARROW_SPLINE,
-    PopoverArrowParams, PopoverArrowSide, PopoverSpline,
+    APPLE_CORNER_SMOOTHING, MENU_WIDE_SPLINE, PopoverArrowParams, PopoverArrowSide, PopoverSpline,
+    TOOLTIP_NARROW_SPLINE,
 };
 
 /// Computes a [`PopoverArrowConfig`] pointing directly at the center of a target anchor rectangle
@@ -59,14 +56,10 @@ pub fn align_arrow_to_target(
 /// Builds an authentic Apple continuous curvature squircle path with an integrated smooth
 /// popover arrow / beak (触角) on the designated edge.
 #[must_use]
-pub fn build_popover_path(
-    rect: Rectangle,
-    radius: f32,
-    arrow: PopoverArrowConfig,
-) -> Path {
+pub fn build_popover_path(rect: Rectangle, radius: f32, arrow: PopoverArrowConfig) -> Path {
     let r = radius.min(rect.width * 0.5).min(rect.height * 0.5);
-    let params = SquircleParams::new(rect.width, rect.height, r)
-        .with_smoothing(APPLE_CORNER_SMOOTHING);
+    let params =
+        SquircleParams::new(rect.width, rect.height, r).with_smoothing(APPLE_CORNER_SMOOTHING);
 
     let arrow_side = match arrow.edge {
         PopoverArrowEdge::Top => PopoverArrowSide::Top,
@@ -141,12 +134,7 @@ pub fn stroke_popover_rim(
         return;
     }
     let path = build_popover_path(rect, radius, arrow);
-    frame.stroke(
-        &path,
-        canvas::Stroke::default()
-            .with_color(color)
-            .with_width(width),
-    );
+    frame.stroke(&path, canvas::Stroke::default().with_color(color).with_width(width));
 }
 
 /// Renders multi-layer soft drop shadows matching macOS Popover Window shadow geometry,
@@ -178,10 +166,7 @@ pub fn render_popover_shadow(
             height: rect.height + spread * 1.1,
         };
         let shadow_arrow = if arrow.is_visible() {
-            arrow.with_size(
-                arrow.base_width + spread * 1.2,
-                arrow.height + spread * 0.8,
-            )
+            arrow.with_size(arrow.base_width + spread * 1.2, arrow.height + spread * 0.8)
         } else {
             arrow
         };
@@ -212,10 +197,7 @@ pub fn render_popover_shadow(
             height: rect.height + spread * 1.35,
         };
         let shadow_arrow = if arrow.is_visible() {
-            arrow.with_size(
-                arrow.base_width + spread * 1.2,
-                arrow.height + spread * 0.8,
-            )
+            arrow.with_size(arrow.base_width + spread * 1.2, arrow.height + spread * 0.8)
         } else {
             arrow
         };
@@ -235,21 +217,16 @@ mod tests {
 
     #[test]
     fn test_align_arrow_to_target_dock_bottom() {
-        let card = Rectangle {
-            x: 100.0,
-            y: 200.0,
-            width: 154.0,
-            height: 121.0,
-        };
-        let target_icon = Rectangle {
-            x: 120.0,
-            y: 330.0,
-            width: 48.0,
-            height: 48.0,
-        };
+        let card = Rectangle { x: 100.0, y: 200.0, width: 154.0, height: 121.0 };
+        let target_icon = Rectangle { x: 120.0, y: 330.0, width: 48.0, height: 48.0 };
 
         // Target center = 120 + 24 = 144. Rel x = 144 - 100 = 44. Offset = 44 / 154 ≈ 0.2857
-        let arrow = align_arrow_to_target(card, target_icon, PopoverArrowEdge::Bottom, PopoverArrowPreset::MenuWide);
+        let arrow = align_arrow_to_target(
+            card,
+            target_icon,
+            PopoverArrowEdge::Bottom,
+            PopoverArrowPreset::MenuWide,
+        );
         assert_eq!(arrow.edge, PopoverArrowEdge::Bottom);
         assert!((arrow.offset - (44.0 / 154.0)).abs() < 1e-4);
         assert_eq!(arrow.base_width, 21.0);
@@ -258,21 +235,16 @@ mod tests {
 
     #[test]
     fn test_align_arrow_to_target_menu_bar_top() {
-        let card = Rectangle {
-            x: 50.0,
-            y: 30.0,
-            width: 200.0,
-            height: 250.0,
-        };
-        let status_item = Rectangle {
-            x: 70.0,
-            y: 0.0,
-            width: 20.0,
-            height: 24.0,
-        };
+        let card = Rectangle { x: 50.0, y: 30.0, width: 200.0, height: 250.0 };
+        let status_item = Rectangle { x: 70.0, y: 0.0, width: 20.0, height: 24.0 };
 
         // Target center = 70 + 10 = 80. Rel x = 80 - 50 = 30. Offset = 30 / 200 = 0.15
-        let arrow = align_arrow_to_target(card, status_item, PopoverArrowEdge::Top, PopoverArrowPreset::AppKitStandard);
+        let arrow = align_arrow_to_target(
+            card,
+            status_item,
+            PopoverArrowEdge::Top,
+            PopoverArrowPreset::AppKitStandard,
+        );
         assert_eq!(arrow.edge, PopoverArrowEdge::Top);
         assert!((arrow.offset - 0.15).abs() < 1e-4);
         assert_eq!(arrow.base_width, 27.5);
@@ -281,12 +253,7 @@ mod tests {
 
     #[test]
     fn test_build_popover_path_all_presets_and_edges() {
-        let rect = Rectangle {
-            x: 10.0,
-            y: 10.0,
-            width: 154.0,
-            height: 121.0,
-        };
+        let rect = Rectangle { x: 10.0, y: 10.0, width: 154.0, height: 121.0 };
         let r = 10.0;
 
         let edges = [

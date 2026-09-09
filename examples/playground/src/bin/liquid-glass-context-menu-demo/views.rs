@@ -1,17 +1,17 @@
 //! UI view components: traffic lights, headers, pickers, cards, and status bar.
 
+use bmol_designs::popover_metrics::{PopoverArrowEdge, PopoverArrowPreset};
+use bmol_window_shell::traffic_lights;
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Shadow, Theme, Vector,
     font::Weight,
     mouse,
     widget::{button, column, container, row, space, text},
 };
-use bmol_designs::popover_metrics::{PopoverArrowEdge, PopoverArrowPreset};
-use bmol_window_shell::traffic_lights;
 use liquid_glass::{ContextMenu, UiPalette, ui::font};
 use vibrancy_rs::KawasePassPlan;
 
-use crate::menu_content::{demo_metrics, MenuContentPreset};
+use crate::menu_content::{MenuContentPreset, demo_metrics};
 use crate::state::{DragTarget, Message, State};
 use crate::vibrancy::{BlurPreset, WallpaperStyle};
 
@@ -28,23 +28,10 @@ pub fn view_wallpaper_picker<'a>(
         let btn = button(
             text(style.label())
                 .size(11.0)
-                .font(font::ui_font(if is_selected {
-                    Weight::Semibold
-                } else {
-                    Weight::Normal
-                }))
-                .color(if is_selected {
-                    Color::WHITE
-                } else {
-                    palette.text_secondary
-                }),
+                .font(font::ui_font(if is_selected { Weight::Semibold } else { Weight::Normal }))
+                .color(if is_selected { Color::WHITE } else { palette.text_secondary }),
         )
-        .padding(Padding {
-            top: 4.0,
-            right: 10.0,
-            bottom: 4.0,
-            left: 10.0,
-        })
+        .padding(Padding { top: 4.0, right: 10.0, bottom: 4.0, left: 10.0 })
         .style(move |_theme, _status| {
             if is_selected {
                 button::Style {
@@ -83,23 +70,10 @@ pub fn view_blur_preset_picker<'a>(
         let btn = button(
             text(preset.label())
                 .size(11.0)
-                .font(font::ui_font(if is_selected {
-                    Weight::Semibold
-                } else {
-                    Weight::Normal
-                }))
-                .color(if is_selected {
-                    Color::WHITE
-                } else {
-                    palette.text_secondary
-                }),
+                .font(font::ui_font(if is_selected { Weight::Semibold } else { Weight::Normal }))
+                .color(if is_selected { Color::WHITE } else { palette.text_secondary }),
         )
-        .padding(Padding {
-            top: 4.0,
-            right: 9.0,
-            bottom: 4.0,
-            left: 9.0,
-        })
+        .padding(Padding { top: 4.0, right: 9.0, bottom: 4.0, left: 9.0 })
         .style(move |_theme, _status| {
             if is_selected {
                 button::Style {
@@ -146,23 +120,10 @@ pub fn view_popover_arrow_picker<'a>(
         let btn = button(
             text(label)
                 .size(10.5)
-                .font(font::ui_font(if is_selected {
-                    Weight::Semibold
-                } else {
-                    Weight::Normal
-                }))
-                .color(if is_selected {
-                    Color::WHITE
-                } else {
-                    palette.text_secondary
-                }),
+                .font(font::ui_font(if is_selected { Weight::Semibold } else { Weight::Normal }))
+                .color(if is_selected { Color::WHITE } else { palette.text_secondary }),
         )
-        .padding(Padding {
-            top: 3.5,
-            right: 7.0,
-            bottom: 3.5,
-            left: 7.0,
-        })
+        .padding(Padding { top: 3.5, right: 7.0, bottom: 3.5, left: 7.0 })
         .style(move |_theme, _status| {
             if is_selected {
                 button::Style {
@@ -232,12 +193,7 @@ pub fn view_top_header<'a>(
             palette.text_primary
         }),
     )
-    .padding(Padding {
-        top: 4.0,
-        right: 8.0,
-        bottom: 4.0,
-        left: 8.0,
-    })
+    .padding(Padding { top: 4.0, right: 8.0, bottom: 4.0, left: 8.0 })
     .style(move |_theme, _status| {
         if state.menu_preset == MenuContentPreset::DockReference1To1 {
             button::Style {
@@ -272,12 +228,7 @@ pub fn view_top_header<'a>(
             .font(font::ui_font(Weight::Medium))
             .color(palette.text_primary),
     )
-    .padding(Padding {
-        top: 4.0,
-        right: 8.0,
-        bottom: 4.0,
-        left: 8.0,
-    })
+    .padding(Padding { top: 4.0, right: 8.0, bottom: 4.0, left: 8.0 })
     .style(move |_theme, _status| button::Style {
         background: Some(Background::Color(if is_dark {
             Color::from_rgba(1.0, 1.0, 1.0, 0.08)
@@ -295,12 +246,7 @@ pub fn view_top_header<'a>(
             .font(font::ui_font(Weight::Medium))
             .color(palette.text_primary),
     )
-    .padding(Padding {
-        top: 4.0,
-        right: 10.0,
-        bottom: 4.0,
-        left: 10.0,
-    })
+    .padding(Padding { top: 4.0, right: 10.0, bottom: 4.0, left: 10.0 })
     .style(move |_theme, _status| button::Style {
         background: Some(Background::Color(if is_dark {
             Color::from_rgba(1.0, 1.0, 1.0, 0.10)
@@ -379,10 +325,7 @@ pub fn view_menu_card<'a>(
     palette: &'a UiPalette,
 ) -> Element<'a, Message, Theme, iced::Renderer> {
     let grip_pill = row![
-        text("⠿")
-            .size(14.0)
-            .font(font::ui_font(Weight::Bold))
-            .color(palette.accent),
+        text("⠿").size(14.0).font(font::ui_font(Weight::Bold)).color(palette.accent),
         column![
             text(config.badge_title)
                 .size(11.0)
@@ -407,28 +350,20 @@ pub fn view_menu_card<'a>(
         container(grip_pill)
             .width(Length::Fixed(config.card_width))
             .height(Length::Fixed(demo_metrics::DRAG_HEADER_HEIGHT))
-            .padding(Padding {
-                top: 4.0,
-                right: 8.0,
-                bottom: 4.0,
-                left: 8.0,
-            })
+            .padding(Padding { top: 4.0, right: 8.0, bottom: 4.0, left: 8.0 })
             .style(move |_theme| container::Style {
                 background: Some(Background::Color(if config.is_dark_card {
                     Color::from_rgba(0.12, 0.12, 0.16, 0.90)
                 } else {
                     Color::from_rgba(0.96, 0.96, 0.98, 0.92)
                 })),
-                border: Border::default()
-                    .rounded(8.0)
-                    .width(1.0)
-                    .color(if is_dragging {
-                        palette.accent
-                    } else if config.is_dark_card {
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.22)
-                    } else {
-                        Color::from_rgba(0.0, 0.0, 0.0, 0.15)
-                    }),
+                border: Border::default().rounded(8.0).width(1.0).color(if is_dragging {
+                    palette.accent
+                } else if config.is_dark_card {
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.22)
+                } else {
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.15)
+                }),
                 shadow: Shadow {
                     color: Color::from_rgba(0.0, 0.0, 0.0, if is_dragging { 0.35 } else { 0.18 }),
                     offset: Vector::new(0.0, 4.0),
@@ -437,11 +372,7 @@ pub fn view_menu_card<'a>(
                 ..container::Style::default()
             }),
     )
-    .interaction(if is_dragging {
-        mouse::Interaction::Grabbing
-    } else {
-        mouse::Interaction::Grab
-    })
+    .interaction(if is_dragging { mouse::Interaction::Grabbing } else { mouse::Interaction::Grab })
     .on_press(Message::StartDragCard(config.target));
 
     let menu_element = container(menu.view::<iced::Renderer>(theme))
@@ -462,18 +393,13 @@ pub fn view_status_bar<'a>(
     palette: &'a UiPalette,
     is_dark: bool,
 ) -> Element<'a, Message, Theme, iced::Renderer> {
-    let status_text = state
-        .last_action
-        .as_deref()
-        .unwrap_or("就绪。按住卡片顶部手柄 ⠿ 可拖曳至任意彩条边界，实时观测 Dual-Kawase 柔和空间扩散");
+    let status_text = state.last_action.as_deref().unwrap_or(
+        "就绪。按住卡片顶部手柄 ⠿ 可拖曳至任意彩条边界，实时观测 Dual-Kawase 柔和空间扩散",
+    );
 
     let blur_radius = state.blur_preset.radius();
     let plan = KawasePassPlan::new(1280, 800, blur_radius);
-    let deep_tier = if plan.use_deep_blur {
-        "1/2→1/4→1/8"
-    } else {
-        "1/2→1/4"
-    };
+    let deep_tier = if plan.use_deep_blur { "1/2→1/4→1/8" } else { "1/2→1/4" };
 
     let status_content = row![
         text("STATUS: ")
@@ -496,12 +422,7 @@ pub fn view_status_bar<'a>(
 
     container(status_content)
         .width(Length::Fill)
-        .padding(Padding {
-            top: 6.0,
-            right: 16.0,
-            bottom: 6.0,
-            left: 16.0,
-        })
+        .padding(Padding { top: 6.0, right: 16.0, bottom: 6.0, left: 16.0 })
         .style(move |_theme| container::Style {
             background: Some(Background::Color(if is_dark {
                 Color::from_rgba(0.08, 0.08, 0.10, 0.85)

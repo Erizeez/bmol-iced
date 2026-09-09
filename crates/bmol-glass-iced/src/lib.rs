@@ -8,11 +8,6 @@ use std::{
     time::Instant,
 };
 
-use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
-use liquid_glass::{
-    GlassAccessibility, GlassId, GlassInteraction, GlassNode, GlassRole, GlassScene, GlassShape, GpuRenderer,
-    GpuSize, Rect, UiColorScheme, UiTheme,
-};
 pub use bmol_window_glass::{
     WINDOW_CONTROL_DISABLED_IDS, WINDOW_CONTROL_DISABLED_X, WINDOW_CONTROL_DISABLED_Y,
     WINDOW_CONTROL_GAP, WINDOW_CONTROL_INACTIVE_IDS, WINDOW_CONTROL_INACTIVE_X,
@@ -26,6 +21,11 @@ pub use bmol_window_glass::{
     set_window_control_press_progress, set_window_control_scale, set_window_control_tuning,
     traffic_lights_scene_for_viewport, window_control_group_hover_target,
     window_control_group_progress, window_control_press_progress, window_control_scale,
+};
+use iced_wgpu::{Engine, Renderer as IcedRenderer, graphics, wgpu};
+use liquid_glass::{
+    GlassAccessibility, GlassId, GlassInteraction, GlassNode, GlassRole, GlassScene, GlassShape,
+    GpuRenderer, GpuSize, Rect, UiColorScheme, UiTheme,
 };
 
 #[path = "background.rs"]
@@ -80,13 +80,11 @@ pub enum DemoSurface {
     TrafficLightsOnly,
 }
 
-
 static ACTIVE_COLOR_SCHEME: AtomicU8 = AtomicU8::new(1);
 static ACTIVE_ACCESSIBILITY: AtomicU8 = AtomicU8::new(0);
 static ACTIVE_SURFACE: AtomicU8 = AtomicU8::new(0);
 static ACTIVE_WINDOW_INACTIVE: AtomicBool = AtomicBool::new(false);
 
-#[allow(dead_code)]
 #[allow(dead_code)]
 pub fn set_window_inactive(inactive: bool) {
     ACTIVE_WINDOW_INACTIVE.store(inactive, Ordering::Relaxed);
@@ -129,7 +127,6 @@ pub fn set_accessibility(accessibility: GlassAccessibility) {
 }
 
 #[allow(dead_code)]
-#[allow(dead_code)]
 pub fn set_surface(surface: DemoSurface) {
     ACTIVE_SURFACE.store(
         match surface {
@@ -142,7 +139,6 @@ pub fn set_surface(surface: DemoSurface) {
 }
 
 #[allow(dead_code)]
-
 fn active_surface() -> DemoSurface {
     match ACTIVE_SURFACE.load(Ordering::Relaxed) {
         1 => DemoSurface::WindowControls,
@@ -286,7 +282,6 @@ impl Renderer {
         std::mem::take(&mut self.dynamic_nodes)
     }
 }
-
 
 impl liquid_glass::GlassForegroundRenderer for Renderer {
     fn begin_glass_foreground(&mut self) {
@@ -919,7 +914,8 @@ impl graphics::Compositor for Compositor {
             self.liquid.resize(size).map_err(|_| graphics::compositor::SurfaceError::Other)?;
         }
         let scale = viewport.scale_factor().max(1.0);
-        let logical_radius = f32::from(liquid_glass::IcedWindowPolicy::liquid_glass().corner_radius());
+        let logical_radius =
+            f32::from(liquid_glass::IcedWindowPolicy::liquid_glass().corner_radius());
         let physical_radius = (logical_radius * scale).round();
         self.liquid.set_window_corner_radius(physical_radius);
         self.liquid.set_accessibility(active_accessibility());
@@ -1080,9 +1076,7 @@ impl graphics::Compositor for Compositor {
             let mut dynamic_scene = GlassScene::default();
             for mut node in dynamic_nodes {
                 if let GlassShape::RoundedRect { radius } = node.shape {
-                    node.shape = GlassShape::RoundedRect {
-                        radius: radius * scale_factor,
-                    };
+                    node.shape = GlassShape::RoundedRect { radius: radius * scale_factor };
                 }
                 dynamic_scene.push(node);
             }
@@ -1161,9 +1155,7 @@ impl graphics::Compositor for Compositor {
                             UiColorScheme::Light => {
                                 [229.0 / 255.0, 229.0 / 255.0, 229.0 / 255.0, 1.0]
                             }
-                            UiColorScheme::Dark => {
-                                [70.0 / 255.0, 70.0 / 255.0, 70.0 / 255.0, 1.0]
-                            }
+                            UiColorScheme::Dark => [70.0 / 255.0, 70.0 / 255.0, 70.0 / 255.0, 1.0],
                         },
                     )
                     .map_err(|_| graphics::compositor::SurfaceError::Other)?;
@@ -1447,7 +1439,6 @@ fn window_controls_scene(
     scene
 }
 
-
 #[allow(clippy::cast_precision_loss)]
 fn navigation_scene_for_viewport(
     scale_factor: f32,
@@ -1499,7 +1490,6 @@ fn search_scene_for_viewport(
     let _ = size;
     scene
 }
-
 
 #[cfg(test)]
 mod tests {

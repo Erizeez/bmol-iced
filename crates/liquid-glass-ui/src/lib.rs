@@ -27,11 +27,12 @@ pub fn next_dynamic_glass_id() -> GlassId {
 }
 
 pub use context_menu::{ContextMenu, MenuItem, view_context_menu};
-pub use popover::{
-    align_arrow_to_target, build_popover_path, fill_popover, render_popover_shadow, stroke_popover_rim,
-    PopoverArrowConfig, PopoverArrowEdge, PopoverArrowPreset, PopoverArrowSide,
-};
 pub use icon::UiIcon;
+pub use popover::{
+    PopoverArrowConfig, PopoverArrowEdge, PopoverArrowPreset, PopoverArrowSide,
+    align_arrow_to_target, build_popover_path, fill_popover, render_popover_shadow,
+    stroke_popover_rim,
+};
 pub use scroll_view::{
     ScrollbarConfig, SpringScrollState, SpringScrollView, spring_scroll_view,
     spring_scroll_view_with_config,
@@ -44,7 +45,8 @@ pub use window::{
 
 use iced::advanced::text::Renderer as TextRenderer;
 use iced::{
-    Background, Border, Color as IcedColor, Event, Length, Padding, Pixels, Rectangle, Shadow, Size, Vector,
+    Background, Border, Color as IcedColor, Event, Length, Padding, Pixels, Rectangle, Shadow,
+    Size, Vector,
     advanced::{self, Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget::Tree},
 };
 use liquid_glass_scene::{
@@ -749,9 +751,7 @@ mod glass_panel {
             limits: &layout::Limits,
         ) -> layout::Node {
             layout::padded(limits, self.width, self.height, self.padding, |limits| {
-                self.content
-                    .as_widget_mut()
-                    .layout(&mut tree.children[0], renderer, limits)
+                self.content.as_widget_mut().layout(&mut tree.children[0], renderer, limits)
             })
         }
 
@@ -771,13 +771,11 @@ mod glass_panel {
             }
 
             // 1. Register dynamic GPU glass node for the compositor
-            let node = GlassNode::new(
-                self.id,
-                Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
-            )
-            .shape(self.shape.clone())
-            .corner_curve(self.corner_curve)
-            .material(self.material);
+            let node =
+                GlassNode::new(self.id, Rect::new(bounds.x, bounds.y, bounds.width, bounds.height))
+                    .shape(self.shape.clone())
+                    .corner_curve(self.corner_curve)
+                    .material(self.material);
 
             renderer.register_glass_node(node);
 
@@ -813,9 +811,12 @@ mod glass_panel {
             operation: &mut dyn advanced::widget::Operation,
         ) {
             if let Some(child_layout) = layout.children().next() {
-                self.content
-                    .as_widget_mut()
-                    .operate(&mut tree.children[0], child_layout, renderer, operation);
+                self.content.as_widget_mut().operate(
+                    &mut tree.children[0],
+                    child_layout,
+                    renderer,
+                    operation,
+                );
             }
         }
 
@@ -1969,11 +1970,17 @@ mod tests {
 
     #[test]
     fn glass_panel_creates_with_unique_ids_and_configuration() {
-        let panel1 = GlassPanel::<(), (), ()>::new(iced::Element::new(GlassContainer::new(GlassId(1), Rect::new(0.0, 0.0, 100.0, 50.0))))
-            .squircle_radius(24.0)
-            .padding(12.0);
-        let panel2 = GlassPanel::<(), (), ()>::new(iced::Element::new(GlassContainer::new(GlassId(2), Rect::new(0.0, 0.0, 100.0, 50.0))))
-            .squircle_radius(18.0);
+        let panel1 = GlassPanel::<(), (), ()>::new(iced::Element::new(GlassContainer::new(
+            GlassId(1),
+            Rect::new(0.0, 0.0, 100.0, 50.0),
+        )))
+        .squircle_radius(24.0)
+        .padding(12.0);
+        let panel2 = GlassPanel::<(), (), ()>::new(iced::Element::new(GlassContainer::new(
+            GlassId(2),
+            Rect::new(0.0, 0.0, 100.0, 50.0),
+        )))
+        .squircle_radius(18.0);
 
         assert_ne!(panel1.node_id(), panel2.node_id());
         assert_eq!(panel1.node_shape(), &GlassShape::RoundedRect { radius: 24.0 });

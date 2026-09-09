@@ -7,12 +7,12 @@
 //! - Smooth Accent hover pill with crisp white text inversion
 //! - Full support for shortcuts, icons, checkable states, sections, separators, and destructive actions
 
+use bmol_designs::menu_metrics;
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Shadow, Theme, Vector,
     font::Weight,
     widget::{button, column, container, row, space, text},
 };
-use bmol_designs::menu_metrics;
 
 use crate::{
     components::{ComponentRenderer, icon_tinted},
@@ -34,19 +34,9 @@ pub enum MenuItem<Message> {
         on_press: Option<Message>,
     },
     /// A toggleable item displaying a leading checkmark when active.
-    Checkbox {
-        label: String,
-        checked: bool,
-        disabled: bool,
-        on_toggle: Option<Message>,
-    },
+    Checkbox { label: String, checked: bool, disabled: bool, on_toggle: Option<Message> },
     /// A submenu item with a trailing disclosure chevron indicating hierarchy.
-    Submenu {
-        label: String,
-        icon: Option<UiIcon>,
-        disabled: bool,
-        on_hover: Option<Message>,
-    },
+    Submenu { label: String, icon: Option<UiIcon>, disabled: bool, on_hover: Option<Message> },
     /// An informational non-clickable section header.
     Section(String),
     /// A subtle divider line separating logical item groups.
@@ -68,22 +58,12 @@ impl<Message: Clone> MenuItem<Message> {
 
     /// Creates a checkable toggle item.
     pub fn checkbox(label: impl Into<String>, checked: bool) -> Self {
-        Self::Checkbox {
-            label: label.into(),
-            checked,
-            disabled: false,
-            on_toggle: None,
-        }
+        Self::Checkbox { label: label.into(), checked, disabled: false, on_toggle: None }
     }
 
     /// Creates a submenu item pointing to an expanded submenu.
     pub fn submenu(label: impl Into<String>) -> Self {
-        Self::Submenu {
-            label: label.into(),
-            icon: None,
-            disabled: false,
-            on_hover: None,
-        }
+        Self::Submenu { label: label.into(), icon: None, disabled: false, on_hover: None }
     }
 
     /// Creates an informational section header label.
@@ -288,31 +268,22 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
 
         for item in &self.items {
             match item {
-                MenuItem::Action {
-                    label,
-                    shortcut,
-                    icon,
-                    destructive,
-                    disabled,
-                    on_press,
-                } => {
+                MenuItem::Action { label, shortcut, icon, destructive, disabled, on_press } => {
                     let is_destructive = *destructive;
                     let is_disabled = *disabled;
                     let action_msg = on_press.clone();
 
-                    let btn = button(
-                        Self::render_row::<R>(
-                            label,
-                            shortcut.as_deref(),
-                            *icon,
-                            false,
-                            false,
-                            has_any_leading,
-                            is_destructive,
-                            is_disabled,
-                            &palette,
-                        )
-                    )
+                    let btn = button(Self::render_row::<R>(
+                        label,
+                        shortcut.as_deref(),
+                        *icon,
+                        false,
+                        false,
+                        has_any_leading,
+                        is_destructive,
+                        is_disabled,
+                        &palette,
+                    ))
                     .padding(Padding {
                         top: 0.0,
                         right: menu_metrics::ITEM_HORIZONTAL_PADDING,
@@ -335,29 +306,22 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
 
                     list = list.push(btn);
                 }
-                MenuItem::Checkbox {
-                    label,
-                    checked,
-                    disabled,
-                    on_toggle,
-                } => {
+                MenuItem::Checkbox { label, checked, disabled, on_toggle } => {
                     let is_checked = *checked;
                     let is_disabled = *disabled;
                     let toggle_msg = on_toggle.clone();
 
-                    let btn = button(
-                        Self::render_row::<R>(
-                            label,
-                            None,
-                            None,
-                            is_checked,
-                            false,
-                            has_any_leading,
-                            false,
-                            is_disabled,
-                            &palette,
-                        )
-                    )
+                    let btn = button(Self::render_row::<R>(
+                        label,
+                        None,
+                        None,
+                        is_checked,
+                        false,
+                        has_any_leading,
+                        false,
+                        is_disabled,
+                        &palette,
+                    ))
                     .padding(Padding {
                         top: 0.0,
                         right: menu_metrics::ITEM_HORIZONTAL_PADDING,
@@ -380,27 +344,20 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
 
                     list = list.push(btn);
                 }
-                MenuItem::Submenu {
-                    label,
-                    icon,
-                    disabled,
-                    on_hover: _,
-                } => {
+                MenuItem::Submenu { label, icon, disabled, on_hover: _ } => {
                     let is_disabled = *disabled;
 
-                    let btn = button(
-                        Self::render_row::<R>(
-                            label,
-                            None,
-                            *icon,
-                            false,
-                            true,
-                            has_any_leading,
-                            false,
-                            is_disabled,
-                            &palette,
-                        )
-                    )
+                    let btn = button(Self::render_row::<R>(
+                        label,
+                        None,
+                        *icon,
+                        false,
+                        true,
+                        has_any_leading,
+                        false,
+                        is_disabled,
+                        &palette,
+                    ))
                     .padding(Padding {
                         top: 0.0,
                         right: menu_metrics::ITEM_HORIZONTAL_PADDING,
@@ -420,7 +377,7 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
                         text(title.as_str())
                             .size(font::size::CAPTION)
                             .font(font::ui_font(Weight::Semibold))
-                            .color(palette.text_tertiary)
+                            .color(palette.text_tertiary),
                     )
                     .padding(Padding {
                         top: 4.0,
@@ -496,12 +453,7 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
                         (Border::default(), Shadow::default())
                     };
 
-                    container::Style {
-                        background,
-                        border,
-                        shadow,
-                        ..container::Style::default()
-                    }
+                    container::Style { background, border, shadow, ..container::Style::default() }
                 } else {
                     let (r, g, b, a) = menu_metrics::LIGHT_MENU_BASE_RGBA_F32;
                     let background = if transparent_bg {
@@ -525,12 +477,7 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
                         (Border::default(), Shadow::default())
                     };
 
-                    container::Style {
-                        background,
-                        border,
-                        shadow,
-                        ..container::Style::default()
-                    }
+                    container::Style { background, border, shadow, ..container::Style::default() }
                 }
             })
             .into()
@@ -603,13 +550,11 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
         // 1. Leading Slot: checkmark, icon, or placeholder
         if has_leading {
             if checked {
-                let check_element = text("✓")
-                    .size(13.0)
-                    .font(font::ui_font(Weight::Bold));
+                let check_element = text("✓").size(13.0).font(font::ui_font(Weight::Bold));
                 r = r.push(
                     container(check_element)
                         .width(Length::Fixed(menu_metrics::LEADING_SLOT_WIDTH))
-                        .align_x(iced::alignment::Horizontal::Left)
+                        .align_x(iced::alignment::Horizontal::Left),
                 );
             } else if let Some(icon_asset) = icon {
                 let icon_color = if disabled {
@@ -619,11 +564,12 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
                 } else {
                     palette.text_secondary
                 };
-                let icon_widget = icon_tinted(icon_asset, menu_metrics::ICON_SIZE, move |_| icon_color);
+                let icon_widget =
+                    icon_tinted(icon_asset, menu_metrics::ICON_SIZE, move |_| icon_color);
                 r = r.push(
                     container(icon_widget)
                         .width(Length::Fixed(menu_metrics::LEADING_SLOT_WIDTH))
-                        .align_x(iced::alignment::Horizontal::Left)
+                        .align_x(iced::alignment::Horizontal::Left),
                 );
             } else {
                 r = r.push(space().width(Length::Fixed(menu_metrics::LEADING_SLOT_WIDTH)));
@@ -632,9 +578,7 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
 
         // 2. Primary Label (inherits text_color from button::Style)
         r = r.push(
-            text(label.to_string())
-                .size(font::size::BODY)
-                .font(font::ui_font(Weight::Normal))
+            text(label.to_string()).size(font::size::BODY).font(font::ui_font(Weight::Normal)),
         );
 
         // 3. Flexible Horizontal Gap
@@ -642,24 +586,17 @@ impl<Message: Clone + 'static> ContextMenu<Message> {
 
         // 4. Trailing Slot: Shortcut or Submenu Chevron
         if let Some(sc) = shortcut {
-            let sc_color = if disabled {
-                palette.text_tertiary
-            } else {
-                palette.text_secondary
-            };
+            let sc_color = if disabled { palette.text_tertiary } else { palette.text_secondary };
 
             r = r.push(
                 text(sc.to_string())
                     .size(font::size::CAPTION)
                     .font(font::ui_font(Weight::Normal))
-                    .color(sc_color)
+                    .color(sc_color),
             );
         } else if is_submenu {
-            let chevron_color = if disabled {
-                palette.text_tertiary
-            } else {
-                palette.text_secondary
-            };
+            let chevron_color =
+                if disabled { palette.text_tertiary } else { palette.text_secondary };
             let chevron = icon_tinted(UiIcon::ChevronRight, 10.0, move |_| chevron_color);
             r = r.push(chevron);
         }
@@ -702,15 +639,7 @@ mod tests {
             .with_icon(UiIcon::Gear)
             .on_press(TestMsg::Cut);
 
-        if let MenuItem::Action {
-            label,
-            shortcut,
-            icon,
-            destructive,
-            disabled,
-            on_press,
-        } = cut
-        {
+        if let MenuItem::Action { label, shortcut, icon, destructive, disabled, on_press } = cut {
             assert_eq!(label, "Settings");
             assert_eq!(shortcut.as_deref(), Some("⌘,"));
             assert_eq!(icon, Some(UiIcon::Gear));
@@ -726,28 +655,17 @@ mod tests {
             .with_disabled(true)
             .on_press(TestMsg::Delete);
 
-        if let MenuItem::Action {
-            destructive,
-            disabled,
-            ..
-        } = delete
-        {
+        if let MenuItem::Action { destructive, disabled, .. } = delete {
             assert!(destructive);
             assert!(disabled);
         } else {
             panic!("Expected Action variant");
         }
 
-        let chk = MenuItem::checkbox("Show Line Numbers", true)
-            .on_toggle(TestMsg::ToggleLineNumbers);
+        let chk =
+            MenuItem::checkbox("Show Line Numbers", true).on_toggle(TestMsg::ToggleLineNumbers);
 
-        if let MenuItem::Checkbox {
-            label,
-            checked,
-            on_toggle,
-            ..
-        } = chk
-        {
+        if let MenuItem::Checkbox { label, checked, on_toggle, .. } = chk {
             assert_eq!(label, "Show Line Numbers");
             assert!(checked);
             assert_eq!(on_toggle, Some(TestMsg::ToggleLineNumbers));
