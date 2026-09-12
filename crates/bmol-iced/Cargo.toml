@@ -17,8 +17,12 @@ liquid-glass-scene = { git = "https://github.com/Erizeez/liquid-rs", branch = "m
 bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", branch = "main" }
 bmol-window-platform = { git = "https://github.com/Erizeez/bmol-window-shell", branch = "main" }
 bmol-window-native = { git = "https://github.com/Erizeez/bmol-window-shell", branch = "main" }
-bmol-designs = { git = "https://github.com/Erizeez/bmol-designs", tag = "v0.1.5" }
-liquid-glass-ui = { path = "../liquid-glass-ui", version = "0.1.4" }
+bmol-designs = { git = "https://github.com/Erizeez/bmol-designs", branch = "main" }
+iced = { version = "0.14.0", default-features = false, features = ["advanced", "canvas", "thread-pool", "svg", "image-without-codecs", "x11", "wayland"] }
+image = { version = "0.25.10" }
+squircle-icon-rs = { git = "https://github.com/Erizeez/squircle-icon-rs", tag = "v0.1.14" }
+vibrancy-rs = { git = "https://github.com/Erizeez/vibrancy-rs", tag = "v0.1.1" }
+liquid-glass-ui = { git = "https://github.com/Erizeez/bmol-glass-ui", branch = "main" }
 
 [lints]
 workspace = true

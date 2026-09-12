@@ -84,10 +84,10 @@ impl WindowExpandBehavior {
 
     /// Returns the matching icon for a custom green traffic-light control.
     #[must_use]
-    pub const fn icon(self) -> crate::UiIcon {
+    pub const fn icon(self) -> crate::ui::UiIcon {
         match self {
-            Self::Fullscreen => crate::UiIcon::WindowZoom,
-            Self::Maximize => crate::UiIcon::WindowMaximize,
+            Self::Fullscreen => crate::ui::UiIcon::WindowZoom,
+            Self::Maximize => crate::ui::UiIcon::WindowMaximize,
         }
     }
 }

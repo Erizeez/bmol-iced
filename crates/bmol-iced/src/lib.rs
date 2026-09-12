@@ -36,14 +36,22 @@ pub use scene::{
     GlassEffectContainer, GlassEnvironment, GlassId, GlassInteraction, GlassMaterial, GlassNode,
     GlassRenderOptions, GlassScene, GlassShape, GlassShapeLayer, GlassVariant, Rect, ShadowStyle,
 };
+/// Application-level composition that is not a reusable glass widget: the Dock
+/// shelf and the iced-facing window integration.
+pub mod dock;
+pub mod windowing;
+
 pub use ui::{
-    ContextMenu, DEFAULT_WINDOW_CORNER_RADIUS, GlassButton, GlassButtonIcon, GlassChrome,
-    GlassContainer, GlassForeground, GlassForegroundRenderer, GlassNavigationControl, GlassPanel,
-    GlassRole, GlassSegment, GlassSegmentContent, GlassSegmentedControl, IcedWindowController,
-    IcedWindowPolicy, MenuItem, ScrollbarConfig, SpringScrollState, SpringScrollView,
-    UiColorScheme, UiCornerStyle, UiIcon, UiPalette, UiTheme, WindowCommand, WindowDragArea,
-    WindowExpandBehavior, glass_panel, next_dynamic_glass_id, popover, spring_scroll_view,
+    ClarityPolicy, ContextMenu, GlassButton, GlassButtonIcon, GlassChrome, GlassContainer,
+    GlassForeground, GlassForegroundRenderer, GlassNavigationControl, GlassPanel, GlassRole,
+    GlassSegment, GlassSegmentContent, GlassSegmentedControl, MenuItem, ScrollbarConfig,
+    SpringScrollState, SpringScrollView, UiColorScheme, UiCornerStyle, UiIcon, UiPalette, UiTheme,
+    glass_panel, next_dynamic_glass_id, popover, spring_scroll_view,
     spring_scroll_view_with_config, view_context_menu,
+};
+pub use windowing::{
+    DEFAULT_WINDOW_CORNER_RADIUS, IcedWindowController, IcedWindowPolicy, WindowCommand,
+    WindowDragArea, WindowExpandBehavior,
 };
 
 pub use bmol_window_shell::{

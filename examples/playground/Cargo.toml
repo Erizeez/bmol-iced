@@ -17,11 +17,11 @@ bytemuck = { version = "1.24.0", features = ["derive"] }
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "advanced", "canvas", "svg", "image-without-codecs", "smol"] }
 iced_wgpu = { version = "0.14.0", features = ["svg", "image"] }
 flate2 = "1.0"
-image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
+image = { version = "0.25.10" }
 liquid-glass = { package = "bmol-iced", path = "../../crates/bmol-iced", version = "0.1.4" }
 bmol-glass-iced = { path = "../../crates/bmol-glass-iced", version = "0.1.4" }
 liquid-glass-native = { package = "bmol-window-native", git = "https://github.com/Erizeez/bmol-window-shell", branch = "main" }
-bmol-designs = { git = "https://github.com/Erizeez/bmol-designs", tag = "v0.1.5" }
+bmol-designs = { git = "https://github.com/Erizeez/bmol-designs", branch = "main" }
 bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", branch = "main", features = ["assets", "wallpaper", "theme"] }
 pollster = "1.0.1"
 spring-rs = { git = "https://github.com/Erizeez/spring-rs.git", tag = "v0.1.0" }
@@ -30,6 +30,7 @@ window-vibrancy = "0.8.0"
 winit = "0.30.12"
 vibrancy-rs = { git = "https://github.com/Erizeez/vibrancy-rs", tag = "v0.1.1" }
 squircle-icon-rs = { git = "https://github.com/Erizeez/squircle-icon-rs", tag = "v0.1.14" }
+liquid-glass-render = { git = "https://github.com/Erizeez/liquid-rs", branch = "main" }
 
 [lints]
 workspace = true
@@ -45,3 +46,7 @@ required-features = ["studio-assets"]
 name = "liquid-glass-comparison-demo"
 path = "src/bin/liquid-glass-comparison-demo.rs"
 required-features = ["studio-assets"]
+
+[[bin]]
+name = "liquid-glass-curve-playground"
+path = "src/bin/liquid-glass-curve-playground.rs"
