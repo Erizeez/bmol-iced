@@ -8,7 +8,7 @@ use std::{
     time::Instant,
 };
 
-pub use bmol_window_glass::{
+pub use bmol_window_traffic_lights::{
     WINDOW_CONTROL_DISABLED_IDS, WINDOW_CONTROL_DISABLED_X, WINDOW_CONTROL_DISABLED_Y,
     WINDOW_CONTROL_GAP, WINDOW_CONTROL_INACTIVE_IDS, WINDOW_CONTROL_INACTIVE_X,
     WINDOW_CONTROL_INACTIVE_Y, WINDOW_CONTROL_LARGE_GAP, WINDOW_CONTROL_LARGE_IDS,
@@ -35,7 +35,7 @@ mod background;
 ///
 /// The macOS reference samples report a 52 pt top-level AXToolbar. The sidebar
 /// search field is laid out below this chrome instead of being placed inside it.
-pub const FUSED_TOP_BAR_HEIGHT: f32 = bmol_window_shell::window_metrics::FUSED_HEADER_HEIGHT;
+pub const FUSED_TOP_BAR_HEIGHT: f32 = bmol_window_platform::window_metrics::FUSED_HEADER_HEIGHT;
 
 /// Entering hover is intentionally crisp, while leaving hover uses the
 /// previous, slightly softer response. Both values are shared with the Iced
@@ -52,8 +52,8 @@ pub const TOP_BAR_BUTTON_SIZE: f32 = 28.0;
 
 /// Shared sidebar geometry. Search and list content use this same inset frame;
 /// the scrollbar is an independent overlay and must not change this width.
-pub const SIDEBAR_WIDTH: f32 = bmol_window_shell::window_metrics::SIDEBAR_WIDTH_REGULAR;
-pub const SIDEBAR_CONTENT_INSET: f32 = bmol_window_shell::window_metrics::SIDEBAR_CONTENT_INSET;
+pub const SIDEBAR_WIDTH: f32 = bmol_window_platform::window_metrics::SIDEBAR_WIDTH_REGULAR;
+pub const SIDEBAR_CONTENT_INSET: f32 = bmol_window_platform::window_metrics::SIDEBAR_CONTENT_INSET;
 pub const SIDEBAR_CONTENT_WIDTH: f32 = SIDEBAR_WIDTH - SIDEBAR_CONTENT_INSET * 2.0;
 #[allow(dead_code)]
 pub const SIDEBAR_LIST_BOTTOM_INSET: f32 = 0.0;
