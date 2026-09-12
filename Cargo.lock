@@ -446,7 +446,7 @@ dependencies = [
  "liquid-glass-animation",
  "liquid-glass-render",
  "liquid-glass-scene",
- "liquid-glass-ui",
+ "liquid-glass-ui 0.1.6",
  "liquid-rs",
  "squircle-icon-rs",
  "squircle-rs",
@@ -456,7 +456,7 @@ dependencies = [
 [[package]]
 name = "bmol-window-native"
 version = "0.1.8"
-source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#4c201a3caee2ee54300411cf55d9fa11b29a44b2"
+source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#f1414d341e4ebd858233b5a8df0f899bd312a2d7"
 dependencies = [
  "block2 0.6.2",
  "core-graphics",
@@ -472,7 +472,7 @@ dependencies = [
 [[package]]
 name = "bmol-window-platform"
 version = "0.1.8"
-source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#4c201a3caee2ee54300411cf55d9fa11b29a44b2"
+source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#f1414d341e4ebd858233b5a8df0f899bd312a2d7"
 dependencies = [
  "bmol-designs",
 ]
@@ -480,12 +480,13 @@ dependencies = [
 [[package]]
 name = "bmol-window-shell"
 version = "0.1.8"
-source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#4c201a3caee2ee54300411cf55d9fa11b29a44b2"
+source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#f1414d341e4ebd858233b5a8df0f899bd312a2d7"
 dependencies = [
  "bmol-window-native",
  "bmol-window-platform",
  "bmol-window-traffic-lights",
  "iced",
+ "liquid-glass-ui 0.1.5",
  "raw-window-handle",
  "spring-rs",
  "squircle-rs",
@@ -494,11 +495,12 @@ dependencies = [
 [[package]]
 name = "bmol-window-traffic-lights"
 version = "0.1.8"
-source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#4c201a3caee2ee54300411cf55d9fa11b29a44b2"
+source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#f1414d341e4ebd858233b5a8df0f899bd312a2d7"
 dependencies = [
  "bmol-designs",
  "iced",
  "liquid-glass-scene",
+ "liquid-glass-ui 0.1.5",
  "spring-rs",
 ]
 
@@ -955,7 +957,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1998,6 +2000,20 @@ source = "git+https://github.com/Erizeez/bmol-glass-ui?tag=v0.1.5#13497c6139b57c
 dependencies = [
  "bmol-designs",
  "iced",
+ "liquid-glass-scene",
+ "spring-rs",
+ "squircle-rs",
+ "vibrancy-rs",
+]
+
+[[package]]
+name = "liquid-glass-ui"
+version = "0.1.6"
+source = "git+https://github.com/Erizeez/bmol-glass-ui?tag=v0.1.6#7b63c0c73d583e5ae3de0b3cad7f9521d0ffe910"
+dependencies = [
+ "bmol-designs",
+ "iced",
+ "iced_wgpu",
  "liquid-glass-scene",
  "spring-rs",
  "squircle-rs",
@@ -3244,7 +3260,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4383,7 +4399,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
