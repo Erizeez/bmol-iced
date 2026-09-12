@@ -24,7 +24,7 @@ window-vibrancy = "0.8.0"
 liquid-glass = { package = "bmol-iced", path = "../bmol-iced", version = "0.1.4" }
 bmol-window-platform = { git = "https://github.com/Erizeez/bmol-window-shell", branch = "main" }
 bmol-window-traffic-lights = { git = "https://github.com/Erizeez/bmol-window-shell", branch = "main" }
-liquid-glass-native = { package = "bmol-window-native", git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.8" }
+liquid-glass-native = { package = "bmol-window-native", git = "https://github.com/Erizeez/bmol-window-shell", branch = "main" }
 
 [lints]
 workspace = true

@@ -410,15 +410,6 @@ dependencies = [
 [[package]]
 name = "bmol-designs"
 version = "0.1.5"
-source = "git+https://github.com/Erizeez/bmol-designs?tag=v0.1.5#f89226a71f94d412f74a2d307c12147533f9bb7f"
-dependencies = [
- "liquid-rs",
- "squircle-rs",
-]
-
-[[package]]
-name = "bmol-designs"
-version = "0.1.5"
 source = "git+https://github.com/Erizeez/bmol-designs?branch=main#96244e4205a3a0e1bae1338d42bf1e1cf01360ae"
 dependencies = [
  "iced",
@@ -432,7 +423,7 @@ name = "bmol-glass-iced"
 version = "0.1.4"
 dependencies = [
  "bmol-iced",
- "bmol-window-native 0.1.8 (git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.8)",
+ "bmol-window-native",
  "bmol-window-platform",
  "bmol-window-traffic-lights",
  "iced",
@@ -446,8 +437,8 @@ dependencies = [
 name = "bmol-iced"
 version = "0.1.4"
 dependencies = [
- "bmol-designs 0.1.5 (git+https://github.com/Erizeez/bmol-designs?branch=main)",
- "bmol-window-native 0.1.8 (git+https://github.com/Erizeez/bmol-window-shell?branch=main)",
+ "bmol-designs",
+ "bmol-window-native",
  "bmol-window-platform",
  "bmol-window-shell",
  "iced",
@@ -465,23 +456,7 @@ dependencies = [
 [[package]]
 name = "bmol-window-native"
 version = "0.1.8"
-source = "git+https://github.com/Erizeez/bmol-window-shell?tag=v0.1.8#90d0336523432b8c7589aa142036c6cb3fe2f83b"
-dependencies = [
- "block2 0.6.2",
- "core-graphics",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation 0.3.2",
- "objc2-quartz-core 0.3.2",
- "raw-window-handle",
-]
-
-[[package]]
-name = "bmol-window-native"
-version = "0.1.8"
-source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#074a3ef9133e52960972dfaa43f828053c5084f8"
+source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#82d51b9b02e9d4ac60b67e0df881b1670c30e5f3"
 dependencies = [
  "block2 0.6.2",
  "core-graphics",
@@ -497,17 +472,17 @@ dependencies = [
 [[package]]
 name = "bmol-window-platform"
 version = "0.1.8"
-source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#074a3ef9133e52960972dfaa43f828053c5084f8"
+source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#82d51b9b02e9d4ac60b67e0df881b1670c30e5f3"
 dependencies = [
- "bmol-designs 0.1.5 (git+https://github.com/Erizeez/bmol-designs?tag=v0.1.5)",
+ "bmol-designs",
 ]
 
 [[package]]
 name = "bmol-window-shell"
 version = "0.1.8"
-source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#074a3ef9133e52960972dfaa43f828053c5084f8"
+source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#82d51b9b02e9d4ac60b67e0df881b1670c30e5f3"
 dependencies = [
- "bmol-window-native 0.1.8 (git+https://github.com/Erizeez/bmol-window-shell?branch=main)",
+ "bmol-window-native",
  "bmol-window-platform",
  "bmol-window-traffic-lights",
  "iced",
@@ -519,9 +494,9 @@ dependencies = [
 [[package]]
 name = "bmol-window-traffic-lights"
 version = "0.1.8"
-source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#074a3ef9133e52960972dfaa43f828053c5084f8"
+source = "git+https://github.com/Erizeez/bmol-window-shell?branch=main#82d51b9b02e9d4ac60b67e0df881b1670c30e5f3"
 dependencies = [
- "bmol-designs 0.1.5 (git+https://github.com/Erizeez/bmol-designs?tag=v0.1.5)",
+ "bmol-designs",
  "iced",
  "liquid-glass-scene",
  "spring-rs",
@@ -1960,10 +1935,12 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 [[package]]
 name = "liquid-glass-animation"
 version = "0.1.3"
+source = "git+https://github.com/Erizeez/liquid-rs?branch=main#481043a72a115ed3079ee7f2a2264ca82a5fb86e"
 
 [[package]]
 name = "liquid-glass-geometry"
 version = "0.1.3"
+source = "git+https://github.com/Erizeez/liquid-rs?branch=main#481043a72a115ed3079ee7f2a2264ca82a5fb86e"
 dependencies = [
  "squircle-rs",
 ]
@@ -1972,10 +1949,10 @@ dependencies = [
 name = "liquid-glass-playground"
 version = "0.1.4"
 dependencies = [
- "bmol-designs 0.1.5 (git+https://github.com/Erizeez/bmol-designs?branch=main)",
+ "bmol-designs",
  "bmol-glass-iced",
  "bmol-iced",
- "bmol-window-native 0.1.8 (git+https://github.com/Erizeez/bmol-window-shell?branch=main)",
+ "bmol-window-native",
  "bmol-window-shell",
  "bytemuck",
  "flate2",
@@ -1995,6 +1972,7 @@ dependencies = [
 [[package]]
 name = "liquid-glass-render"
 version = "0.1.3"
+source = "git+https://github.com/Erizeez/liquid-rs?branch=main#481043a72a115ed3079ee7f2a2264ca82a5fb86e"
 dependencies = [
  "bytemuck",
  "liquid-glass-scene",
@@ -2006,6 +1984,7 @@ dependencies = [
 [[package]]
 name = "liquid-glass-scene"
 version = "0.1.3"
+source = "git+https://github.com/Erizeez/liquid-rs?branch=main#481043a72a115ed3079ee7f2a2264ca82a5fb86e"
 dependencies = [
  "liquid-glass-geometry",
 ]
@@ -2015,7 +1994,7 @@ name = "liquid-glass-ui"
 version = "0.1.4"
 source = "git+https://github.com/Erizeez/bmol-glass-ui?branch=main#0f8b2427bf9fe107308b52dd4edd61bfc2688b5f"
 dependencies = [
- "bmol-designs 0.1.5 (git+https://github.com/Erizeez/bmol-designs?branch=main)",
+ "bmol-designs",
  "iced",
  "liquid-glass-scene",
  "spring-rs",
@@ -2026,6 +2005,7 @@ dependencies = [
 [[package]]
 name = "liquid-rs"
 version = "0.1.3"
+source = "git+https://github.com/Erizeez/liquid-rs?branch=main#481043a72a115ed3079ee7f2a2264ca82a5fb86e"
 dependencies = [
  "liquid-glass-animation",
  "liquid-glass-geometry",
