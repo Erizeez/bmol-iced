@@ -1,36 +1,41 @@
-//! Standalone Iced laboratory for custom macOS-style window controls.
+//! Standalone Iced laboratory for custom macOS-style window controls (traffic lights).
 //!
-//! The demo deliberately hides the native window decorations and renders the
-//! traffic lights through the same Liquid Glass compositor used by the
-//! settings demo. It shows the measured 14 pt controls, a second 1:1 sample,
-//! and enlarged active/inactive samples for inspecting hover and press light.
-//! The system glyphs are revealed on hover; inactive windows use the native
-//! pale gray/white treatment until hovered, then transition to the focused
-//! treatment. Unavailable controls stay dot-only.
+//! Rebuilt with the authentic physical optics pipeline:
+//! - 2x Retina Point-to-Point Physical Pixels (1:1 native device resolution, zero bilinear blur)
+//! - Quartic Bernstein-Bézier Droplet Profile (P1=1.25, P2=0.85, P3=0.20) for rich 3D bead lensing
+//! - Physical Grazing Highlight (top-left specular glint with cubic drop-off)
+//! - Subtractive Perimeter Crevice AO (dark hairline rim without artificial stroke outlines)
+//! - Calibrated Jewel Glass Transmittance (Ruby Red, Amber Gold, Emerald Green, Platinum Gray)
+
+#![allow(
+    clippy::many_single_char_names,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::suboptimal_flops,
+    clippy::similar_names
+)]
 
 #[path = "../iced_backend.rs"]
 mod iced_backend;
 
-use std::time::Duration;
-
+use bmol_window_shell::{WindowChromeConfig, WindowShellController, window_metrics};
 use iced::{
-    Background, Color, Element, Length, Padding, Subscription, Task, Theme,
-    widget::{button, column, container, row, scrollable, space, stack, text},
+    Alignment, Background, Color, Element, Length, Padding, Subscription, Task, Theme,
+    widget::{button, column, container, row, space, stack, svg, text},
 };
 use iced_backend::{
-    DemoSurface, Renderer, WINDOW_CONTROL_DISABLED_IDS, WINDOW_CONTROL_DISABLED_X,
-    WINDOW_CONTROL_DISABLED_Y, WINDOW_CONTROL_INACTIVE_IDS, WINDOW_CONTROL_INACTIVE_X,
-    WINDOW_CONTROL_INACTIVE_Y, WINDOW_CONTROL_LARGE_IDS, WINDOW_CONTROL_LARGE_X,
-    WINDOW_CONTROL_LARGE_Y, WINDOW_CONTROL_NATIVE_IDS, WINDOW_CONTROL_NATIVE_X,
-    WINDOW_CONTROL_NATIVE_Y, WINDOW_CONTROL_REFERENCE_IDS, WINDOW_CONTROL_REFERENCE_X,
-    WINDOW_CONTROL_REFERENCE_Y, WindowControlTuning,
+    Renderer, WINDOW_CONTROL_DISABLED_IDS, WINDOW_CONTROL_INACTIVE_IDS, WINDOW_CONTROL_LARGE_IDS,
+    WINDOW_CONTROL_NATIVE_IDS, WINDOW_CONTROL_NATIVE_X, WINDOW_CONTROL_NATIVE_Y,
+    WINDOW_CONTROL_REFERENCE_IDS,
 };
 use liquid_glass::{
-    GlassId, IcedWindowController, IcedWindowPolicy, UiColorScheme, UiCornerStyle, UiTheme,
-    WindowCommand, WindowDragArea, WindowExpandBehavior,
+    GlassId, UiColorScheme, WindowDragArea, WindowExpandBehavior,
     ui::{components, font},
 };
 use spring_rs::{Spring, SpringMotion};
+use std::time::Duration;
 
 pub use liquid_glass::traffic_lights as window_controls;
 
@@ -64,32 +69,187 @@ const ALL_WINDOW_CONTROL_IDS: [GlassId; 15] = [
     WINDOW_CONTROL_DISABLED_IDS[2],
 ];
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+/// Live press scale for one group's three controls.
+fn press_scales(state: &State, group: ControlGroup) -> [f32; 3] {
+    let base = group.index() * 3;
+    [
+        state.press_springs[base].value(),
+        state.press_springs[base + 1].value(),
+        state.press_springs[base + 2].value(),
+    ]
+}
+
+// =========================================================================
+// 1. Physical Traffic Light Optical Generator (2x Retina Point-to-Point)
+// =========================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhysicalTrafficLightTuning {
+    pub highlight_intensity: f32, // 0.0 ..= 2.0 (default 0.85)
+    pub dark_rim_intensity: f32,  // 0.0 ..= 3.0 (default 2.00)
+    pub center_glow: f32,         // 0.0 ..= 2.0 (default 1.00)
+    pub p1: f32,                  // 0.0 ..= 2.0 (default 0.00)
+    pub p2: f32,                  // 0.0 ..= 2.0 (default 0.00)
+    pub p3: f32,                  // 0.0 ..= 1.0 (default 0.00)
+    pub core_span_factor: f32,    // 0.5 ..= 2.0 (default 1.0)
+    pub rim_span_factor: f32,     // 0.5 ..= 2.0 (default 1.0)
+    pub saturation_lift: f32,     // 0.0 ..= 0.50 (default 0.25)
+}
+
+impl Default for PhysicalTrafficLightTuning {
+    fn default() -> Self {
+        Self {
+            highlight_intensity: 0.85,
+            dark_rim_intensity: 2.00,
+            center_glow: 1.00,
+            p1: 0.00,
+            p2: 0.00,
+            p3: 0.00,
+            core_span_factor: 1.0,
+            rim_span_factor: 1.0,
+            saturation_lift: 0.25,
+        }
+    }
+}
+
+pub fn render_physical_traffic_light_bead(
+    size: f32,
+    color: [f32; 3],
+    is_dark: bool,
+    hover_amount: f32,
+    glow_scale: f32,
+    tuning: PhysicalTrafficLightTuning,
+) -> iced::widget::image::Handle {
+    let scale = 2.0f32; // 2x Retina point-to-point physical pixel resolution
+    let w = ((size * scale).round() as usize).max(1);
+    let h = ((size * scale).round() as usize).max(1);
+    let r = w as f32 * 0.5;
+    let cx = r;
+    let cy = r;
+
+    // Hover brightens the ENTIRE button (lifts luminance & vibrancy by ~22%)
+    let hover_lift = hover_amount.clamp(0.0, 1.0) * 0.22;
+    let button_r = (color[0] * (1.0 + hover_lift)).min(1.0);
+    let button_g = (color[1] * (1.0 + hover_lift)).min(1.0);
+    let button_b = (color[2] * (1.0 + hover_lift)).min(1.0);
+
+    let mut raw = vec![0u8; w * h * 4];
+    for y in 0..h {
+        let py = y as f32 + 0.5;
+        let dy = py - cy;
+        for x in 0..w {
+            let px = x as f32 + 0.5;
+            let dx = px - cx;
+            let dist = (dx * dx + dy * dy).sqrt() - r;
+
+            let idx = (y * w + x) * 4;
+            if dist > 1.0 {
+                continue;
+            }
+
+            let len = (dx * dx + dy * dy).sqrt().max(1e-5);
+            let nx = dx / len;
+            let ny = dy / len;
+            let d = (-dist).max(0.0);
+
+            // 1. Quartic Bernstein-Bézier Droplet Profile (P1=P2=P3=0 -> (1 - t)^4)
+            let t_dist = (d / r).min(1.0);
+            let u = 1.0 - t_dist;
+            let falloff = u * u * u * u * 1.0
+                + 4.0 * u * u * u * t_dist * tuning.p1
+                + 6.0 * u * u * t_dist * t_dist * tuning.p2
+                + 4.0 * u * t_dist * t_dist * t_dist * tuning.p3;
+
+            let mode_caustic_mult = if is_dark { 0.80f32 } else { 1.10f32 };
+            // 2. Vertical Axial Internal Glow (从下至上垂直轴向渐变，绝非圆弧形)
+            let norm_y = dy / r;
+            let vert_t = ((norm_y - (-0.15)) / (1.0 - (-0.15))).clamp(0.0, 1.0);
+            let vert_glow = vert_t.powf(1.35);
+
+            // Subtle horizontal edge roll-off
+            let norm_x = dx / r;
+            let horiz_mask = (1.0 - norm_x * norm_x).max(0.0).powf(0.25);
+            let effective_glow = tuning.center_glow * glow_scale;
+            let axial_light = vert_glow * horiz_mask * 0.42 * mode_caustic_mult * effective_glow;
+
+            // Translucent glass core saturation lift + vertical axial glow
+            let core_lift = (1.0 - falloff) * tuning.saturation_lift * effective_glow;
+            let depth_lift = core_lift + axial_light;
+            let base_r = button_r * (0.88 + depth_lift);
+            let base_g = button_g * (0.88 + depth_lift);
+            let base_b = button_b * (0.88 + depth_lift);
+
+            // Light vs Dark Mode modulation (Mutually Exclusive / 独占生效):
+            let (mode_high_mult, mode_dark_mult) = if is_dark {
+                // 深色模式: 亮边独占生效 (1.0), 暗边完全不生效 (0.0)
+                (1.0f32, 0.0f32)
+            } else {
+                // 浅色模式: 暗边独占生效 (1.0), 亮边完全不生效 (0.0)
+                (0.0f32, 1.0f32)
+            };
+
+            // 2. Bright Edge: strictly TOP and BOTTOM (|ny| -> 1.0)
+            let high_weight = ny.abs().powf(1.8);
+            let core_span = (1.8f32 * scale).max(2.4 * scale * (size / 14.0).powf(0.5))
+                * tuning.core_span_factor;
+            let sharp_core = (1.0f32 - (d / core_span).min(1.0f32)).powi(3);
+            let faint_halo = (1.0f32 - (d / r).min(1.0f32)).powi(2) * 0.06;
+            let light_contrib = (sharp_core * 0.95 + faint_halo)
+                * high_weight
+                * mode_high_mult
+                * tuning.highlight_intensity;
+
+            // 3. Dark Rim: strictly LEFT and RIGHT (|nx| -> 1.0)
+            let dark_weight = nx.abs().powf(2.0);
+            let rim_span = (1.8f32 * scale).max(2.4 * scale * (size / 14.0).powf(0.5))
+                * tuning.rim_span_factor;
+            let rim_decay = (1.0f32 - (d / rim_span).min(1.0f32)).powi(2);
+            let dark_drop = rim_decay
+                * (52.0 / 255.0)
+                * dark_weight
+                * mode_dark_mult
+                * tuning.dark_rim_intensity;
+
+            // Combine
+            let final_r = (base_r - dark_drop + light_contrib).clamp(0.0, 1.0);
+            let final_g = (base_g - dark_drop + light_contrib).clamp(0.0, 1.0);
+            let final_b = (base_b - dark_drop + light_contrib).clamp(0.0, 1.0);
+
+            let alpha = (0.5 - dist).clamp(0.0, 1.0);
+            raw[idx] = (final_r * 255.0).round() as u8;
+            raw[idx + 1] = (final_g * 255.0).round() as u8;
+            raw[idx + 2] = (final_b * 255.0).round() as u8;
+            raw[idx + 3] = (alpha * 255.0).round() as u8;
+        }
+    }
+
+    iced::widget::image::Handle::from_rgba(w as u32, h as u32, raw)
+}
+
+// Colors:
+const COLOR_RUBY_RED: [f32; 3] = [1.00, 0.36, 0.34];
+const COLOR_AMBER_YELLOW: [f32; 3] = [1.00, 0.74, 0.18];
+const COLOR_EMERALD_GREEN: [f32; 3] = [0.16, 0.80, 0.28];
+const COLOR_PLATINUM_GRAY: [f32; 3] = [0.82, 0.84, 0.88];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TuningParameter {
-    BlurRadius,
-    InternalScattering,
-    SideEdgeDarkness,
-    SideEdgeWidth,
-    Opacity,
-    SubstrateCoverage,
-    LowerSubstrateCoverage,
-    LowerTintCoverage,
-    AngularLight,
-    LightAngle,
-    LightSoftness,
-    BodyThickness,
-    EdgeSideBias,
-    EdgeSideAngle,
-    RefractionStrength,
-    FresnelStrength,
+    HighlightIntensity,
+    DarkRimIntensity,
+    CenterGlow,
+    P1Convexity,
+    P2Belly,
+    P3Landing,
+    CoreSpanFactor,
+    RimSpanFactor,
+    SaturationLift,
 }
 
 #[derive(Debug, Clone)]
 enum Message {
-    ControlPressed { id: GlassId, action: ControlAction, execute: bool },
     ControlPressStarted { id: GlassId },
+    ControlReleased { id: GlassId, action: ControlAction, execute: bool },
     ControlPressVisualCancelled { id: GlassId },
-    ControlPressEnded { id: GlassId },
     ControlGroupHover { group: ControlGroup, hovered: bool },
     WindowReady(Option<iced::window::Id>),
     WindowEvent((iced::window::Id, iced::window::Event)),
@@ -102,133 +262,586 @@ enum Message {
 }
 
 struct State {
-    window: IcedWindowController,
-    window_policy: IcedWindowPolicy,
+    pub controller: WindowShellController,
     scheme: UiColorScheme,
     last_action: String,
     hover_targets: [f32; 5],
     hover_progress: [f32; 5],
+    pressed_control: Option<GlassId>,
     press_targets: [f32; 15],
     press_progress: [f32; 15],
     press_springs: [SpringMotion; 15],
-    tuning: WindowControlTuning,
+    tuning: PhysicalTrafficLightTuning,
+    beads_14_norm: [iced::widget::image::Handle; 3],
+    beads_14_hov: [iced::widget::image::Handle; 3],
+    beads_14_pressed: [iced::widget::image::Handle; 3],
+    beads_64_norm: [iced::widget::image::Handle; 3],
+    beads_64_hov: [iced::widget::image::Handle; 3],
+    beads_64_pressed: [iced::widget::image::Handle; 3],
+    beads_64_inactive: [iced::widget::image::Handle; 3],
+    beads_64_disabled: [iced::widget::image::Handle; 3],
+}
+
+impl State {
+    fn regenerate_beads(&mut self) {
+        let t = self.tuning;
+        let is_dark = self.scheme == UiColorScheme::Dark;
+        self.beads_14_norm = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+        ];
+        self.beads_14_hov = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                0.0,
+                1.00, // Hover lifts red light center glow to 100%!
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+        ];
+        self.beads_14_pressed = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                1.0,
+                1.00,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                1.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                1.0,
+                0.60,
+                t,
+            ),
+        ];
+        self.beads_64_norm = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+        ];
+        self.beads_64_hov = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                0.0,
+                1.00, // Hover lifts red light center glow to 100%!
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+        ];
+        self.beads_64_pressed = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                1.0,
+                1.00,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                1.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                1.0,
+                0.60,
+                t,
+            ),
+        ];
+        self.beads_64_inactive = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_PLATINUM_GRAY,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_PLATINUM_GRAY,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_PLATINUM_GRAY,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+        ];
+        self.beads_64_disabled = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+        ];
+    }
 }
 
 impl Default for State {
     fn default() -> Self {
+        let config = WindowChromeConfig::unified_header(window_metrics::FUSED_HEADER_HEIGHT);
+        let controller = WindowShellController::new(config, true);
+
+        let t = PhysicalTrafficLightTuning::default();
+        let is_dark = true;
+        let beads_14_norm = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+        ];
+        let beads_14_hov = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                0.0,
+                1.00,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+        ];
+        let beads_14_pressed = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                1.0,
+                1.00,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                1.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_NATIVE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                1.0,
+                0.60,
+                t,
+            ),
+        ];
+        let beads_64_norm = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+        ];
+        let beads_64_hov = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                0.0,
+                1.00,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+        ];
+        let beads_64_pressed = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                1.0,
+                1.00,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                1.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                1.0,
+                0.60,
+                t,
+            ),
+        ];
+        let beads_64_inactive = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_PLATINUM_GRAY,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_PLATINUM_GRAY,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_PLATINUM_GRAY,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+        ];
+        let beads_64_disabled = [
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_RUBY_RED,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_AMBER_YELLOW,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+            render_physical_traffic_light_bead(
+                WINDOW_CONTROL_LARGE_SIZE,
+                COLOR_EMERALD_GREEN,
+                is_dark,
+                0.0,
+                0.60,
+                t,
+            ),
+        ];
+
         Self {
-            window: IcedWindowController::new(),
-            window_policy: demo_window_policy(),
-            scheme: UiColorScheme::Light,
-            last_action: "Move over a control to reveal its system glyph".into(),
+            controller,
+            scheme: UiColorScheme::Dark,
+            last_action: "Hover over a control to reveal its vector system glyph".into(),
             hover_targets: [0.0; 5],
             hover_progress: [0.0; 5],
+            pressed_control: None,
             press_targets: [0.0; 15],
             press_progress: [0.0; 15],
             press_springs: std::array::from_fn(|_| {
                 SpringMotion::new(
                     1.0,
                     1.0,
-                    Spring::bouncy_custom(
-                        PRESS_SCALE_SPRING_DURATION,
-                        PRESS_SCALE_SPRING_EXTRA_BOUNCE,
-                    ),
+                    // zeta = 0.70: a slight, visible overshoot rather than the
+                    // wide bounce the previous `bouncy_custom` produced.
+                    Spring::perceptual(0.20, 0.30),
                 )
             }),
-            tuning: WindowControlTuning::default(),
+            tuning: t,
+            beads_14_norm,
+            beads_14_hov,
+            beads_14_pressed,
+            beads_64_norm,
+            beads_64_hov,
+            beads_64_pressed,
+            beads_64_inactive,
+            beads_64_disabled,
         }
     }
 }
 
 fn boot() -> (State, Task<Message>) {
     let state = State::default();
-    iced_backend::set_surface(DemoSurface::WindowControls);
-    iced_backend::set_color_scheme(state.scheme);
-    iced_backend::set_accessibility(liquid_glass::GlassAccessibility::none());
-    iced_backend::set_window_control_tuning(state.tuning);
-    for index in 0..state.hover_progress.len() {
-        iced_backend::set_window_control_group_progress(index, 0.0);
-    }
-    for id in ALL_WINDOW_CONTROL_IDS {
-        iced_backend::set_window_control_press_progress(id, 0.0);
-        iced_backend::set_window_control_scale(id, 1.0);
-    }
-    (
-        state,
-        Task::batch([
-            iced::system::theme().map(Message::SystemThemeChanged),
-            IcedWindowController::latest().map(Message::WindowReady),
-        ]),
-    )
-}
-
-const fn demo_window_policy() -> IcedWindowPolicy {
-    IcedWindowPolicy::liquid_glass().manual_close()
+    (state, Task::batch([iced::system::theme().map(Message::SystemThemeChanged)]))
 }
 
 fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
-        Message::ControlPressed { id, action, execute } => {
-            if execute {
-                finish_control_press(state, id);
-            }
-            state.last_action = if execute {
-                format!("{} control pressed — sent to the Iced window", action.name())
-            } else {
-                format!("{} control pressed — inspection sample", action.name())
-            };
-            if execute {
-                let command = match action {
-                    ControlAction::Close => WindowCommand::Close,
-                    ControlAction::Minimize => WindowCommand::Minimize,
-                    ControlAction::Expand | ControlAction::Zoom => {
-                        state.window_policy.expand_command()
-                    }
-                };
-                return state.window.task(command);
-            }
-        }
         Message::ControlPressStarted { id } => {
+            state.pressed_control = Some(id);
             if let Some(index) = window_control_slot_index(id) {
                 state.press_targets[index] = 1.0;
                 state.press_springs[index].retarget(PRESS_SCALE_OVERSHOOT);
             }
+            state.last_action = format!("Pressed control #{id:?} (hold down to preview)");
+            Task::none()
+        }
+        Message::ControlReleased { id, action, execute } => {
+            let was_pressed = state.pressed_control == Some(id);
+            state.pressed_control = None;
+            finish_control_press(state, id);
+            if was_pressed {
+                state.last_action = format!("Triggered {action:?} on control #{id:?}");
+                if execute {
+                    match action {
+                        ControlAction::Close => {
+                            if let Some(wid) = state.controller.window_id {
+                                return iced::window::close(wid);
+                            }
+                        }
+                        ControlAction::Minimize => {
+                            if let Some(wid) = state.controller.window_id {
+                                return iced::window::minimize(wid, true);
+                            }
+                        }
+                        ControlAction::Zoom | ControlAction::Expand => {
+                            if let Some(wid) = state.controller.window_id {
+                                return iced::window::toggle_maximize(wid);
+                            }
+                        }
+                    }
+                }
+            }
+            Task::none()
         }
         Message::ControlPressVisualCancelled { id } => {
-            finish_control_press_visual(state, id);
-        }
-        Message::ControlPressEnded { id } => {
+            if state.pressed_control == Some(id) {
+                state.pressed_control = None;
+                state.last_action = format!("Cancelled press on control #{id:?}");
+            }
             finish_control_press(state, id);
+            Task::none()
         }
-        Message::WindowReady(id) => {
-            if let Some(id) = id {
-                state.window.attach(id);
-            }
+        Message::WindowReady(Some(id)) => {
+            state.controller.set_window_id(id);
+            let controller = state.controller.clone();
+            iced::window::run(id, move |w| {
+                if let Ok(handle) = w.window_handle() {
+                    let _ = controller.setup_window(handle.as_raw());
+                }
+            })
+            .discard()
         }
+        Message::WindowReady(None) => Task::none(),
         Message::WindowEvent((id, event)) => {
-            let close_requested = matches!(event, iced::window::Event::CloseRequested);
-            state.window.observe(id, &event);
-            if close_requested {
-                // This demo explicitly uses `manual_close` so a real app can
-                // insert confirmation or save logic here. It has nothing to
-                // save, so it closes immediately.
-                return state.window.task(WindowCommand::Close);
+            if let iced::window::Event::Opened { .. } = event {
+                if state.controller.window_id.is_none() {
+                    return update(state, Message::WindowReady(Some(id)));
+                }
             }
+            if let Some(shell_event) = state.controller.handle_window_event(&event) {
+                match shell_event {
+                    bmol_window_shell::ShellEvent::CloseRequested => {
+                        if let Some(wid) = state.controller.window_id {
+                            return iced::window::close(wid);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Task::none()
         }
         Message::BeginWindowDrag => {
-            return state.window.task(WindowCommand::BeginDrag);
+            if let Some(wid) = state.controller.window_id {
+                iced::window::drag(wid)
+            } else {
+                Task::none()
+            }
         }
         Message::ControlGroupHover { group, hovered } => {
-            iced_backend::set_window_control_group_hover(group.index(), hovered);
             state.hover_targets[group.index()] = if hovered { 1.0 } else { 0.0 };
+            Task::none()
         }
         Message::AnimationTick => {
-            // Keep the Iced glyph layer and the compositor's material layer
             for (progress, target) in state.hover_progress.iter_mut().zip(state.hover_targets) {
                 let time_constant = if target >= *progress {
-                    iced_backend::INTERACTION_ENTER_ANIMATION_TIME_CONSTANT
+                    INTERACTION_ENTER_ANIMATION_TIME_CONSTANT
                 } else {
-                    iced_backend::INTERACTION_EXIT_ANIMATION_TIME_CONSTANT
+                    INTERACTION_EXIT_ANIMATION_TIME_CONSTANT
                 };
                 let step = 1.0 - (-0.016_f32 / time_constant).exp();
                 let value = *progress + (target - *progress) * step;
@@ -244,539 +857,289 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 let value = *progress + (target - *progress) * step;
                 *progress = if (value - target).abs() < 0.001 { target } else { value };
             }
-            for (index, progress) in state.hover_progress.iter().copied().enumerate() {
-                iced_backend::set_window_control_group_progress(index, progress);
-            }
-            for (id, progress) in
-                ALL_WINDOW_CONTROL_IDS.into_iter().zip(state.press_progress.iter().copied())
-            {
-                iced_backend::set_window_control_press_progress(id, progress);
-            }
             for (id, spring) in
                 ALL_WINDOW_CONTROL_IDS.into_iter().zip(state.press_springs.iter_mut())
             {
                 spring.step(1.0 / 60.0);
-                iced_backend::set_window_control_scale(id, spring.value());
+                let _ = id;
             }
+            Task::none()
         }
         Message::TuningChanged { parameter, value } => {
             match parameter {
-                TuningParameter::BlurRadius => state.tuning.blur_radius = value,
-                TuningParameter::InternalScattering => {
-                    state.tuning.internal_scattering = value;
-                }
-                TuningParameter::SideEdgeDarkness => state.tuning.side_edge_darkness = value,
-                TuningParameter::SideEdgeWidth => state.tuning.side_edge_width = value,
-                TuningParameter::Opacity => state.tuning.opacity = value,
-                TuningParameter::SubstrateCoverage => {
-                    state.tuning.substrate_coverage = value;
-                }
-                TuningParameter::LowerSubstrateCoverage => {
-                    state.tuning.lower_substrate_coverage = value;
-                }
-                TuningParameter::LowerTintCoverage => {
-                    state.tuning.lower_tint_coverage = value;
-                }
-                TuningParameter::AngularLight => state.tuning.angular_light = value,
-                TuningParameter::LightAngle => state.tuning.light_angle = value,
-                TuningParameter::LightSoftness => state.tuning.light_softness = value,
-                TuningParameter::BodyThickness => state.tuning.body_thickness = value,
-                TuningParameter::EdgeSideBias => state.tuning.edge_side_bias = value,
-                TuningParameter::EdgeSideAngle => state.tuning.edge_side_angle = value,
-                TuningParameter::RefractionStrength => {
-                    state.tuning.refraction_strength = value;
-                }
-                TuningParameter::FresnelStrength => state.tuning.fresnel_strength = value,
+                TuningParameter::HighlightIntensity => state.tuning.highlight_intensity = value,
+                TuningParameter::DarkRimIntensity => state.tuning.dark_rim_intensity = value,
+                TuningParameter::CenterGlow => state.tuning.center_glow = value,
+                TuningParameter::P1Convexity => state.tuning.p1 = value,
+                TuningParameter::P2Belly => state.tuning.p2 = value,
+                TuningParameter::P3Landing => state.tuning.p3 = value,
+                TuningParameter::CoreSpanFactor => state.tuning.core_span_factor = value,
+                TuningParameter::RimSpanFactor => state.tuning.rim_span_factor = value,
+                TuningParameter::SaturationLift => state.tuning.saturation_lift = value,
             }
-            iced_backend::set_window_control_tuning(state.tuning);
+            state.regenerate_beads();
+            state.last_action = format!("Tuned {parameter:?} -> {value:.2}");
+            Task::none()
         }
         Message::CopyConfiguration => {
             state.last_action = "Configuration copied to clipboard".into();
-            return iced::clipboard::write(configuration_text(state));
+            iced::clipboard::write(configuration_text(state))
         }
         Message::ToggleScheme => {
             state.scheme = match state.scheme {
                 UiColorScheme::Light => UiColorScheme::Dark,
                 UiColorScheme::Dark => UiColorScheme::Light,
             };
-            state.tuning = WindowControlTuning::for_scheme(state.scheme == UiColorScheme::Dark);
-            iced_backend::set_color_scheme(state.scheme);
-            iced_backend::set_window_control_tuning(state.tuning);
+            state.regenerate_beads();
+            state.last_action = format!("Switched scheme to {:?}", state.scheme);
+            Task::none()
         }
         Message::SystemThemeChanged(mode) => {
-            state.scheme = UiColorScheme::from_mode(mode);
-            state.tuning = WindowControlTuning::for_scheme(state.scheme == UiColorScheme::Dark);
-            iced_backend::set_color_scheme(state.scheme);
-            iced_backend::set_window_control_tuning(state.tuning);
+            state.scheme = match mode {
+                iced::theme::Mode::Dark => UiColorScheme::Dark,
+                _ => UiColorScheme::Light,
+            };
+            state.regenerate_beads();
+            Task::none()
         }
     }
-    Task::none()
 }
 
-fn subscription(state: &State) -> Subscription<Message> {
-    let theme_changes = bmol_window_shell::system_theme_subscription(Message::SystemThemeChanged);
-    let window_events = IcedWindowController::events().map(Message::WindowEvent);
-    let animation_active = state
-        .hover_targets
-        .iter()
-        .zip(state.hover_progress.iter())
-        .any(|(target, progress)| (target - progress).abs() > 0.001)
-        || state
-            .press_targets
-            .iter()
-            .zip(state.press_progress.iter())
-            .any(|(target, progress)| (target - progress).abs() > 0.001);
-    let spring_active = state.press_springs.iter().any(|spring| !spring.is_settled(0.001, 0.01));
-    if animation_active || spring_active {
-        Subscription::batch([
-            theme_changes,
-            window_events,
-            iced::time::every(Duration::from_millis(16)).map(|_| Message::AnimationTick),
-        ])
-    } else {
-        Subscription::batch([theme_changes, window_events])
-    }
+fn subscription(_state: &State) -> Subscription<Message> {
+    Subscription::batch([
+        iced::time::every(Duration::from_millis(16)).map(|_| Message::AnimationTick),
+        iced::event::listen_with(|event, _status, id| match event {
+            iced::Event::Window(event) => Some(Message::WindowEvent((id, event))),
+            _ => None,
+        }),
+    ])
 }
 
-fn app_theme(state: &State) -> Theme {
-    UiTheme::new(state.scheme).iced_theme()
-}
+// =========================================================================
+// 3. View Layout & Interactive Buttons
+// =========================================================================
 
 fn view(state: &State) -> AppElement<'_> {
-    let info = container(
-        column![
-            row![
-                text("Custom Window Controls")
-                    .size(28.0)
-                    .font(font::ui_font(iced::font::Weight::Semibold)),
-                space().width(Length::Fill),
-                button(text("Copy configuration"))
-                    .on_press(Message::CopyConfiguration)
-                    .padding([7, 12]),
-                button(text(match state.scheme {
-                    UiColorScheme::Light => "Switch to dark mode",
-                    UiColorScheme::Dark => "Switch to light mode",
-                }))
-                .on_press(Message::ToggleScheme)
-                .padding([7, 12]),
-            ]
-            .align_y(iced::Alignment::Center),
-            text("Live SDF glass · macOS-extracted vector glyphs · hover and press")
-                .size(font::size::BODY)
-                .style(components::secondary_text),
-            text(&state.last_action).size(font::size::CAPTION).style(components::tertiary_text),
-        ]
-        .spacing(8),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(Padding { top: 86.0, right: 48.0, bottom: 0.0, left: 48.0 })
-    .style(transparent_surface);
+    let is_dark = state.scheme == UiColorScheme::Dark;
+    let title_row = row![
+        text("Custom Window Controls")
+            .size(28)
+            .font(font::ui_font(iced::font::Weight::Bold))
+            .color(if is_dark { Color::WHITE } else { Color::from_rgb(0.08, 0.08, 0.10) }),
+        space().width(Length::Fill),
+        button(text(if is_dark { "☀️ Light mode" } else { "🌙 Dark mode" }).size(12))
+            .padding(Padding { top: 4.0, right: 10.0, bottom: 4.0, left: 10.0 })
+            .on_press(Message::ToggleScheme),
+    ]
+    .align_y(Alignment::Center);
 
-    let native_controls = positioned_control_group(
-        control_group(
-            WINDOW_CONTROL_NATIVE_IDS,
-            WINDOW_CONTROL_NATIVE_SIZE,
-            WINDOW_CONTROL_GAP,
-            state.scheme,
-            true,
-            false,
-            true,
-            ControlGroup::Native,
-            state.hover_progress[ControlGroup::Native.index()],
-            state.window_policy.expand_behavior,
-            control_group_scales(&state.press_springs, ControlGroup::Native),
-        ),
-        WINDOW_CONTROL_NATIVE_X,
-        WINDOW_CONTROL_NATIVE_Y,
+    let subtitle =
+        text("Physical Water Droplet Lensing · 2x Retina Point-to-Point · Vector Glyphs on Hover")
+            .size(13)
+            .font(font::ui_font(iced::font::Weight::Medium))
+            .color(if is_dark {
+                Color::from_rgb(0.7, 0.72, 0.76)
+            } else {
+                Color::from_rgb(0.4, 0.42, 0.46)
+            });
+
+    let status_text = text(&state.last_action)
+        .size(12)
+        .font(font::ui_font(iced::font::Weight::Normal))
+        .color(if is_dark {
+            Color::from_rgb(0.5, 0.52, 0.56)
+        } else {
+            Color::from_rgb(0.55, 0.58, 0.62)
+        });
+
+    let info_header = column![title_row, subtitle, status_text].spacing(4);
+
+    // 1. Native 14pt titlebar controls
+    let native_group = physical_control_group(
+        WINDOW_CONTROL_NATIVE_IDS,
+        &state.beads_14_norm,
+        &state.beads_14_hov,
+        &state.beads_14_pressed,
+        None,
         WINDOW_CONTROL_NATIVE_SIZE,
-    );
-    let tuning_panel = positioned(tuning_panel(state.tuning), 620.0, 82.0);
-    let reference_label = positioned(
-        sample_label("1:1 reference · 14 pt visual diameter"),
-        WINDOW_CONTROL_REFERENCE_X,
-        WINDOW_CONTROL_REFERENCE_Y - 30.0,
-    );
-    let reference_controls = positioned_control_group(
-        control_group(
-            WINDOW_CONTROL_REFERENCE_IDS,
-            WINDOW_CONTROL_NATIVE_SIZE,
-            WINDOW_CONTROL_GAP,
-            state.scheme,
-            true,
-            false,
-            false,
-            ControlGroup::Reference,
-            state.hover_progress[ControlGroup::Reference.index()],
-            WindowExpandBehavior::Fullscreen,
-            control_group_scales(&state.press_springs, ControlGroup::Reference),
-        ),
-        WINDOW_CONTROL_REFERENCE_X,
-        WINDOW_CONTROL_REFERENCE_Y,
-        WINDOW_CONTROL_NATIVE_SIZE,
-    );
-    let large_label = positioned(
-        sample_label("Maximize behavior · plus glyph · 64 pt"),
-        WINDOW_CONTROL_LARGE_X,
-        WINDOW_CONTROL_LARGE_Y - 30.0,
-    );
-    let large_controls = positioned_control_group(
-        control_group(
-            WINDOW_CONTROL_LARGE_IDS,
-            WINDOW_CONTROL_LARGE_SIZE,
-            WINDOW_CONTROL_LARGE_GAP,
-            state.scheme,
-            true,
-            false,
-            false,
-            ControlGroup::Active,
-            state.hover_progress[ControlGroup::Active.index()],
-            WindowExpandBehavior::Maximize,
-            control_group_scales(&state.press_springs, ControlGroup::Active),
-        ),
-        WINDOW_CONTROL_LARGE_X,
-        WINDOW_CONTROL_LARGE_Y,
-        WINDOW_CONTROL_LARGE_SIZE,
-    );
-    let inactive_label = positioned(
-        sample_label("Inactive window · all controls pale gray"),
-        WINDOW_CONTROL_INACTIVE_X,
-        WINDOW_CONTROL_INACTIVE_Y - 30.0,
-    );
-    let inactive_controls = positioned_control_group(
-        control_group(
-            WINDOW_CONTROL_INACTIVE_IDS,
-            WINDOW_CONTROL_LARGE_SIZE,
-            WINDOW_CONTROL_LARGE_GAP,
-            state.scheme,
-            true,
-            false,
-            false,
-            ControlGroup::Inactive,
-            state.hover_progress[ControlGroup::Inactive.index()],
-            WindowExpandBehavior::Fullscreen,
-            control_group_scales(&state.press_springs, ControlGroup::Inactive),
-        ),
-        WINDOW_CONTROL_INACTIVE_X,
-        WINDOW_CONTROL_INACTIVE_Y,
-        WINDOW_CONTROL_LARGE_SIZE,
-    );
-    let disabled_label = positioned(
-        sample_label("Running · close status dot"),
-        WINDOW_CONTROL_DISABLED_X,
-        WINDOW_CONTROL_DISABLED_Y - 30.0,
-    );
-    let disabled_controls = positioned_control_group(
-        control_group(
-            WINDOW_CONTROL_DISABLED_IDS,
-            WINDOW_CONTROL_LARGE_SIZE,
-            WINDOW_CONTROL_LARGE_GAP,
-            state.scheme,
-            true,
-            true,
-            false,
-            ControlGroup::Disabled,
-            state.hover_progress[ControlGroup::Disabled.index()],
-            WindowExpandBehavior::Maximize,
-            control_group_scales(&state.press_springs, ControlGroup::Disabled),
-        ),
-        WINDOW_CONTROL_DISABLED_X,
-        WINDOW_CONTROL_DISABLED_Y,
-        WINDOW_CONTROL_LARGE_SIZE,
+        WINDOW_CONTROL_GAP,
+        is_dark,
+        true,
+        false,
+        true,
+        ControlGroup::Native,
+        state.hover_progress[ControlGroup::Native.index()],
+        WindowExpandBehavior::Fullscreen,
+        state.pressed_control,
+        press_scales(state, ControlGroup::Native),
     );
 
-    container(stack![
-        // The selected scheme belongs to the window surface. Traffic-light
-        // nodes opt into their own light reference sample in the GPU material;
-        // do not turn the entire stage white just to keep their pigment
-        // calibration stable.
-        stage_background(state.scheme),
-        window_drag_region(),
-        info,
-        tuning_panel,
-        native_controls,
-        reference_label,
-        reference_controls,
+    // 2. 1:1 reference sample (14pt)
+    let ref_label = sample_label("1:1 reference · 14 pt visual diameter", is_dark);
+    let ref_group = physical_control_group(
+        WINDOW_CONTROL_REFERENCE_IDS,
+        &state.beads_14_norm,
+        &state.beads_14_hov,
+        &state.beads_14_pressed,
+        None,
+        WINDOW_CONTROL_NATIVE_SIZE,
+        WINDOW_CONTROL_GAP,
+        is_dark,
+        true,
+        false,
+        false,
+        ControlGroup::Reference,
+        state.hover_progress[ControlGroup::Reference.index()],
+        WindowExpandBehavior::Fullscreen,
+        state.pressed_control,
+        press_scales(state, ControlGroup::Reference),
+    );
+
+    // 3. 64pt Maximize sample (Active)
+    let large_label = sample_label("Maximize behavior · plus glyph · 64 pt", is_dark);
+    let large_group = physical_control_group(
+        WINDOW_CONTROL_LARGE_IDS,
+        &state.beads_64_norm,
+        &state.beads_64_hov,
+        &state.beads_64_pressed,
+        None,
+        WINDOW_CONTROL_LARGE_SIZE,
+        WINDOW_CONTROL_LARGE_GAP,
+        is_dark,
+        true,
+        false,
+        true,
+        ControlGroup::Active,
+        state.hover_progress[ControlGroup::Active.index()],
+        WindowExpandBehavior::Maximize,
+        state.pressed_control,
+        press_scales(state, ControlGroup::Active),
+    );
+
+    // 4. 64pt Inactive sample
+    // In macOS: hovering over an inactive window reveals its 3 focused colored beads!
+    let inactive_label = sample_label("Inactive window · all controls pale gray", is_dark);
+    let inactive_group = physical_control_group(
+        WINDOW_CONTROL_INACTIVE_IDS,
+        &state.beads_64_norm,
+        &state.beads_64_hov,
+        &state.beads_64_pressed,
+        Some(&state.beads_64_inactive),
+        WINDOW_CONTROL_LARGE_SIZE,
+        WINDOW_CONTROL_LARGE_GAP,
+        is_dark,
+        true,
+        false,
+        false,
+        ControlGroup::Inactive,
+        state.hover_progress[ControlGroup::Inactive.index()],
+        WindowExpandBehavior::Fullscreen,
+        state.pressed_control,
+        press_scales(state, ControlGroup::Inactive),
+    );
+
+    // 5. 64pt Disabled / Running dot sample
+    let disabled_label = sample_label("Running · close status dot", is_dark);
+    let disabled_group = physical_control_group(
+        WINDOW_CONTROL_DISABLED_IDS,
+        &state.beads_64_disabled,
+        &state.beads_64_hov,
+        &state.beads_64_pressed,
+        None,
+        WINDOW_CONTROL_LARGE_SIZE,
+        WINDOW_CONTROL_LARGE_GAP,
+        is_dark,
+        true,
+        true,
+        false,
+        ControlGroup::Disabled,
+        state.hover_progress[ControlGroup::Disabled.index()],
+        WindowExpandBehavior::Maximize,
+        state.pressed_control,
+        press_scales(state, ControlGroup::Disabled),
+    );
+
+    let left_column = column![
+        info_header,
+        space().height(16),
+        ref_label,
+        ref_group,
+        space().height(16),
         large_label,
-        large_controls,
+        large_group,
+        space().height(16),
         inactive_label,
-        inactive_controls,
+        inactive_group,
+        space().height(16),
         disabled_label,
-        disabled_controls,
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(transparent_surface)
-    .into()
+        disabled_group,
+    ]
+    .spacing(6)
+    .width(Length::FillPortion(3));
+
+    let tuning_card = physical_tuning_panel(state.tuning, is_dark);
+    let right_column = column![tuning_card].width(Length::FillPortion(2)).padding(Padding {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 16.0,
+    });
+
+    let content_layout = row![left_column, right_column].spacing(16).padding(Padding {
+        top: 56.0,
+        right: 32.0,
+        bottom: 32.0,
+        left: 32.0,
+    });
+
+    // Top titlebar native controls
+    let top_bar = row![
+        space().width(Length::Fixed(WINDOW_CONTROL_NATIVE_X)),
+        native_group,
+        space().width(Length::Fill),
+    ]
+    .padding(Padding { top: WINDOW_CONTROL_NATIVE_Y, ..Padding::ZERO });
+
+    let stage_bg =
+        container(space().width(Length::Fill).height(Length::Fill)).style(move |_theme| {
+            container::Style {
+                background: Some(Background::Color(if is_dark {
+                    Color::from_rgb(0.12, 0.13, 0.16)
+                } else {
+                    Color::from_rgb(0.94, 0.95, 0.97)
+                })),
+                ..Default::default()
+            }
+        });
+
+    container(stack![stage_bg, window_drag_region(), content_layout, top_bar,])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
-fn configuration_text(state: &State) -> String {
-    let scheme = match state.scheme {
-        UiColorScheme::Light => "light",
-        UiColorScheme::Dark => "dark",
-    };
-    let tuning = state.tuning;
-
-    format!(
-        "liquid-glass-window-controls-demo\n\
-scheme = {scheme}\n\
-blur_radius = {blur_radius:.2}\n\
-internal_scattering = {internal_scattering:.4}\n\
-side_edge_darkness = {side_edge_darkness:.4}\n\
-side_edge_width = {side_edge_width:.4}\n\
-opacity = {opacity:.4}\n\
-substrate_coverage = {substrate_coverage:.4}\n\
-lower_substrate_coverage = {lower_substrate_coverage:.4}\n\
-lower_tint_coverage = {lower_tint_coverage:.4}\n\
-angular_light = {angular_light:.4}\n\
-light_angle = {light_angle:.4}\n\
-light_softness = {light_softness:.4}\n\
-body_thickness = {body_thickness:.4}\n\
-edge_side_bias = {edge_side_bias:.4}\n\
-edge_side_angle = {edge_side_angle:.2}\n\
-refraction_strength = {refraction_strength:.4}\n\
-fresnel_strength = {fresnel_strength:.4}\n",
-        blur_radius = tuning.blur_radius,
-        internal_scattering = tuning.internal_scattering,
-        side_edge_darkness = tuning.side_edge_darkness,
-        side_edge_width = tuning.side_edge_width,
-        opacity = tuning.opacity,
-        substrate_coverage = tuning.substrate_coverage,
-        lower_substrate_coverage = tuning.lower_substrate_coverage,
-        lower_tint_coverage = tuning.lower_tint_coverage,
-        angular_light = tuning.angular_light,
-        light_angle = tuning.light_angle,
-        light_softness = tuning.light_softness,
-        body_thickness = tuning.body_thickness,
-        edge_side_bias = tuning.edge_side_bias,
-        edge_side_angle = tuning.edge_side_angle,
-        refraction_strength = tuning.refraction_strength,
-        fresnel_strength = tuning.fresnel_strength,
-    )
-}
-
-fn tuning_panel(tuning: WindowControlTuning) -> AppElement<'static> {
-    let rows = components::settings_group(vec![
-        components::setting_slider_with_step(
-            "Blur radius",
-            format!("{:.0} px", tuning.blur_radius),
-            tuning.blur_radius,
-            0.0..=80.0,
-            1.0,
-            |value| Message::TuningChanged { parameter: TuningParameter::BlurRadius, value },
-        ),
-        components::setting_slider_with_step(
-            "Internal scattering",
-            format!("{:.0}%", tuning.internal_scattering * 100.0),
-            tuning.internal_scattering,
-            0.0..=1.0,
-            0.01,
-            |value| Message::TuningChanged {
-                parameter: TuningParameter::InternalScattering,
-                value,
-            },
-        ),
-        components::setting_slider_with_step(
-            "Edge darkness",
-            format!("{:.2}", tuning.side_edge_darkness),
-            tuning.side_edge_darkness,
-            0.0..=4.0,
-            0.01,
-            |value| Message::TuningChanged { parameter: TuningParameter::SideEdgeDarkness, value },
-        ),
-        components::setting_slider_with_step(
-            "Edge width",
-            format!("{:.2}×", tuning.side_edge_width),
-            tuning.side_edge_width,
-            0.5..=4.0,
-            0.01,
-            |value| Message::TuningChanged { parameter: TuningParameter::SideEdgeWidth, value },
-        ),
-        components::setting_slider_with_step(
-            "Opacity",
-            format!("{:.0}%", tuning.opacity * 100.0),
-            tuning.opacity,
-            0.0..=1.0,
-            0.01,
-            |value| Message::TuningChanged { parameter: TuningParameter::Opacity, value },
-        ),
-        components::setting_slider_with_step(
-            "Upper substrate",
-            format!("{:.0}%", tuning.substrate_coverage * 100.0),
-            tuning.substrate_coverage,
-            0.0..=1.0,
-            0.01,
-            |value| Message::TuningChanged { parameter: TuningParameter::SubstrateCoverage, value },
-        ),
-        components::setting_slider_with_step(
-            "Lower substrate",
-            format!("{:.0}%", tuning.lower_substrate_coverage * 100.0),
-            tuning.lower_substrate_coverage,
-            0.0..=1.0,
-            0.01,
-            |value| Message::TuningChanged {
-                parameter: TuningParameter::LowerSubstrateCoverage,
-                value,
-            },
-        ),
-        components::setting_slider_with_step(
-            "Lower tint coverage",
-            format!("{:.0}%", tuning.lower_tint_coverage * 100.0),
-            tuning.lower_tint_coverage,
-            0.0..=1.0,
-            0.01,
-            |value| Message::TuningChanged { parameter: TuningParameter::LowerTintCoverage, value },
-        ),
-        components::setting_slider_with_step(
-            "Angular light",
-            format!("{:.1}%", tuning.angular_light * 100.0),
-            tuning.angular_light,
-            0.0..=0.15,
-            0.001,
-            |value| Message::TuningChanged { parameter: TuningParameter::AngularLight, value },
-        ),
-        components::setting_slider_with_step(
-            "Light angle",
-            format!("{:.0}°", tuning.light_angle * 90.0),
-            tuning.light_angle,
-            0.0..=1.0,
-            0.01,
-            |value| Message::TuningChanged { parameter: TuningParameter::LightAngle, value },
-        ),
-        components::setting_slider_with_step(
-            "Light softness",
-            format!("{:.0}%", tuning.light_softness * 100.0),
-            tuning.light_softness,
-            0.0..=1.0,
-            0.01,
-            |value| Message::TuningChanged { parameter: TuningParameter::LightSoftness, value },
-        ),
-        components::setting_slider_with_step(
-            "Body thickness",
-            format!("{:.2}×", tuning.body_thickness),
-            tuning.body_thickness,
-            0.4..=2.0,
-            0.01,
-            |value| Message::TuningChanged { parameter: TuningParameter::BodyThickness, value },
-        ),
-        components::setting_slider_with_step(
-            "Edge side bias",
-            format!("{:.0}%", tuning.edge_side_bias * 100.0),
-            tuning.edge_side_bias,
-            0.0..=1.0,
-            0.01,
-            |value| Message::TuningChanged { parameter: TuningParameter::EdgeSideBias, value },
-        ),
-        components::setting_slider_with_step(
-            "Side thickness sigma",
-            format!("{:.0}° σ", tuning.edge_side_angle),
-            tuning.edge_side_angle,
-            10.0..=80.0,
-            1.0,
-            |value| Message::TuningChanged { parameter: TuningParameter::EdgeSideAngle, value },
-        ),
-        components::setting_slider_with_step(
-            "Refraction",
-            format!("{:.2}", tuning.refraction_strength),
-            tuning.refraction_strength,
-            0.0..=1.0,
-            0.01,
-            |value| Message::TuningChanged {
-                parameter: TuningParameter::RefractionStrength,
-                value,
-            },
-        ),
-        components::setting_slider_with_step(
-            "Fresnel edge",
-            format!("{:.2}", tuning.fresnel_strength),
-            tuning.fresnel_strength,
-            0.0..=1.0,
-            0.01,
-            |value| Message::TuningChanged { parameter: TuningParameter::FresnelStrength, value },
-        ),
-    ]);
-
-    container(
-        column![
-            text("Physical material tuning")
-                .size(font::size::TITLE)
-                .font(font::ui_font(iced::font::Weight::Semibold)),
-            text("Applies to every traffic-light sample")
-                .size(font::size::CAPTION)
-                .style(components::secondary_text),
-            scrollable(rows).height(Length::Fixed(500.0)),
-        ]
-        .spacing(10),
-    )
-    .width(Length::Fixed(440.0))
-    .padding(16)
-    .style(|theme| container::Style {
-        background: Some(Background::Color(UiTheme::from_iced(theme).palette().group_background)),
-        border: iced::Border::default().rounded(UiCornerStyle::GROUP.with_radius(16.0).radius()),
-        ..container::Style::default()
+fn sample_label(text_content: &'static str, is_dark: bool) -> AppElement<'static> {
+    container(text(text_content).size(11).font(font::ui_font(iced::font::Weight::Semibold)).color(
+        if is_dark { Color::from_rgb(0.85, 0.86, 0.90) } else { Color::from_rgb(0.25, 0.26, 0.30) },
+    ))
+    .padding(Padding { top: 2.0, right: 8.0, bottom: 2.0, left: 8.0 })
+    .style(move |_theme| container::Style {
+        background: Some(Background::Color(if is_dark {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.05)
+        })),
+        border: iced::Border::default().rounded(6.0),
+        ..Default::default()
     })
     .into()
 }
 
-fn stage_background(scheme: UiColorScheme) -> AppElement<'static> {
-    // Use the same neutral substrate as the rest of the macOS window instead
-    // of the old four-colour calibration board. The controls remain easy to
-    // inspect, but their transmission is now judged against a titlebar-like
-    // surface rather than an artificial saturated backdrop.
-    color_panel(UiTheme::new(scheme).palette().window_background)
-}
-
-fn color_panel(color: Color) -> AppElement<'static> {
-    container(space())
-        .width(Length::FillPortion(1))
-        .height(Length::Fill)
-        .style(move |_theme| container::Style {
-            background: Some(Background::Color(color)),
-            ..container::Style::default()
-        })
-        .into()
-}
-
-fn transparent_surface(_theme: &Theme) -> container::Style {
-    container::Style::default()
-}
-
-fn sample_label(label: &'static str) -> AppElement<'static> {
-    container(text(label).size(font::size::BODY).font(font::ui_font(iced::font::Weight::Semibold)))
-        .padding([4, 8])
-        .style(|theme| container::Style {
-            background: Some(Background::Color(
-                UiTheme::from_iced(theme).palette().group_background,
-            )),
-            border: iced::Border::default().rounded(UiCornerStyle::MENU.radius()),
-            ..container::Style::default()
-        })
-        .into()
-}
-
-fn positioned(content: AppElement<'static>, x: f32, y: f32) -> AppElement<'static> {
-    container(content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(Padding { top: y, right: 0.0, bottom: 0.0, left: x })
-        .into()
-}
-
 fn window_drag_region() -> AppElement<'static> {
-    let content = container(space())
+    let content = container(space().width(Length::Fill).height(Length::Fixed(44.0)))
         .width(Length::Fill)
-        .height(Length::Fixed(iced_backend::FUSED_TOP_BAR_HEIGHT));
+        .height(Length::Fixed(44.0));
     WindowDragArea::new(content, Message::BeginWindowDrag).into_element()
-}
-
-fn positioned_control_group(
-    content: AppElement<'static>,
-    x: f32,
-    y: f32,
-    size: f32,
-) -> AppElement<'static> {
-    let slop = control_hover_slop(size);
-    positioned(content, x - slop, y - slop)
 }
 
 fn window_control_slot_index(id: GlassId) -> Option<usize> {
@@ -784,74 +1147,348 @@ fn window_control_slot_index(id: GlassId) -> Option<usize> {
 }
 
 fn finish_control_press(state: &mut State, id: GlassId) {
-    finish_control_press_visual(state, id);
-    if let Some(index) = window_control_slot_index(id) {
-        // Retargeting preserves the current spring velocity, so the release
-        // phase visibly shrinks with the same bouncy dynamics as the growth
-        // phase, while settling at a still-slightly-larger resting size.
-        state.press_springs[index].retarget(PRESS_SCALE_SETTLED);
-    }
-}
-
-fn finish_control_press_visual(state: &mut State, id: GlassId) {
     if let Some(index) = window_control_slot_index(id) {
         state.press_targets[index] = 0.0;
+        // Rest is 1.0: the control returns to its natural size on release.
+        state.press_springs[index].retarget(1.0);
     }
 }
 
-fn control_group_scales(springs: &[SpringMotion; 15], group: ControlGroup) -> [f32; 3] {
-    let start = group.index() * 3;
-    [springs[start].value(), springs[start + 1].value(), springs[start + 2].value()]
-}
-
-fn control_group(
+#[allow(clippy::fn_params_excessive_bools)]
+fn physical_control_group<'a>(
     ids: [GlassId; 3],
+    norm_handles: &[iced::widget::image::Handle; 3],
+    hov_handles: &[iced::widget::image::Handle; 3],
+    pressed_handles: &[iced::widget::image::Handle; 3],
+    inactive_handles: Option<&[iced::widget::image::Handle; 3]>,
     size: f32,
     gap: f32,
-    scheme: UiColorScheme,
+    is_dark: bool,
     show_glyphs: bool,
     close_disabled: bool,
     interactive: bool,
     group: ControlGroup,
     hover_amount: f32,
     expand_behavior: WindowExpandBehavior,
-    press_scales: [f32; 3],
-) -> AppElement<'static> {
-    let shell_expand = if expand_behavior == WindowExpandBehavior::Fullscreen {
-        window_controls::WindowExpandBehavior::Fullscreen
+    pressed_control: Option<GlassId>,
+    control_scales: [f32; 3],
+) -> AppElement<'a> {
+    let hover = if show_glyphs { hover_amount } else { 0.0 };
+    let is_fullscreen = expand_behavior == WindowExpandBehavior::Fullscreen;
+
+    // Hover policy:
+    // When hovered, use `hov_handles` (Red lifts to 100% center glow, Yellow/Green stay at 60%)!
+    // On inactive window, unhovered uses `inactive_handles` (pale gray), hovered awakens to `hov_handles`!
+    let active_color_handles = if let Some(inact) = inactive_handles {
+        if hover_amount > 0.05 { hov_handles } else { inact }
+    } else if hover_amount > 0.05 {
+        hov_handles
     } else {
-        window_controls::WindowExpandBehavior::Maximize
+        norm_handles
     };
-    window_controls::control_group(
-        ids,
+
+    // Click policy: ONLY the single clicked button brightens while pressed!
+    let btn_close = view_physical_button(
+        ControlAction::Close,
+        if pressed_control == Some(ids[0]) {
+            pressed_handles[0].clone()
+        } else {
+            active_color_handles[0].clone()
+        },
         size,
-        gap,
-        scheme == UiColorScheme::Dark,
-        show_glyphs,
+        control_scales[0],
+        hover,
+        is_dark,
+        is_fullscreen,
         close_disabled,
-        interactive,
-        group == ControlGroup::Inactive,
-        hover_amount,
-        shell_expand,
-        press_scales,
-        move |id, action| Message::ControlPressed { id, action, execute: interactive },
-        move |id| Message::ControlPressStarted { id },
-        move |id| Message::ControlPressVisualCancelled { id },
-        move |id| Message::ControlPressEnded { id },
-        move |hovered| Message::ControlGroupHover { group, hovered },
+        Message::ControlPressStarted { id: ids[0] },
+        Message::ControlReleased { id: ids[0], action: ControlAction::Close, execute: interactive },
+        Message::ControlPressVisualCancelled { id: ids[0] },
+    );
+
+    let btn_min = view_physical_button(
+        ControlAction::Minimize,
+        if pressed_control == Some(ids[1]) {
+            pressed_handles[1].clone()
+        } else {
+            active_color_handles[1].clone()
+        },
+        size,
+        control_scales[1],
+        hover,
+        is_dark,
+        is_fullscreen,
+        false,
+        Message::ControlPressStarted { id: ids[1] },
+        Message::ControlReleased {
+            id: ids[1],
+            action: ControlAction::Minimize,
+            execute: interactive,
+        },
+        Message::ControlPressVisualCancelled { id: ids[1] },
+    );
+
+    let btn_zoom = view_physical_button(
+        ControlAction::Expand,
+        if pressed_control == Some(ids[2]) {
+            pressed_handles[2].clone()
+        } else {
+            active_color_handles[2].clone()
+        },
+        size,
+        control_scales[2],
+        hover,
+        is_dark,
+        is_fullscreen,
+        false,
+        Message::ControlPressStarted { id: ids[2] },
+        Message::ControlReleased {
+            id: ids[2],
+            action: ControlAction::Expand,
+            execute: interactive,
+        },
+        Message::ControlPressVisualCancelled { id: ids[2] },
+    );
+
+    let slop = control_hover_slop(size);
+    let content = row![btn_close, space().width(gap), btn_min, space().width(gap), btn_zoom]
+        .align_y(Alignment::Center);
+
+    let mouse_area = iced::widget::mouse_area(content)
+        .on_enter(Message::ControlGroupHover { group, hovered: true })
+        .on_exit(Message::ControlGroupHover { group, hovered: false });
+
+    container(mouse_area)
+        .padding(Padding {
+            top: slop * 0.5,
+            right: slop * 0.5,
+            bottom: slop * 0.5,
+            left: slop * 0.5,
+        })
+        .into()
+}
+
+fn view_physical_button<'a>(
+    action: ControlAction,
+    texture: iced::widget::image::Handle,
+    visual_size: f32,
+    scale: f32,
+    hover_amount: f32,
+    is_dark: bool,
+    is_fullscreen: bool,
+    show_status_dot: bool,
+    on_press_start: Message,
+    on_release: Message,
+    on_cancel: Message,
+) -> AppElement<'a> {
+    // The pressed control grows about its centre: draw every layer at
+    // `visual_size * scale`, but keep a fixed layout box so the neighbouring
+    // controls and the row spacing never move. `visual_size` is shadowed so the
+    // glyphs, status dot and hit area scale with the bead.
+    let box_size = visual_size;
+    let visual_size = visual_size * scale;
+    let bead_img = iced::widget::image(texture)
+        .width(Length::Fixed(visual_size))
+        .height(Length::Fixed(visual_size));
+
+    let glyph_elem: Element<'a, Message, Theme, Renderer> = if show_status_dot {
+        let dot_color = window_control_glyph_color(is_dark, action, false, 1.0);
+        container(window_control_status_dot(dot_color, visual_size))
+            .width(Length::Fixed(visual_size))
+            .height(Length::Fixed(visual_size))
+            .center_x(Length::Fixed(visual_size))
+            .center_y(Length::Fixed(visual_size))
+            .into()
+    } else if hover_amount > 0.001 {
+        let glyph_svg = match action {
+            ControlAction::Close => window_controls::SVG_CLOSE,
+            ControlAction::Minimize => window_controls::SVG_MINIMIZE,
+            ControlAction::Zoom | ControlAction::Expand => {
+                if is_fullscreen {
+                    window_controls::SVG_ZOOM
+                } else {
+                    window_controls::SVG_MAXIMIZE
+                }
+            }
+        };
+        let glyph_color = window_control_glyph_color(is_dark, action, false, hover_amount);
+        let glyph_size = window_control_glyph_size(action, visual_size);
+        container(
+            svg(svg::Handle::from_memory(glyph_svg.as_bytes()))
+                .width(Length::Fixed(glyph_size))
+                .height(Length::Fixed(glyph_size))
+                .style(move |_theme, _status| svg::Style { color: Some(glyph_color) }),
+        )
+        .width(Length::Fixed(visual_size))
+        .height(Length::Fixed(visual_size))
+        .center_x(Length::Fixed(visual_size))
+        .center_y(Length::Fixed(visual_size))
+        .into()
+    } else {
+        container(space().width(Length::Fixed(visual_size)).height(Length::Fixed(visual_size)))
+            .width(Length::Fixed(visual_size))
+            .height(Length::Fixed(visual_size))
+            .into()
+    };
+
+    let layer = stack![bead_img, glyph_elem];
+    let mouse_area = iced::widget::mouse_area(layer)
+        .on_press(on_press_start)
+        .on_release(on_release)
+        .on_exit(on_cancel)
+        .interaction(iced::mouse::Interaction::Pointer);
+
+    centered(
+        container(mouse_area)
+            .width(Length::Fixed(visual_size))
+            .height(Length::Fixed(visual_size))
+            .into(),
+        box_size,
     )
+}
+
+// =========================================================================
+// 4. Physical Material Tuning Panel
+// =========================================================================
+
+fn configuration_text(state: &State) -> String {
+    let t = state.tuning;
+    format!(
+        "// Calibrated Physical Traffic Light Constants:\n\
+         let mut m = ContentGlassMaterial::traffic_light(TrafficLightKind::Close)\n\
+             .with_bezier_profile(0.00, 0.00, 0.00)\n\
+             .with_highlight_intensity({:.2})\n\
+             .with_dark_rim({:.2})\n\
+             .with_internal_glow({:.2});\n",
+        t.highlight_intensity, t.dark_rim_intensity, t.center_glow
+    )
+}
+
+fn physical_tuning_panel(tuning: PhysicalTrafficLightTuning, is_dark: bool) -> AppElement<'static> {
+    let rows = components::settings_group(vec![
+        components::setting_slider_with_step(
+            "打光强度 (Highlight)",
+            format!("{:.0}%", tuning.highlight_intensity * 100.0),
+            tuning.highlight_intensity,
+            0.0..=2.0,
+            0.05,
+            |value| Message::TuningChanged {
+                parameter: TuningParameter::HighlightIntensity,
+                value,
+            },
+        ),
+        components::setting_slider_with_step(
+            "微缝暗边 (Dark Rim)",
+            format!("{:.2}", tuning.dark_rim_intensity),
+            tuning.dark_rim_intensity,
+            0.0..=3.0,
+            0.05,
+            |value| Message::TuningChanged { parameter: TuningParameter::DarkRimIntensity, value },
+        ),
+        components::setting_slider_with_step(
+            "中间光感 (Center Glow)",
+            format!("{:.0}%", tuning.center_glow * 100.0),
+            tuning.center_glow,
+            0.0..=2.0,
+            0.05,
+            |value| Message::TuningChanged { parameter: TuningParameter::CenterGlow, value },
+        ),
+        components::setting_slider_with_step(
+            "肩部凸度 P1 (Shoulder)",
+            format!("{:.2}", tuning.p1),
+            tuning.p1,
+            0.0..=2.0,
+            0.02,
+            |value| Message::TuningChanged { parameter: TuningParameter::P1Convexity, value },
+        ),
+        components::setting_slider_with_step(
+            "腰身弧度 P2 (Belly)",
+            format!("{:.2}", tuning.p2),
+            tuning.p2,
+            0.0..=2.0,
+            0.02,
+            |value| Message::TuningChanged { parameter: TuningParameter::P2Belly, value },
+        ),
+        components::setting_slider_with_step(
+            "落底平滑 P3 (Floor Landing)",
+            format!("{:.2}", tuning.p3),
+            tuning.p3,
+            0.0..=1.0,
+            0.02,
+            |value| Message::TuningChanged { parameter: TuningParameter::P3Landing, value },
+        ),
+        components::setting_slider_with_step(
+            "高光微核范围 (Core Span)",
+            format!("{:.2}x", tuning.core_span_factor),
+            tuning.core_span_factor,
+            0.5..=2.0,
+            0.05,
+            |value| Message::TuningChanged { parameter: TuningParameter::CoreSpanFactor, value },
+        ),
+        components::setting_slider_with_step(
+            "暗边微缝范围 (Rim Span)",
+            format!("{:.2}x", tuning.rim_span_factor),
+            tuning.rim_span_factor,
+            0.5..=2.0,
+            0.05,
+            |value| Message::TuningChanged { parameter: TuningParameter::RimSpanFactor, value },
+        ),
+        components::setting_slider_with_step(
+            "核心饱和增益 (Core Saturation)",
+            format!("{:.2}", tuning.saturation_lift),
+            tuning.saturation_lift,
+            0.0..=0.50,
+            0.02,
+            |value| Message::TuningChanged { parameter: TuningParameter::SaturationLift, value },
+        ),
+    ]);
+
+    container(
+        column![
+            row![
+                text("Physical Material Tuning")
+                    .size(16)
+                    .font(font::ui_font(iced::font::Weight::Bold))
+                    .color(if is_dark { Color::WHITE } else { Color::BLACK }),
+                space().width(Length::Fill),
+                button(text("Copy Config").size(12))
+                    .padding(Padding { top: 4.0, right: 10.0, bottom: 4.0, left: 10.0 })
+                    .on_press(Message::CopyConfiguration),
+            ],
+            text("Live physical GPU shader parameters for 3D liquid glass beads").size(12).color(
+                if is_dark {
+                    Color::from_rgb(0.6, 0.62, 0.66)
+                } else {
+                    Color::from_rgb(0.4, 0.42, 0.46)
+                }
+            ),
+            space().height(12),
+            rows,
+        ]
+        .spacing(8),
+    )
+    .padding(16)
+    .style(move |_theme| container::Style {
+        background: Some(Background::Color(if is_dark {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.05)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.03)
+        })),
+        border: iced::Border::default().rounded(12.0),
+        ..Default::default()
+    })
+    .into()
 }
 
 fn main() -> iced::Result {
     let fonts = font::ui_fonts();
-    let window_settings = demo_window_policy().apply(iced::window::Settings::default());
-
     let mut app = iced::application::<State, Message, Theme, Renderer>(boot, update, view)
         .title("Liquid Glass Window Controls")
-        .theme(app_theme)
         .subscription(subscription)
-        .window(window_settings)
-        .window_size(iced::Size::new(1120.0, 720.0));
+        .window(iced::window::Settings {
+            size: iced::Size::new(1120.0, 720.0),
+            ..Default::default()
+        });
     for bytes in &fonts.bytes {
         app = app.font(bytes.clone());
     }
@@ -870,7 +1507,6 @@ mod tests {
         assert_eq!(WINDOW_CONTROL_NATIVE_SIZE, 14.0);
         assert_eq!(WINDOW_CONTROL_LARGE_SIZE, 64.0);
         assert!(WINDOW_CONTROL_LARGE_SIZE > WINDOW_CONTROL_NATIVE_SIZE);
-        assert_eq!(iced_backend::FUSED_TOP_BAR_HEIGHT, 52.0);
     }
 
     #[test]
