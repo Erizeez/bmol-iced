@@ -35,7 +35,6 @@ pub use scene::{
     AdaptiveStyle, BackdropRegion, Color, CornerCurve, GlareStyle, GlassAccessibility,
     GlassEffectContainer, GlassEnvironment, GlassId, GlassInteraction, GlassMaterial, GlassNode,
     GlassRenderOptions, GlassScene, GlassShape, GlassShapeLayer, GlassVariant, Rect, ShadowStyle,
-    TrafficLightStyle,
 };
 pub use ui::{
     ContextMenu, DEFAULT_WINDOW_CORNER_RADIUS, GlassButton, GlassButtonIcon, GlassChrome,
