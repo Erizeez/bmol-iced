@@ -26,914 +26,41 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use bmol_designs::{dock_metrics, menu_metrics};
+use bmol_designs::menu_metrics;
 use bmol_window_shell::{
-    ShellEvent, TrafficLightsEvent, WindowChromeConfig, WindowShellController, app_icon_png,
-    is_system_dark_mode, window_metrics,
+    ShellEvent, TrafficLightsEvent, WindowChromeConfig, WindowShellController, is_system_dark_mode,
+    window_metrics,
 };
 use iced::advanced::graphics::gradient::Linear;
 use iced::{
-    Alignment, Background, Border, Color, Element, Length, Padding, Point, Radians, Rectangle,
-    Shadow, Size, Subscription, Task, Theme, Vector,
+    Alignment, Background, Border, Color, Element, Length, Padding, Point, Rectangle, Shadow, Size,
+    Subscription, Task, Theme, Vector,
     font::Weight,
     mouse,
     widget::{
         button,
-        canvas::{self, Canvas, Frame, Geometry, Path, Stroke},
+        canvas::{self, Canvas, Frame, Geometry, Path},
         column, container, row, space, text, text_input,
     },
     window,
 };
 use liquid_glass::{
     ContextMenu, CornerCurve, GlassChrome, GlassContainer, GlassId, GlassRole, GlassShape,
-    MenuItem, Rect, UiColorScheme, UiIcon, UiTheme,
-    geometry::{
-        APPLE_CORNER_SMOOTHING, PathCommand, Point as SquirclePoint, SquircleParams,
-        squircle_alpha, squircle_path_commands,
-    },
-    ui::font,
+    MenuItem, Rect, UiColorScheme, UiIcon, UiTheme, ui::font,
 };
-use vibrancy_rs::{KawasePassPlan, VibrancyConfig, ign_dither_offset};
-#[cfg(test)]
-use vibrancy_rs::{MaterialKind, VibrancyAppearance};
+use vibrancy_rs::KawasePassPlan;
 
 #[path = "../iced_backend.rs"]
 mod iced_backend;
 
 use iced_backend::{DemoSurface, WINDOW_CONTROL_NATIVE_IDS};
 
-/// Downsamples an RGBA buffer by 2x using 2x2 area box filtering.
-fn downsample_2x(w: u32, h: u32, src: &[u8]) -> (u32, u32, Vec<u8>) {
-    let dw = (w / 2).max(1);
-    let dh = (h / 2).max(1);
-    let mut out = vec![0u8; (dw * dh * 4) as usize];
-    for y in 0..dh {
-        let sy0 = (y * 2) as usize;
-        let sy1 = ((y * 2 + 1) as usize).min(h as usize - 1);
-        for x in 0..dw {
-            let sx0 = (x * 2) as usize;
-            let sx1 = ((x * 2 + 1) as usize).min(w as usize - 1);
-            let idx00 = (sy0 * w as usize + sx0) * 4;
-            let idx10 = (sy0 * w as usize + sx1) * 4;
-            let idx01 = (sy1 * w as usize + sx0) * 4;
-            let idx11 = (sy1 * w as usize + sx1) * 4;
-            let out_idx = (y * dw + x) as usize * 4;
-            for c in 0..4 {
-                let sum = u32::from(src[idx00 + c])
-                    + u32::from(src[idx10 + c])
-                    + u32::from(src[idx01 + c])
-                    + u32::from(src[idx11 + c]);
-                out[out_idx + c] = (sum / 4) as u8;
-            }
-        }
-    }
-    (dw, dh, out)
-}
-
-/// In-memory RGBA wallpaper buffer enabling continuous 2D Gaussian optical sampling
-/// with a 3-tier Dual Kawase multi-resolution pyramid for deep, silky Apple frosted diffusion.
-#[derive(Clone)]
-pub struct WallpaperBuffer {
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Arc<Vec<u8>>,
-    pub handle: iced::widget::image::Handle,
-    pub mip1_w: u32,
-    pub mip1_h: u32,
-    pub mip1: Arc<Vec<u8>>,
-    pub mip2_w: u32,
-    pub mip2_h: u32,
-    pub mip2: Arc<Vec<u8>>,
-    pub mip3_w: u32,
-    pub mip3_h: u32,
-    pub mip3: Arc<Vec<u8>>,
-}
-
-impl std::fmt::Debug for WallpaperBuffer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WallpaperBuffer")
-            .field("width", &self.width)
-            .field("height", &self.height)
-            .field("pixels_len", &self.pixels.len())
-            .field("mip3_size", &(self.mip3_w, self.mip3_h))
-            .finish()
-    }
-}
-
-impl WallpaperBuffer {
-    #[must_use]
-    pub fn new(width: u32, height: u32, pixels: Vec<u8>) -> Self {
-        let handle = iced::widget::image::Handle::from_rgba(width, height, pixels.clone());
-        let (mip1_w, mip1_h, mip1_vec) = downsample_2x(width, height, &pixels);
-        let (mip2_w, mip2_h, mip2_vec) = downsample_2x(mip1_w, mip1_h, &mip1_vec);
-        let (mip3_w, mip3_h, mip3_vec) = downsample_2x(mip2_w, mip2_h, &mip2_vec);
-
-        Self {
-            width,
-            height,
-            pixels: Arc::new(pixels),
-            handle,
-            mip1_w,
-            mip1_h,
-            mip1: Arc::new(mip1_vec),
-            mip2_w,
-            mip2_h,
-            mip2: Arc::new(mip2_vec),
-            mip3_w,
-            mip3_h,
-            mip3: Arc::new(mip3_vec),
-        }
-    }
-
-    #[inline]
-    fn get_pixel_from_slice(w: u32, h: u32, pixels: &[u8], x: i32, y: i32) -> [f32; 3] {
-        let x = x.clamp(0, (w.saturating_sub(1)) as i32) as usize;
-        let y = y.clamp(0, (h.saturating_sub(1)) as i32) as usize;
-        let idx = (y * w as usize + x) * 4;
-        if idx + 2 < pixels.len() {
-            [
-                f32::from(pixels[idx]) / 255.0,
-                f32::from(pixels[idx + 1]) / 255.0,
-                f32::from(pixels[idx + 2]) / 255.0,
-            ]
-        } else {
-            [0.12, 0.12, 0.14]
-        }
-    }
-
-    /// Bilinear interpolation of wallpaper pixels at specified MIP level (0=base, 1=1/2, 2=1/4, 3=1/8).
-    #[inline]
-    #[must_use]
-    pub fn sample_bilinear_mip(&self, mip: usize, u: f32, v: f32) -> [f32; 3] {
-        let (w, h, buf): (u32, u32, &[u8]) = match mip {
-            1 => (self.mip1_w, self.mip1_h, &self.mip1),
-            2 => (self.mip2_w, self.mip2_h, &self.mip2),
-            3 => (self.mip3_w, self.mip3_h, &self.mip3),
-            _ => (self.width, self.height, &self.pixels),
-        };
-
-        let px = u.clamp(0.0, 1.0) * (w.saturating_sub(1) as f32);
-        let py = v.clamp(0.0, 1.0) * (h.saturating_sub(1) as f32);
-        let x0 = px.floor() as i32;
-        let y0 = py.floor() as i32;
-        let fx = px - x0 as f32;
-        let fy = py - y0 as f32;
-
-        let c00 = Self::get_pixel_from_slice(w, h, buf, x0, y0);
-        let c10 = Self::get_pixel_from_slice(w, h, buf, x0 + 1, y0);
-        let c01 = Self::get_pixel_from_slice(w, h, buf, x0, y0 + 1);
-        let c11 = Self::get_pixel_from_slice(w, h, buf, x0 + 1, y0 + 1);
-
-        let w00 = (1.0 - fx) * (1.0 - fy);
-        let w10 = fx * (1.0 - fy);
-        let w01 = (1.0 - fx) * fy;
-        let w11 = fx * fy;
-
-        [
-            c00[0] * w00 + c10[0] * w10 + c01[0] * w01 + c11[0] * w11,
-            c00[1] * w00 + c10[1] * w10 + c01[1] * w01 + c11[1] * w11,
-            c00[2] * w00 + c10[2] * w10 + c01[2] * w01 + c11[2] * w11,
-        ]
-    }
-
-    /// Bilinear interpolation of sharp base wallpaper pixels at normalized coordinates `(u, v)`.
-    #[inline]
-    #[must_use]
-    pub fn sample_bilinear(&self, u: f32, v: f32) -> [f32; 3] {
-        self.sample_bilinear_mip(0, u, v)
-    }
-
-    /// Deep multi-resolution isotropic Gaussian blur convolution powered by Dual Kawase pyramid.
-    ///
-    /// Selects pre-integrated downsampled pyramid levels (Mip 2 / Mip 3) for large blur radii,
-    /// integrating hundreds of ambient pixels into a velvety, noise-free frosted glass substrate.
-    #[must_use]
-    pub fn sample_blurred(&self, u: f32, v: f32, blur_radius: f32, bounds: Size) -> [f32; 3] {
-        if blur_radius <= 0.5 {
-            return self.sample_bilinear(u, v);
-        }
-
-        // Multi-resolution Dual Kawase level selection:
-        // radius >= 48 -> Mip 3 (1/8 resolution, 64x pre-integrated area)
-        // radius >= 24 -> Mip 2 (1/4 resolution, 16x pre-integrated area)
-        // radius >= 10 -> Mip 1 (1/2 resolution, 4x pre-integrated area)
-        // radius < 10 (2pt, 4pt, 8pt) -> Mip 0 (1x base resolution, fine-grained micro-blur)
-        let mip = if blur_radius >= 48.0 {
-            3
-        } else if blur_radius >= 24.0 {
-            2
-        } else if blur_radius >= 10.0 {
-            1
-        } else {
-            0
-        };
-
-        let sigma = (blur_radius * 1.5).max(0.5);
-        let du = sigma / bounds.width.max(1.0);
-        let dv = sigma / bounds.height.max(1.0);
-
-        let c0 = self.sample_bilinear_mip(mip, u, v);
-
-        // Ring 1 (0.75 * sigma)
-        let c_r = self.sample_bilinear_mip(mip, u + du * 0.75, v);
-        let c_l = self.sample_bilinear_mip(mip, u - du * 0.75, v);
-        let c_d = self.sample_bilinear_mip(mip, u, v + dv * 0.75);
-        let c_u = self.sample_bilinear_mip(mip, u, v - dv * 0.75);
-
-        // Ring 2 diagonals (1.20 * sigma)
-        let c_rd = self.sample_bilinear_mip(mip, u + du * 0.85, v + dv * 0.85);
-        let c_ld = self.sample_bilinear_mip(mip, u - du * 0.85, v + dv * 0.85);
-        let c_ru = self.sample_bilinear_mip(mip, u + du * 0.85, v - dv * 0.85);
-        let c_lu = self.sample_bilinear_mip(mip, u - du * 0.85, v - dv * 0.85);
-
-        // Ring 3 outer (1.90 * sigma)
-        let c_rr = self.sample_bilinear_mip(mip, u + du * 1.90, v);
-        let c_ll = self.sample_bilinear_mip(mip, u - du * 1.90, v);
-        let c_dd = self.sample_bilinear_mip(mip, u, v + dv * 1.90);
-        let c_uu = self.sample_bilinear_mip(mip, u, v - dv * 1.90);
-
-        // Normalized Gaussian weights (0.16 + 4*0.12 + 4*0.055 + 4*0.035 = 1.00)
-        [
-            c0[0] * 0.16
-                + (c_r[0] + c_l[0] + c_d[0] + c_u[0]) * 0.12
-                + (c_rd[0] + c_ld[0] + c_ru[0] + c_lu[0]) * 0.055
-                + (c_rr[0] + c_ll[0] + c_dd[0] + c_uu[0]) * 0.035,
-            c0[1] * 0.16
-                + (c_r[1] + c_l[1] + c_d[1] + c_u[1]) * 0.12
-                + (c_rd[1] + c_ld[1] + c_ru[1] + c_lu[1]) * 0.055
-                + (c_rr[1] + c_ll[1] + c_dd[1] + c_uu[1]) * 0.035,
-            c0[2] * 0.16
-                + (c_r[2] + c_l[2] + c_d[2] + c_u[2]) * 0.12
-                + (c_rd[2] + c_ld[2] + c_ru[2] + c_lu[2]) * 0.055
-                + (c_rr[2] + c_ll[2] + c_dd[2] + c_uu[2]) * 0.035,
-        ]
-    }
-}
-
-/// Generates a realistic procedural California Redwood Forest backdrop
-/// with Tyndall sunbeams, deep atmospheric mist, and contrasting vertical tree trunks.
-fn create_procedural_redwood_buffer(width: u32, height: u32) -> WallpaperBuffer {
-    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-    for y in 0..height {
-        let v = y as f32 / height.max(1) as f32;
-        for x in 0..width {
-            let u = x as f32 / width.max(1) as f32;
-
-            // 1. Golden Tyndall sunbeam + mist atmosphere
-            let sky_beam = ((u * 6.28 - 1.2).sin() * 0.5 + 0.5).powf(2.5) * (1.0 - v * 0.6);
-            let sky_grad = lerp_rgb(
-                [0.16, 0.26, 0.38],
-                [0.88, 0.76, 0.52],
-                sky_beam * 0.75 + (1.0 - v).powf(1.6) * 0.25,
-            );
-
-            // 2. Redwood tree trunks (strong vertical silhouette contrast)
-            let trunk1 = ((u * 18.0).sin() * 0.5 + 0.5).powf(6.0) * (v * 0.9 + 0.1);
-            let trunk2 = (((u + 0.32) * 11.0).sin() * 0.5 + 0.5).powf(8.0) * (v * 0.85 + 0.15);
-            let trunk3 = (((u + 0.73) * 14.0).sin() * 0.5 + 0.5).powf(7.0) * (v * 0.95 + 0.05);
-
-            // 3. Foliage canopy & ground ferns
-            let canopy = ((u * 28.0 + v * 16.0).cos() * 0.5 + 0.5) * (1.0 - v * 0.4);
-            let forest_base = lerp_rgb(sky_grad, [0.10, 0.22, 0.14], canopy * 0.85);
-
-            // 4. Combine trunks with rich warm redwood bark
-            let bark_color = [0.26, 0.13, 0.09];
-            let trunks_total = (trunk1 + trunk2 + trunk3).clamp(0.0, 0.92);
-            let final_rgb = lerp_rgb(forest_base, bark_color, trunks_total);
-
-            pixels.push((final_rgb[0] * 255.0).clamp(0.0, 255.0) as u8);
-            pixels.push((final_rgb[1] * 255.0).clamp(0.0, 255.0) as u8);
-            pixels.push((final_rgb[2] * 255.0).clamp(0.0, 255.0) as u8);
-            pixels.push(255);
-        }
-    }
-    WallpaperBuffer::new(width, height, pixels)
-}
-
-/// Loads the real macOS desktop wallpaper via AppKit ImageIO hardware decoder,
-/// or falls back cleanly to the procedural Redwood Forest if running on non-macOS.
-fn load_or_create_wallpaper(target_w: u32, target_h: u32) -> Arc<WallpaperBuffer> {
-    if let Some((w, h, rgba)) = bmol_window_shell::load_system_wallpaper_rgba(target_w, target_h) {
-        Arc::new(WallpaperBuffer::new(w, h, rgba))
-    } else {
-        Arc::new(create_procedural_redwood_buffer(target_w, target_h))
-    }
-}
-
-/// Blur strength presets with fine-grained low-radius resolution (0pt ~ 16pt)
-/// and high-end diffusion capping at 64pt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BlurPreset {
-    Zero0,
-    Subtle2,
-    Subtle4,
-    Subtle8,
-    Medium12,
-    #[default]
-    Standard16,
-    Enhanced24,
-    Heavy32,
-    Ultra48,
-    Max64,
-}
-
-impl BlurPreset {
-    pub const ALL: [Self; 10] = [
-        Self::Zero0,
-        Self::Subtle2,
-        Self::Subtle4,
-        Self::Subtle8,
-        Self::Medium12,
-        Self::Standard16,
-        Self::Enhanced24,
-        Self::Heavy32,
-        Self::Ultra48,
-        Self::Max64,
-    ];
-
-    #[must_use]
-    pub const fn radius(self) -> f32 {
-        match self {
-            Self::Zero0 => 0.0,
-            Self::Subtle2 => 2.0,
-            Self::Subtle4 => 4.0,
-            Self::Subtle8 => 8.0,
-            Self::Medium12 => 12.0,
-            Self::Standard16 => 16.0,
-            Self::Enhanced24 => 24.0,
-            Self::Heavy32 => 32.0,
-            Self::Ultra48 => 48.0,
-            Self::Max64 => 64.0,
-        }
-    }
-
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Zero0 => "0pt 纯透无磨砂",
-            Self::Subtle2 => "2pt 极微折射",
-            Self::Subtle4 => "4pt 轻微雾面",
-            Self::Subtle8 => "8pt 经典微磨砂",
-            Self::Medium12 => "12pt 浅层高斯",
-            Self::Standard16 => "16pt 标准毛玻璃",
-            Self::Enhanced24 => "24pt 强磨砂",
-            Self::Heavy32 => "32pt 深度弥散",
-            Self::Ultra48 => "48pt 极深毛玻璃",
-            Self::Max64 => "64pt 全弥散上限",
-        }
-    }
-
-    #[must_use]
-    pub const fn short_label(self) -> &'static str {
-        match self {
-            Self::Zero0 => "0pt",
-            Self::Subtle2 => "2pt",
-            Self::Subtle4 => "4pt",
-            Self::Subtle8 => "8pt",
-            Self::Medium12 => "12pt",
-            Self::Standard16 => "16pt",
-            Self::Enhanced24 => "24pt",
-            Self::Heavy32 => "32pt",
-            Self::Ultra48 => "48pt",
-            Self::Max64 => "64pt",
-        }
-    }
-}
-
-/// Available colorful test pattern and atmospheric wallpapers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum WallpaperStyle {
-    /// 100% 透明穿透至 macOS 系统桌面
-    #[default]
-    DesktopTransparent,
-    AuroraMesh,
-    SunsetGaze,
-    TvColorBars,
-    TvSmpteSplit,
-    TvColorGrid,
-    PureWhite,
-    PureBlack,
-}
-
-impl WallpaperStyle {
-    pub const ALL: [Self; 8] = [
-        Self::DesktopTransparent,
-        Self::AuroraMesh,
-        Self::SunsetGaze,
-        Self::TvColorBars,
-        Self::TvSmpteSplit,
-        Self::TvColorGrid,
-        Self::PureWhite,
-        Self::PureBlack,
-    ];
-
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::DesktopTransparent => "🖥️ 系统壁纸",
-            Self::AuroraMesh => "极光",
-            Self::SunsetGaze => "日落",
-            Self::TvColorBars => "彩条",
-            Self::TvSmpteSplit => "SMPTE",
-            Self::TvColorGrid => "网格",
-            Self::PureWhite => "纯白",
-            Self::PureBlack => "纯黑",
-        }
-    }
-}
-
-#[inline]
-fn lerp_rgb(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    let t = t.clamp(0.0, 1.0);
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
-}
-
-/// Computes the unblurred base wallpaper RGB color at coordinate `(x, y)`.
-#[inline]
-fn sample_sharp_wallpaper(
-    style: WallpaperStyle,
-    x: f32,
-    y: f32,
-    bounds: Size,
-    wallpaper_buf: Option<&WallpaperBuffer>,
-) -> [f32; 3] {
-    const TV_BARS: [[f32; 3]; 8] = [
-        [1.0, 1.0, 1.0], // 0: 白
-        [1.0, 1.0, 0.0], // 1: 黄
-        [0.0, 1.0, 1.0], // 2: 青
-        [0.0, 1.0, 0.0], // 3: 绿
-        [1.0, 0.0, 1.0], // 4: 洋红
-        [1.0, 0.0, 0.0], // 5: 红
-        [0.0, 0.0, 1.0], // 6: 蓝
-        [0.0, 0.0, 0.0], // 7: 黑
-    ];
-
-    const TOP_SMPTE: [[f32; 3]; 7] = [
-        [1.0, 1.0, 1.0], // 白
-        [1.0, 1.0, 0.0], // 黄
-        [0.0, 1.0, 1.0], // 青
-        [0.0, 1.0, 0.0], // 绿
-        [1.0, 0.0, 1.0], // 洋红
-        [1.0, 0.0, 0.0], // 红
-        [0.0, 0.0, 1.0], // 蓝
-    ];
-
-    const BOT_SMPTE: [[f32; 3]; 8] = [
-        [0.0, 0.0, 1.0], // 蓝
-        [0.0, 0.0, 0.0], // 黑
-        [1.0, 0.0, 1.0], // 洋红
-        [0.0, 0.0, 0.0], // 黑
-        [0.0, 1.0, 1.0], // 青
-        [0.0, 0.0, 0.0], // 黑
-        [1.0, 1.0, 1.0], // 白
-        [0.0, 0.0, 0.0], // 黑
-    ];
-
-    const GRID_PALETTE: [[f32; 3]; 12] = [
-        [1.0, 0.2, 0.3], // Coral Red
-        [1.0, 0.6, 0.0], // Orange
-        [1.0, 0.9, 0.1], // Gold
-        [0.2, 0.8, 0.4], // Emerald
-        [0.0, 0.7, 0.9], // Cyan
-        [0.2, 0.4, 1.0], // Cobalt
-        [0.6, 0.2, 0.9], // Purple
-        [1.0, 0.3, 0.7], // Magenta
-        [0.1, 0.9, 0.8], // Mint
-        [0.9, 0.8, 0.2], // Yellow
-        [0.3, 0.2, 0.8], // Indigo
-        [0.9, 0.4, 0.2], // Rust
-    ];
-
-    match style {
-        WallpaperStyle::DesktopTransparent => {
-            if let Some(buf) = wallpaper_buf {
-                let u = (x / bounds.width.max(1.0)).clamp(0.0, 1.0);
-                let v = (y / bounds.height.max(1.0)).clamp(0.0, 1.0);
-                buf.sample_bilinear(u, v)
-            } else {
-                [0.12, 0.12, 0.14]
-            }
-        }
-        WallpaperStyle::AuroraMesh => {
-            let u = (x / bounds.width.max(1.0)).clamp(0.0, 1.0);
-            let v = (y / bounds.height.max(1.0)).clamp(0.0, 1.0);
-            let t = (u * 0.707 + v * 0.707).clamp(0.0, 1.0);
-            if t < 0.20 {
-                let f = t / 0.20;
-                lerp_rgb([0.12, 0.06, 0.38], [0.38, 0.10, 0.58], f)
-            } else if t < 0.44 {
-                let f = (t - 0.20) / 0.24;
-                lerp_rgb([0.38, 0.10, 0.58], [0.88, 0.16, 0.48], f)
-            } else if t < 0.68 {
-                let f = (t - 0.44) / 0.24;
-                lerp_rgb([0.88, 0.16, 0.48], [0.98, 0.46, 0.15], f)
-            } else if t < 0.86 {
-                let f = (t - 0.68) / 0.18;
-                lerp_rgb([0.98, 0.46, 0.15], [0.95, 0.80, 0.22], f)
-            } else {
-                let f = (t - 0.86) / 0.14;
-                lerp_rgb([0.95, 0.80, 0.22], [0.12, 0.78, 0.82], f)
-            }
-        }
-        WallpaperStyle::SunsetGaze => {
-            let u = (x / bounds.width.max(1.0)).clamp(0.0, 1.0);
-            let v = (y / bounds.height.max(1.0)).clamp(0.0, 1.0);
-            let t = (u * 0.6 + v * 0.8).clamp(0.0, 1.0);
-            if t < 0.30 {
-                let f = t / 0.30;
-                lerp_rgb([0.06, 0.10, 0.25], [0.35, 0.12, 0.42], f)
-            } else if t < 0.60 {
-                let f = (t - 0.30) / 0.30;
-                lerp_rgb([0.35, 0.12, 0.42], [0.82, 0.22, 0.35], f)
-            } else if t < 0.82 {
-                let f = (t - 0.60) / 0.22;
-                lerp_rgb([0.82, 0.22, 0.35], [0.96, 0.52, 0.18], f)
-            } else {
-                let f = (t - 0.82) / 0.18;
-                lerp_rgb([0.96, 0.52, 0.18], [1.0, 0.82, 0.45], f)
-            }
-        }
-        WallpaperStyle::TvColorBars => {
-            let n = 8.0;
-            let bar_w = bounds.width / n;
-            let idx = ((x / bar_w).floor() as usize).min(7);
-            TV_BARS[idx]
-        }
-        WallpaperStyle::TvSmpteSplit => {
-            let top_h = bounds.height * 0.70;
-            if y < top_h {
-                let n = 7.0;
-                let bar_w = bounds.width / n;
-                let idx = ((x / bar_w).floor() as usize).min(6);
-                TOP_SMPTE[idx]
-            } else {
-                let n = 8.0;
-                let bar_w = bounds.width / n;
-                let idx = ((x / bar_w).floor() as usize).min(7);
-                BOT_SMPTE[idx]
-            }
-        }
-        WallpaperStyle::TvColorGrid => {
-            let cols = 4.0;
-            let rows = 3.0;
-            let cell_w = bounds.width / cols;
-            let cell_h = bounds.height / rows;
-            let c = ((x / cell_w).floor() as usize).min(3);
-            let r = ((y / cell_h).floor() as usize).min(2);
-            let idx = (r * 4 + c) % 12;
-            GRID_PALETTE[idx]
-        }
-        WallpaperStyle::PureWhite => [1.0, 1.0, 1.0],
-        WallpaperStyle::PureBlack => [0.0, 0.0, 0.0],
-    }
-}
-
-/// Performs a true 2D Separable Gaussian Convolution on an RGB float buffer.
-///
-/// Executes two 1D passes (Horizontal then Vertical), with time complexity O(2 * K * W * H),
-/// completely eliminating high-frequency textures (pebbles, foam, sharp edges)
-/// in strict accordance with physical light diffusion.
-pub fn perform_separable_gaussian_blur(
-    src: &[[f32; 3]],
-    w: usize,
-    h: usize,
-    radius: f32,
-) -> Vec<[f32; 3]> {
-    if radius <= 0.5 {
-        return src.to_vec();
-    }
-    let sigma = (radius * 1.25).max(0.5);
-    let kernel_radius = ((sigma * 2.5).ceil() as usize).clamp(1, 36);
-
-    let mut weights = Vec::with_capacity(kernel_radius * 2 + 1);
-    let two_sigma_sq = 2.0 * sigma * sigma;
-    let mut sum = 0.0f32;
-    for k in -(kernel_radius as isize)..=(kernel_radius as isize) {
-        let weight = (-(k as f32 * k as f32) / two_sigma_sq).exp();
-        weights.push(weight);
-        sum += weight;
-    }
-    let inv_sum = 1.0 / sum;
-    for w_val in &mut weights {
-        *w_val *= inv_sum;
-    }
-
-    // Pass 1: Horizontal 1D convolution (src -> temp)
-    let mut temp = vec![[0.0f32; 3]; w * h];
-    for y in 0..h {
-        let row_offset = y * w;
-        for x in 0..w {
-            let mut r = 0.0f32;
-            let mut g = 0.0f32;
-            let mut b = 0.0f32;
-            for (i, &k_w) in weights.iter().enumerate() {
-                let offset = i as isize - kernel_radius as isize;
-                let sample_x = (x as isize + offset).clamp(0, (w - 1) as isize) as usize;
-                let p = src[row_offset + sample_x];
-                r += p[0] * k_w;
-                g += p[1] * k_w;
-                b += p[2] * k_w;
-            }
-            temp[row_offset + x] = [r, g, b];
-        }
-    }
-
-    // Pass 2: Vertical 1D convolution (temp -> dst)
-    let mut dst = vec![[0.0f32; 3]; w * h];
-    for y in 0..h {
-        for x in 0..w {
-            let mut r = 0.0f32;
-            let mut g = 0.0f32;
-            let mut b = 0.0f32;
-            for (i, &k_w) in weights.iter().enumerate() {
-                let offset = i as isize - kernel_radius as isize;
-                let sample_y = (y as isize + offset).clamp(0, (h - 1) as isize) as usize;
-                let p = temp[sample_y * w + x];
-                r += p[0] * k_w;
-                g += p[1] * k_w;
-                b += p[2] * k_w;
-            }
-            dst[y * w + x] = [r, g, b];
-        }
-    }
-
-    dst
-}
-
-/// Generates a physical 2D frosted backdrop plate texture slice.
-///
-/// Features:
-/// 1. True 2D separable Gaussian convolution with edge bleeding padding;
-/// 2. Apple Vibrancy color enhancement (saturation boost & luma lift);
-/// 3. IGN anti-banding dithering;
-/// 4. Analytical Squircle sub-pixel anti-aliased alpha mask.
-pub fn generate_frosted_plate_texture(
-    style: WallpaperStyle,
-    rect: Rectangle,
-    window_size: Size,
-    blur_radius: f32,
-    corner_radius: f32,
-    is_dark: bool,
-    wallpaper_buf: Option<&WallpaperBuffer>,
-) -> iced::widget::image::Handle {
-    let w = (rect.width.round() as usize).max(1);
-    let h = (rect.height.round() as usize).max(1);
-
-    let blurred_rgb = if blur_radius <= 0.5 {
-        // 0pt: Sharp exact crop without any blur
-        let mut raw_rgb = Vec::with_capacity(w * h);
-        for iy in 0..h {
-            let wy = rect.y + (iy as f32 + 0.5);
-            for ix in 0..w {
-                let wx = rect.x + (ix as f32 + 0.5);
-                let c = sample_sharp_wallpaper(style, wx, wy, window_size, wallpaper_buf);
-                raw_rgb.push(c);
-            }
-        }
-        raw_rgb
-    } else {
-        // 2pt ~ 64pt: True 2D Gaussian convolution with edge bleeding padding
-        let sigma = (blur_radius * 1.25).max(0.5);
-        let kernel_radius = ((sigma * 2.5).ceil() as usize).clamp(1, 36);
-        let p = kernel_radius;
-        let ext_w = w + 2 * p;
-        let ext_h = h + 2 * p;
-
-        let mut ext_raw = Vec::with_capacity(ext_w * ext_h);
-        for iy in 0..ext_h {
-            let wy = (rect.y - p as f32 + (iy as f32 + 0.5)).clamp(0.0, window_size.height);
-            for ix in 0..ext_w {
-                let wx = (rect.x - p as f32 + (ix as f32 + 0.5)).clamp(0.0, window_size.width);
-                let c = sample_sharp_wallpaper(style, wx, wy, window_size, wallpaper_buf);
-                ext_raw.push(c);
-            }
-        }
-
-        let ext_blurred = perform_separable_gaussian_blur(&ext_raw, ext_w, ext_h, blur_radius);
-
-        // Crop back central w * h
-        let mut cropped = Vec::with_capacity(w * h);
-        for iy in 0..h {
-            let row_offset = (iy + p) * ext_w;
-            for ix in 0..w {
-                cropped.push(ext_blurred[row_offset + (ix + p)]);
-            }
-        }
-        cropped
-    };
-
-    // Apply Apple Vibrancy color lift & IGN anti-banding dither & Analytical Squircle AA Mask
-    let vibrancy = VibrancyConfig {
-        saturation_boost: if is_dark { 1.25 } else { 1.30 },
-        luma_lift: if is_dark { 1.02 } else { 1.05 },
-        luma_bias: if is_dark { 0.005 } else { 0.012 },
-        ..Default::default()
-    };
-
-    let mut rgba_bytes = vec![0u8; w * h * 4];
-    for iy in 0..h {
-        let py = iy as f32 + 0.5;
-        let wy = rect.y + py;
-        for ix in 0..w {
-            let px = ix as f32 + 0.5;
-            let wx = rect.x + px;
-            let idx = iy * w + ix;
-
-            let c = blurred_rgb[idx];
-            let vibrant = vibrancy.apply(c);
-            let dither = ign_dither_offset(wx, wy);
-
-            let is_capsule = (corner_radius - h as f32 * 0.5).abs() < 1.0;
-            let smoothing = if is_capsule { 0.0 } else { APPLE_CORNER_SMOOTHING };
-            let p = SquirclePoint::new(px - w as f32 * 0.5, py - h as f32 * 0.5);
-            let half = SquirclePoint::new(w as f32 * 0.5, h as f32 * 0.5);
-            let alpha = squircle_alpha(p, half, corner_radius, smoothing);
-
-            let out_idx = idx * 4;
-            rgba_bytes[out_idx] = ((vibrant[0] + dither).clamp(0.0, 1.0) * 255.0).round() as u8;
-            rgba_bytes[out_idx + 1] = ((vibrant[1] + dither).clamp(0.0, 1.0) * 255.0).round() as u8;
-            rgba_bytes[out_idx + 2] = ((vibrant[2] + dither).clamp(0.0, 1.0) * 255.0).round() as u8;
-            rgba_bytes[out_idx + 3] = (alpha * 255.0).round() as u8;
-        }
-    }
-
-    iced::widget::image::Handle::from_rgba(w as u32, h as u32, rgba_bytes)
-}
-
-/// Application icons featured on the frosted Dock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DockApp {
-    Finder,
-    Safari,
-    Messages,
-    Mail,
-    Music,
-    Photos,
-    Terminal,
-    Settings,
-    Trash,
-}
-
-impl DockApp {
-    pub const ALL: [Self; 9] = [
-        Self::Finder,
-        Self::Safari,
-        Self::Messages,
-        Self::Mail,
-        Self::Music,
-        Self::Photos,
-        Self::Terminal,
-        Self::Settings,
-        Self::Trash,
-    ];
-
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Finder => "访达 (Finder)",
-            Self::Safari => "Safari 浏览器",
-            Self::Messages => "信息 (Messages)",
-            Self::Mail => "邮件 (Mail)",
-            Self::Music => "音乐 (Music)",
-            Self::Photos => "照片 (Photos)",
-            Self::Terminal => "终端 (Terminal)",
-            Self::Settings => "系统设置 (Settings)",
-            Self::Trash => "废纸篓 (Trash)",
-        }
-    }
-
-    #[must_use]
-    pub const fn primary_color(self) -> Color {
-        match self {
-            Self::Finder => Color::from_rgb(0.16, 0.52, 0.95),
-            Self::Safari => Color::from_rgb(0.08, 0.58, 0.98),
-            Self::Messages => Color::from_rgb(0.20, 0.80, 0.38),
-            Self::Mail => Color::from_rgb(0.12, 0.65, 0.95),
-            Self::Music => Color::from_rgb(0.96, 0.20, 0.36),
-            Self::Photos => Color::from_rgb(0.96, 0.96, 0.98),
-            Self::Terminal => Color::from_rgb(0.12, 0.13, 0.15),
-            Self::Settings => Color::from_rgb(0.55, 0.57, 0.62),
-            Self::Trash => Color::from_rgb(0.45, 0.47, 0.52),
-        }
-    }
-
-    #[must_use]
-    pub const fn gradient_colors(self) -> (Color, Color) {
-        match self {
-            Self::Finder => (Color::from_rgb(0.24, 0.65, 0.98), Color::from_rgb(0.10, 0.42, 0.88)),
-            Self::Safari => (Color::from_rgb(0.18, 0.70, 0.98), Color::from_rgb(0.06, 0.45, 0.92)),
-            Self::Messages => {
-                (Color::from_rgb(0.34, 0.86, 0.42), Color::from_rgb(0.15, 0.72, 0.28))
-            }
-            Self::Mail => (Color::from_rgb(0.22, 0.72, 0.98), Color::from_rgb(0.06, 0.52, 0.92)),
-            Self::Music => (Color::from_rgb(0.98, 0.26, 0.42), Color::from_rgb(0.90, 0.12, 0.28)),
-            Self::Photos => (Color::from_rgb(1.0, 1.0, 1.0), Color::from_rgb(0.92, 0.93, 0.96)),
-            Self::Terminal => {
-                (Color::from_rgb(0.20, 0.21, 0.24), Color::from_rgb(0.08, 0.08, 0.10))
-            }
-            Self::Settings => {
-                (Color::from_rgb(0.70, 0.72, 0.76), Color::from_rgb(0.48, 0.50, 0.55))
-            }
-            Self::Trash => (Color::from_rgb(0.56, 0.58, 0.62), Color::from_rgb(0.38, 0.40, 0.45)),
-        }
-    }
-
-    /// Returns the authentic macOS on-disk application bundle path for Scheme A.
-    #[must_use]
-    pub const fn system_app_path(self) -> &'static str {
-        match self {
-            Self::Finder => "/System/Library/CoreServices/Finder.app",
-            Self::Safari => "/Applications/Safari.app",
-            Self::Messages => "/System/Applications/Messages.app",
-            Self::Mail => "/System/Applications/Mail.app",
-            Self::Music => "/System/Applications/Music.app",
-            Self::Photos => "/System/Applications/Photos.app",
-            Self::Terminal => "/System/Applications/Utilities/Terminal.app",
-            Self::Settings => "/System/Applications/System Settings.app",
-            Self::Trash => "named:NSTrashEmpty",
-        }
-    }
-}
-
-/// Unified, mathematically guaranteed layout geometry for the entire stage.
-#[derive(Debug, Clone, Copy)]
-pub struct LayoutMetrics {
-    pub window_size: Size,
-    pub header_h: f32,
-    pub status_h: f32,
-    pub search_rect: Rectangle,
-    pub dock_rect: Rectangle,
-    pub dock_radius: f32,
-    pub base_icon_size: f32,
-    pub icon_radius: f32,
-    pub icon_gap: f32,
-    pub dock_padding: f32,
-    pub icon_rects: [Rectangle; 9],
-}
-
-impl LayoutMetrics {
-    #[must_use]
-    pub fn new(window_size: Size, hovered_app: Option<DockApp>) -> Self {
-        let header_h = 44.0f32;
-        let status_h = 28.0f32;
-
-        // Search Bar Capsule (Centered in top portion of stage)
-        let search_w = 420.0f32.min(window_size.width - 60.0);
-        let search_h = 42.0f32;
-        let search_rect = Rectangle {
-            x: (window_size.width - search_w) * 0.5,
-            y: header_h + 20.0,
-            width: search_w,
-            height: search_h,
-        };
-
-        // --- Concentric Geometric Proportion System (SSOT: bmol_designs::dock_metrics) ---
-        let base_icon_size = dock_metrics::BASE_ICON_SIZE;
-        let icon_radius = dock_metrics::icon_corner_radius(base_icon_size);
-        let icon_gap = dock_metrics::icon_gap(base_icon_size);
-        let dock_padding = dock_metrics::dock_padding(base_icon_size);
-
-        let dock_radius = dock_metrics::concentric_dock_radius(icon_radius, dock_padding);
-        let dock_h = dock_metrics::dock_height(base_icon_size);
-        let dock_w = dock_metrics::dock_width(DockApp::ALL.len(), base_icon_size)
-            .min(window_size.width - 40.0);
-
-        let dock_y = (window_size.height - status_h - 16.0 - dock_h).max(header_h + 120.0);
-        let dock_x = (window_size.width - dock_w) * 0.5;
-        let dock_rect = Rectangle { x: dock_x, y: dock_y, width: dock_w, height: dock_h };
-
-        // 3. Symmetrically Padded 9 Icon Squircles
-        let start_x = dock_x + dock_padding;
-        let base_y = dock_y + dock_padding;
-
-        let mut icon_rects = [Rectangle::default(); 9];
-        for (i, app) in DockApp::ALL.iter().enumerate() {
-            let is_hovered = hovered_app == Some(*app);
-            let size = if is_hovered { 46.0 } else { base_icon_size };
-            let offset_x = (size - base_icon_size) * 0.5;
-            let offset_y = if is_hovered { 6.0 } else { 0.0 };
-
-            let x = start_x + i as f32 * (base_icon_size + icon_gap) - offset_x;
-            let y = base_y - offset_y;
-
-            icon_rects[i] = Rectangle { x, y, width: size, height: size };
-        }
-
-        Self {
-            window_size,
-            header_h,
-            status_h,
-            search_rect,
-            dock_rect,
-            dock_radius,
-            base_icon_size,
-            icon_radius,
-            icon_gap,
-            dock_padding,
-            icon_rects,
-        }
-    }
-}
+use liquid_glass::dock::{
+    BlurPreset, DockApp, LayoutMetrics, PhysicalPlateConfig, WallpaperBuffer, WallpaperStyle,
+    build_squircle_path, draw_apple_icon, draw_elevation_shadow, generate_bezier_preview,
+    generate_frosted_plate_texture, generate_physical_dock_plate_texture, load_or_create_wallpaper,
+    load_real_app_icons, sample_sharp_wallpaper,
+};
 
 /// Context menu target type for right-clicks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1006,6 +133,19 @@ pub enum Message {
     TrafficLights(TrafficLightsEvent),
     SetWallpaper(WallpaperStyle),
     SetBlurPreset(BlurPreset),
+    SetClarity(f32),
+    SetAmount(f32),
+    SetMilkiness(f32),
+    SetHighlightIntensity(f32),
+    SetDockRadius(f32),
+    SetCornerSmoothing(f32),
+    ApplyIconPaddingPreset,
+    SetP1(f32),
+    SetP2(f32),
+    SetP3(f32),
+    SetWidthX(f32),
+    SetHeightY(f32),
+    SetCurvePreset(f32, f32, f32),
     ToggleTheme,
     CycleTransparency,
     SetTransparency(GlassTransparency),
@@ -1068,7 +208,14 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Wallpa
 
         // 1. Draw Base Wallpaper (Presets clipped cleanly to window squircle)
         match self.style {
-            WallpaperStyle::DesktopTransparent => {}
+            WallpaperStyle::DesktopTransparent => {
+                if let Some(buf) = &self.system_wallpaper {
+                    frame.draw_image(
+                        Rectangle::new(Point::ORIGIN, bounds.size()),
+                        iced::widget::canvas::Image::new(buf.iced_handle()),
+                    );
+                }
+            }
             WallpaperStyle::AuroraMesh => {
                 let grad = Linear::new(Point::ORIGIN, Point::new(bounds.width, bounds.height))
                     .add_stop(0.0, Color::from_rgb(0.12, 0.06, 0.38))
@@ -1202,10 +349,12 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for Wallpa
 /// Renders application icons and active indicator dots in the glass foreground layer.
 struct IconsCanvas {
     metrics: LayoutMetrics,
+    dock_radius: f32,
     is_dark: bool,
     enable_highlight: bool,
     enable_dark_rim: bool,
     app_icons: [Option<iced::widget::image::Handle>; 9],
+    new_dock_physical_texture: Option<iced::widget::image::Handle>,
 }
 
 impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for IconsCanvas {
@@ -1222,7 +371,82 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for IconsC
         let mut frame = Frame::new(renderer, bounds.size());
         let d_rect = self.metrics.dock_rect;
 
-        // Render 9 Authentic macOS Squircle Icons & Interactive Mechanics
+        // 0. Render Upper NEW Physical Liquid Glass Dock Plate (0% fake strokes, 100% physical GPU optics)
+        let mut new_d_rect = self.metrics.new_dock_rect;
+        new_d_rect.y -= self.metrics.header_h;
+        draw_elevation_shadow(
+            &mut frame,
+            new_d_rect,
+            self.dock_radius,
+            self.is_dark,
+            GlassTransparency::Ultra,
+        );
+        if let Some(texture) = &self.new_dock_physical_texture {
+            frame.draw_image(new_d_rect, iced::widget::canvas::Image::new(texture.clone()));
+        }
+
+        // Render Upper NEW Physical Dock Icons (Pure clean Squircle icons, 0 wireframe stroke)
+        for (i, app) in DockApp::ALL.iter().enumerate() {
+            let mut i_rect = self.metrics.new_icon_rects[i];
+            i_rect.y -= self.metrics.header_h;
+            draw_apple_icon(
+                &mut frame,
+                *app,
+                i_rect,
+                self.is_dark,
+                false,
+                false,
+                self.app_icons[i].as_ref(),
+            );
+
+            let is_running = matches!(
+                app,
+                DockApp::Finder
+                    | DockApp::Safari
+                    | DockApp::Messages
+                    | DockApp::Mail
+                    | DockApp::Terminal
+                    | DockApp::Settings
+            );
+            if is_running {
+                let dot_cx = i_rect.x + i_rect.width * 0.5;
+                let dot_cy = (new_d_rect.y - self.metrics.header_h) + new_d_rect.height
+                    - (self.metrics.dock_padding * 0.35);
+                let (dot_color, halo_color) = if self.is_dark {
+                    (Color::from_rgba(1.0, 1.0, 1.0, 0.90), Color::from_rgba(1.0, 1.0, 1.0, 0.18))
+                } else {
+                    (
+                        Color::from_rgba(0.08, 0.09, 0.12, 0.65),
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.45),
+                    )
+                };
+                let dot_r = 2.0f32;
+                frame.fill(&Path::circle(Point::new(dot_cx, dot_cy), dot_r + 1.0), halo_color);
+                frame.fill(&Path::circle(Point::new(dot_cx, dot_cy), dot_r), dot_color);
+            }
+        }
+
+        // Label above NEW Physical Dock:
+        frame.fill_text(iced::widget::canvas::Text {
+            content:
+                "✨ 全新物理 Liquid Glass Dock（Apple G2 连续超椭圆 · 物理微缝 AO · 0 人工描边）"
+                    .into(),
+            position: Point::new(new_d_rect.x + 8.0, new_d_rect.y - self.metrics.header_h - 18.0),
+            color: Color::from_rgb(0.95, 0.95, 1.0),
+            size: iced::Pixels(11.0),
+            ..Default::default()
+        });
+
+        // Label above OLD Dock:
+        frame.fill_text(iced::widget::canvas::Text {
+            content: "原有 Dock 实现（传统机械圆角 · 2D 人工描边对比）".into(),
+            position: Point::new(d_rect.x + 8.0, d_rect.y - self.metrics.header_h - 18.0),
+            color: Color::from_rgba(1.0, 1.0, 1.0, 0.65),
+            size: iced::Pixels(11.0),
+            ..Default::default()
+        });
+
+        // Render Lower OLD Dock Icons (Original presentation with border for comparison)
         for (i, app) in DockApp::ALL.iter().enumerate() {
             let mut i_rect = self.metrics.icon_rects[i];
             i_rect.y -= self.metrics.header_h;
@@ -1267,716 +491,6 @@ impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for IconsC
     }
 }
 
-/// Fallback 2D Canvas program rendering wallpaper, simulated glass substrate, blur, highlights, and icons in a single pass.
-struct LiquidGlassCanvas {
-    style: WallpaperStyle,
-    metrics: LayoutMetrics,
-    show_grid: bool,
-    system_wallpaper: Option<Arc<WallpaperBuffer>>,
-    dock_frosted_texture: Option<iced::widget::image::Handle>,
-    search_frosted_texture: Option<iced::widget::image::Handle>,
-    enable_highlight: bool,
-    enable_dark_rim: bool,
-    is_dark: bool,
-    transparency: GlassTransparency,
-    floating_menu_rect: Option<Rectangle>,
-    app_icons: [Option<iced::widget::image::Handle>; 9],
-}
-
-impl<Message> canvas::Program<Message, Theme, iced_backend::Renderer> for LiquidGlassCanvas {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &Self::State,
-        renderer: &iced_backend::Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-
-        let window_squircle = build_squircle_path(
-            Rectangle::new(Point::ORIGIN, bounds.size()),
-            window_metrics::DEFAULT_CORNER_RADIUS,
-        );
-
-        // 1. Draw Base Wallpaper (Presets clipped cleanly to window squircle)
-        match self.style {
-            WallpaperStyle::DesktopTransparent => {}
-            WallpaperStyle::AuroraMesh => {
-                let grad = Linear::new(Point::ORIGIN, Point::new(bounds.width, bounds.height))
-                    .add_stop(0.0, Color::from_rgb(0.12, 0.06, 0.38))
-                    .add_stop(0.20, Color::from_rgb(0.38, 0.10, 0.58))
-                    .add_stop(0.44, Color::from_rgb(0.88, 0.16, 0.48))
-                    .add_stop(0.68, Color::from_rgb(0.98, 0.46, 0.15))
-                    .add_stop(0.86, Color::from_rgb(0.95, 0.80, 0.22))
-                    .add_stop(1.0, Color::from_rgb(0.12, 0.78, 0.82));
-                frame.fill(&window_squircle, grad);
-            }
-            WallpaperStyle::SunsetGaze => {
-                let grad = Linear::new(
-                    Point::new(bounds.width * 0.15, 0.0),
-                    Point::new(bounds.width * 0.85, bounds.height),
-                )
-                .add_stop(0.0, Color::from_rgb(0.06, 0.10, 0.25))
-                .add_stop(0.30, Color::from_rgb(0.35, 0.12, 0.42))
-                .add_stop(0.60, Color::from_rgb(0.82, 0.22, 0.35))
-                .add_stop(0.82, Color::from_rgb(0.96, 0.52, 0.18))
-                .add_stop(1.0, Color::from_rgb(1.0, 0.82, 0.45));
-                frame.fill(&window_squircle, grad);
-            }
-            WallpaperStyle::TvColorBars => {
-                let n = 8.0;
-                let bar_w = bounds.width / n;
-                for i in 0..8 {
-                    let c = sample_sharp_wallpaper(
-                        self.style,
-                        (i as f32 + 0.5) * bar_w,
-                        0.0,
-                        bounds.size(),
-                        self.system_wallpaper.as_deref(),
-                    );
-                    frame.fill_rectangle(
-                        Point::new(i as f32 * bar_w, 0.0),
-                        Size::new(bar_w + 1.0, bounds.height),
-                        Color::from_rgb(c[0], c[1], c[2]),
-                    );
-                }
-            }
-            WallpaperStyle::TvSmpteSplit => {
-                let top_h = bounds.height * 0.70;
-                let bot_h = bounds.height - top_h;
-
-                let n_top = 7.0;
-                let bar_w_top = bounds.width / n_top;
-                for i in 0..7 {
-                    let c = sample_sharp_wallpaper(
-                        self.style,
-                        (i as f32 + 0.5) * bar_w_top,
-                        10.0,
-                        bounds.size(),
-                        self.system_wallpaper.as_deref(),
-                    );
-                    frame.fill_rectangle(
-                        Point::new(i as f32 * bar_w_top, 0.0),
-                        Size::new(bar_w_top + 1.0, top_h),
-                        Color::from_rgb(c[0], c[1], c[2]),
-                    );
-                }
-
-                let n_bot = 8.0;
-                let bar_w_bot = bounds.width / n_bot;
-                for i in 0..8 {
-                    let c = sample_sharp_wallpaper(
-                        self.style,
-                        (i as f32 + 0.5) * bar_w_bot,
-                        top_h + 10.0,
-                        bounds.size(),
-                        self.system_wallpaper.as_deref(),
-                    );
-                    frame.fill_rectangle(
-                        Point::new(i as f32 * bar_w_bot, top_h),
-                        Size::new(bar_w_bot + 1.0, bot_h),
-                        Color::from_rgb(c[0], c[1], c[2]),
-                    );
-                }
-            }
-            WallpaperStyle::TvColorGrid => {
-                let cols = 4.0;
-                let rows = 3.0;
-                let cell_w = bounds.width / cols;
-                let cell_h = bounds.height / rows;
-                for r in 0..3 {
-                    for c in 0..4 {
-                        let sample = sample_sharp_wallpaper(
-                            self.style,
-                            (c as f32 + 0.5) * cell_w,
-                            (r as f32 + 0.5) * cell_h,
-                            bounds.size(),
-                            self.system_wallpaper.as_deref(),
-                        );
-                        frame.fill_rectangle(
-                            Point::new(c as f32 * cell_w, r as f32 * cell_h),
-                            Size::new(cell_w + 1.0, cell_h + 1.0),
-                            Color::from_rgb(sample[0], sample[1], sample[2]),
-                        );
-                    }
-                }
-            }
-            WallpaperStyle::PureWhite => {
-                frame.fill(&window_squircle, Color::WHITE);
-            }
-            WallpaperStyle::PureBlack => {
-                frame.fill(&window_squircle, Color::BLACK);
-            }
-        }
-
-        // 2. Alignment Calibration Grid Lines
-        if self.show_grid
-            && !matches!(self.style, WallpaperStyle::PureWhite | WallpaperStyle::PureBlack)
-        {
-            let grid_step = 36.0f32;
-            let line_color = Color::from_rgba(1.0, 1.0, 1.0, 0.16);
-            let mut x = grid_step;
-            while x < bounds.width {
-                frame.fill_rectangle(Point::new(x, 0.0), Size::new(1.0, bounds.height), line_color);
-                x += grid_step;
-            }
-            let mut y = grid_step;
-            while y < bounds.height {
-                frame.fill_rectangle(Point::new(0.0, y), Size::new(bounds.width, 1.0), line_color);
-                y += grid_step;
-            }
-        }
-
-        // 3. Render Frosted Search Bar Optics in ONE unified pass
-        let s_rect = self.metrics.search_rect;
-        draw_liquid_glass_plate(
-            &mut frame,
-            s_rect,
-            21.0,
-            self.is_dark,
-            self.transparency,
-            self.enable_highlight,
-            self.enable_dark_rim,
-            self.search_frosted_texture.as_ref(),
-        );
-
-        // 4. Render Main Frosted Dock Optics in ONE unified pass
-        let d_rect = self.metrics.dock_rect;
-        draw_liquid_glass_plate(
-            &mut frame,
-            d_rect,
-            self.metrics.dock_radius,
-            self.is_dark,
-            self.transparency,
-            self.enable_highlight,
-            self.enable_dark_rim,
-            self.dock_frosted_texture.as_ref(),
-        );
-
-        // 5. Render 9 Authentic macOS Squircle Icons & Interactive Mechanics
-        for (i, app) in DockApp::ALL.iter().enumerate() {
-            let i_rect = self.metrics.icon_rects[i];
-            draw_apple_icon(
-                &mut frame,
-                *app,
-                i_rect,
-                self.is_dark,
-                self.enable_highlight,
-                self.enable_dark_rim,
-                self.app_icons[i].as_ref(),
-            );
-
-            // macOS authentic active app indicator dot
-            let is_running = matches!(
-                app,
-                DockApp::Finder
-                    | DockApp::Safari
-                    | DockApp::Messages
-                    | DockApp::Mail
-                    | DockApp::Terminal
-                    | DockApp::Settings
-            );
-            if is_running {
-                let dot_cx = i_rect.x + i_rect.width * 0.5;
-                let dot_cy = d_rect.y + d_rect.height - (self.metrics.dock_padding * 0.35);
-                let (dot_color, halo_color) = if self.is_dark {
-                    (Color::from_rgba(1.0, 1.0, 1.0, 0.90), Color::from_rgba(1.0, 1.0, 1.0, 0.18))
-                } else {
-                    (
-                        Color::from_rgba(0.08, 0.09, 0.12, 0.65),
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.45),
-                    )
-                };
-                frame.fill(&Path::circle(Point::new(dot_cx, dot_cy), 2.75), halo_color);
-                frame.fill(&Path::circle(Point::new(dot_cx, dot_cy), 1.75), dot_color);
-            }
-        }
-
-        // 6. Render Floating Context Menu (if active)
-        if let Some(m_rect) = self.floating_menu_rect {
-            draw_liquid_glass_plate(
-                &mut frame,
-                m_rect,
-                12.0,
-                self.is_dark,
-                self.transparency,
-                self.enable_highlight,
-                self.enable_dark_rim,
-                None,
-            );
-        }
-
-        vec![frame.into_geometry()]
-    }
-}
-
-/// Renders a complete authentic Apple Liquid Glass Plate (frosted substrate, specular highlight, rim darkening)
-/// with 100% continuous G2 curvature, multi-tier Gaussian shadow, and physical optics.
-fn draw_liquid_glass_plate<R: iced::advanced::graphics::geometry::Renderer>(
-    frame: &mut Frame<R>,
-    rect: Rectangle,
-    radius: f32,
-    is_dark: bool,
-    transparency: GlassTransparency,
-    enable_highlight: bool,
-    enable_dark_rim: bool,
-    frosted_texture: Option<&iced::widget::image::Handle>,
-) {
-    // 1. Soft subtle ambient elevation drop shadow
-    draw_elevation_shadow(frame, rect, radius, is_dark, transparency);
-
-    // 2. Draw 2D Frosted Backdrop Texture Slice (if present)
-    if let Some(texture) = frosted_texture {
-        frame.draw_image(rect, iced::widget::canvas::Image::new(texture.clone()));
-    }
-
-    // 3. Base Glass Substrate (Calibrated Apple macOS authentic transparency & intrinsic silver/graphite tint)
-    let path = build_squircle_path(rect, radius);
-    let glass_grad = if is_dark {
-        let (base_alpha, edge_alpha) = match transparency {
-            GlassTransparency::Ultra => (0.35, 0.50),
-            GlassTransparency::High => (0.48, 0.62),
-            GlassTransparency::Frosted => (0.65, 0.78),
-        };
-        let tint = Color::from_rgb(0.095, 0.102, 0.125);
-        let edge_tint = Color::from_rgb(0.14, 0.16, 0.20);
-        Linear::new(Point::new(rect.x, rect.y), Point::new(rect.x, rect.y + rect.height))
-            .add_stop(0.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha))
-            .add_stop(0.15, Color::from_rgba(tint.r, tint.g, tint.b, base_alpha))
-            .add_stop(0.85, Color::from_rgba(tint.r, tint.g, tint.b, base_alpha))
-            .add_stop(
-                1.0,
-                Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha * 0.9),
-            )
-    } else {
-        let (base_alpha, edge_alpha) = match transparency {
-            GlassTransparency::Ultra => (0.35, 0.52),
-            GlassTransparency::High => (0.48, 0.65),
-            GlassTransparency::Frosted => (0.65, 0.80),
-        };
-        let tint = Color::from_rgb(0.96, 0.97, 0.99);
-        let edge_tint = Color::from_rgb(1.0, 1.0, 1.0);
-        Linear::new(Point::new(rect.x, rect.y), Point::new(rect.x, rect.y + rect.height))
-            .add_stop(0.0, Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha))
-            .add_stop(0.15, Color::from_rgba(tint.r, tint.g, tint.b, base_alpha))
-            .add_stop(0.85, Color::from_rgba(tint.r, tint.g, tint.b, base_alpha))
-            .add_stop(
-                1.0,
-                Color::from_rgba(edge_tint.r, edge_tint.g, edge_tint.b, edge_alpha * 0.85),
-            )
-    };
-    frame.fill(&path, glass_grad);
-
-    // 4. Apple Liquid Glass Optics & Subpixel-Aligned Boundary Bevel
-    // Seamlessly integrates top specular highlight + 0.5pt (1 device pixel on Retina HiDPI) Standard Black Hairline on lateral sides.
-    draw_liquid_glass_bevel(frame, rect, radius, is_dark, enable_highlight, enable_dark_rim);
-}
-
-/// Draws an authentic macOS Squircle App Icon with vector graphics and liquid glass bevel.
-fn draw_apple_icon<R: iced::advanced::graphics::geometry::Renderer>(
-    frame: &mut Frame<R>,
-    app: DockApp,
-    rect: Rectangle,
-    is_dark: bool,
-    enable_highlight: bool,
-    enable_dark_rim: bool,
-    icon_image: Option<&iced::widget::image::Handle>,
-) {
-    // 10:20:10 Curvature Ratio (SSOT: bmol_designs::dock_metrics)
-    let r = dock_metrics::icon_corner_radius(rect.width);
-
-    // 0. Soft physical contact drop shadow underneath the icon onto the dock shelf
-    let shadow_color_1 = Color::from_rgba(0.0, 0.0, 0.0, 0.16);
-    let shadow_color_2 = Color::from_rgba(0.0, 0.0, 0.0, 0.06);
-    fill_squircle(
-        frame,
-        Rectangle {
-            x: rect.x + 2.0,
-            y: rect.y + rect.height - 4.0,
-            width: rect.width - 4.0,
-            height: 4.0,
-        },
-        2.0,
-        shadow_color_1,
-    );
-    fill_squircle(
-        frame,
-        Rectangle { x: rect.x, y: rect.y + 2.0, width: rect.width, height: rect.height },
-        r,
-        shadow_color_2,
-    );
-
-    if let Some(handle) = icon_image {
-        // Authentic Scheme A: Real macOS system App icon processed through squircle-icon-rs
-        frame.draw_image(rect, canvas::Image::new(handle.clone()));
-    } else {
-        // Fallback: Standalone vector squircle plate & glyph illustration
-        let path = build_squircle_path(rect, r);
-        let (c_top, c_bot) = app.gradient_colors();
-        let grad =
-            Linear::new(Point::new(rect.x, rect.y), Point::new(rect.x, rect.y + rect.height))
-                .add_stop(0.0, c_top)
-                .add_stop(1.0, c_bot);
-        frame.fill(&path, grad);
-
-        let cx = rect.x + rect.width * 0.5;
-        let cy = rect.y + rect.height * 0.5;
-        let s = rect.width;
-
-        match app {
-            DockApp::Finder => {
-                // Authentic Finder split face dividing line & nose
-                let nose = Path::new(|b| {
-                    b.move_to(Point::new(cx, cy - s * 0.24));
-                    b.line_to(Point::new(cx, cy + s * 0.01));
-                    b.line_to(Point::new(cx + s * 0.05, cy + s * 0.05));
-                    b.line_to(Point::new(cx, cy + s * 0.07));
-                    b.line_to(Point::new(cx, cy + s * 0.12));
-                });
-                frame.stroke(
-                    &nose,
-                    Stroke::default().with_color(Color::WHITE).with_width(s * 0.045),
-                );
-
-                // Eyes
-                frame.fill(
-                    &Path::circle(Point::new(cx - s * 0.15, cy - s * 0.08), s * 0.045),
-                    Color::WHITE,
-                );
-                frame.fill(
-                    &Path::circle(Point::new(cx + s * 0.15, cy - s * 0.08), s * 0.045),
-                    Color::WHITE,
-                );
-
-                // Smile curve
-                let smile = Path::new(|b| {
-                    b.move_to(Point::new(cx - s * 0.18, cy + s * 0.10));
-                    b.bezier_curve_to(
-                        Point::new(cx - s * 0.10, cy + s * 0.24),
-                        Point::new(cx + s * 0.10, cy + s * 0.24),
-                        Point::new(cx + s * 0.18, cy + s * 0.10),
-                    );
-                });
-                frame.stroke(
-                    &smile,
-                    Stroke::default().with_color(Color::WHITE).with_width(s * 0.055),
-                );
-            }
-            DockApp::Safari => {
-                // Compass dial
-                let dial_r = s * 0.32;
-                frame.stroke(
-                    &Path::circle(Point::new(cx, cy), dial_r),
-                    Stroke::default()
-                        .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.60))
-                        .with_width(1.5),
-                );
-                // Needles
-                let needle_red = Path::new(|b| {
-                    b.move_to(Point::new(cx, cy - s * 0.28));
-                    b.line_to(Point::new(cx + s * 0.06, cy));
-                    b.line_to(Point::new(cx - s * 0.06, cy));
-                    b.close();
-                });
-                frame.fill(&needle_red, Color::from_rgb(0.95, 0.22, 0.22));
-                let needle_white = Path::new(|b| {
-                    b.move_to(Point::new(cx, cy + s * 0.28));
-                    b.line_to(Point::new(cx + s * 0.06, cy));
-                    b.line_to(Point::new(cx - s * 0.06, cy));
-                    b.close();
-                });
-                frame.fill(&needle_white, Color::WHITE);
-                frame.fill(
-                    &Path::circle(Point::new(cx, cy), s * 0.04),
-                    Color::from_rgb(0.85, 0.85, 0.85),
-                );
-            }
-            DockApp::Messages => {
-                let bubble = Path::new(|b| {
-                    b.arc(canvas::path::Arc {
-                        center: Point::new(cx, cy - s * 0.03),
-                        radius: s * 0.24,
-                        start_angle: Radians(0.0),
-                        end_angle: Radians(std::f32::consts::TAU),
-                    });
-                    b.move_to(Point::new(cx - s * 0.14, cy + s * 0.12));
-                    b.line_to(Point::new(cx - s * 0.22, cy + s * 0.25));
-                    b.line_to(Point::new(cx - s * 0.04, cy + s * 0.20));
-                    b.close();
-                });
-                frame.fill(&bubble, Color::WHITE);
-                frame.fill(
-                    &Path::circle(Point::new(cx - s * 0.10, cy - s * 0.03), s * 0.035),
-                    Color::from_rgb(0.20, 0.75, 0.35),
-                );
-                frame.fill(
-                    &Path::circle(Point::new(cx, cy - s * 0.03), s * 0.035),
-                    Color::from_rgb(0.20, 0.75, 0.35),
-                );
-                frame.fill(
-                    &Path::circle(Point::new(cx + s * 0.10, cy - s * 0.03), s * 0.035),
-                    Color::from_rgb(0.20, 0.75, 0.35),
-                );
-            }
-            DockApp::Mail => {
-                let env_rect = Rectangle {
-                    x: cx - s * 0.28,
-                    y: cy - s * 0.18,
-                    width: s * 0.56,
-                    height: s * 0.36,
-                };
-                fill_squircle(frame, env_rect, 4.0, Color::WHITE);
-                let flap = Path::new(|b| {
-                    b.move_to(Point::new(env_rect.x, env_rect.y));
-                    b.line_to(Point::new(cx, cy + s * 0.04));
-                    b.line_to(Point::new(env_rect.x + env_rect.width, env_rect.y));
-                });
-                frame.stroke(
-                    &flap,
-                    Stroke::default().with_color(Color::from_rgb(0.12, 0.55, 0.90)).with_width(2.0),
-                );
-            }
-            DockApp::Music => {
-                let note = Path::new(|b| {
-                    b.move_to(Point::new(cx - s * 0.10, cy + s * 0.10));
-                    b.line_to(Point::new(cx - s * 0.10, cy - s * 0.16));
-                    b.line_to(Point::new(cx + s * 0.14, cy - s * 0.22));
-                    b.line_to(Point::new(cx + s * 0.14, cy + s * 0.04));
-                });
-                frame.stroke(&note, Stroke::default().with_color(Color::WHITE).with_width(3.0));
-                frame.fill(
-                    &Path::circle(Point::new(cx - s * 0.14, cy + s * 0.12), s * 0.07),
-                    Color::WHITE,
-                );
-                frame.fill(
-                    &Path::circle(Point::new(cx + s * 0.10, cy + s * 0.06), s * 0.07),
-                    Color::WHITE,
-                );
-            }
-            DockApp::Photos => {
-                let petal_colors = [
-                    Color::from_rgb(0.95, 0.25, 0.25),
-                    Color::from_rgb(0.98, 0.55, 0.15),
-                    Color::from_rgb(0.98, 0.85, 0.10),
-                    Color::from_rgb(0.35, 0.82, 0.35),
-                    Color::from_rgb(0.15, 0.80, 0.85),
-                    Color::from_rgb(0.20, 0.55, 0.95),
-                    Color::from_rgb(0.65, 0.30, 0.90),
-                    Color::from_rgb(0.90, 0.25, 0.70),
-                ];
-                for (k, c) in petal_colors.iter().enumerate() {
-                    let ang = k as f32 * std::f32::consts::FRAC_PI_4;
-                    let px = cx + (ang.cos() * s * 0.12);
-                    let py = cy + (ang.sin() * s * 0.12);
-                    frame.fill(&Path::circle(Point::new(px, py), s * 0.09), *c);
-                }
-                frame.fill(&Path::circle(Point::new(cx, cy), s * 0.05), Color::WHITE);
-            }
-            DockApp::Terminal => {
-                let prompt = Path::new(|b| {
-                    b.move_to(Point::new(cx - s * 0.22, cy - s * 0.14));
-                    b.line_to(Point::new(cx - s * 0.08, cy - s * 0.04));
-                    b.line_to(Point::new(cx - s * 0.22, cy + s * 0.06));
-                });
-                frame.stroke(
-                    &prompt,
-                    Stroke::default().with_color(Color::from_rgb(0.25, 0.95, 0.45)).with_width(3.0),
-                );
-                frame.fill_rectangle(
-                    Point::new(cx, cy + s * 0.04),
-                    Size::new(s * 0.18, 3.0),
-                    Color::from_rgb(0.25, 0.95, 0.45),
-                );
-            }
-            DockApp::Settings => {
-                frame.stroke(
-                    &Path::circle(Point::new(cx, cy), s * 0.16),
-                    Stroke::default().with_color(Color::WHITE).with_width(s * 0.07),
-                );
-                for k in 0..6 {
-                    let ang = k as f32 * std::f32::consts::PI / 3.0;
-                    let tx = cx + ang.cos() * s * 0.22;
-                    let ty = cy + ang.sin() * s * 0.22;
-                    frame.fill(&Path::circle(Point::new(tx, ty), s * 0.045), Color::WHITE);
-                }
-                frame.fill(
-                    &Path::circle(Point::new(cx, cy), s * 0.07),
-                    Color::from_rgb(0.55, 0.57, 0.62),
-                );
-            }
-            DockApp::Trash => {
-                let rim_rect =
-                    Rectangle { x: cx - s * 0.22, y: cy - s * 0.18, width: s * 0.44, height: 4.0 };
-                fill_squircle(frame, rim_rect, 2.0, Color::WHITE);
-                let bin = Path::new(|b| {
-                    b.move_to(Point::new(cx - s * 0.18, cy - s * 0.14));
-                    b.line_to(Point::new(cx - s * 0.14, cy + s * 0.20));
-                    b.line_to(Point::new(cx + s * 0.14, cy + s * 0.20));
-                    b.line_to(Point::new(cx + s * 0.18, cy - s * 0.14));
-                });
-                frame.stroke(&bin, Stroke::default().with_color(Color::WHITE).with_width(2.5));
-                frame.fill_rectangle(
-                    Point::new(cx - s * 0.06, cy - s * 0.12),
-                    Size::new(2.0, s * 0.30),
-                    Color::WHITE,
-                );
-                frame.fill_rectangle(
-                    Point::new(cx + s * 0.06, cy - s * 0.12),
-                    Size::new(2.0, s * 0.30),
-                    Color::WHITE,
-                );
-            }
-        }
-    }
-
-    // 4. THE SIGNATURE APPLE LIQUID GLASS BEVEL & OPTICS RIGHT ON THE SQUIRCLE ICON!
-    draw_liquid_glass_bevel(frame, rect, r, is_dark, enable_highlight, enable_dark_rim);
-}
-
-/// Draws soft multi-tier Gaussian elevation drop shadow underneath floating glass panels.
-fn draw_elevation_shadow<R: iced::advanced::graphics::geometry::Renderer>(
-    frame: &mut Frame<R>,
-    rect: Rectangle,
-    radius: f32,
-    is_dark: bool,
-    _transparency: GlassTransparency,
-) {
-    let shadow_color = if is_dark {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.20)
-    } else {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.08)
-    };
-
-    // Single subtle, clean elevation drop shadow with matching squircle radius
-    let shadow_rect =
-        Rectangle { x: rect.x, y: rect.y + 4.0, width: rect.width, height: rect.height };
-    fill_squircle(frame, shadow_rect, radius, shadow_color);
-}
-
-/// Builds an authentic Apple continuous curvature squircle path (G2 continuity) for a rectangle.
-fn build_squircle_path(rect: Rectangle, radius: f32) -> Path {
-    let r = radius.min(rect.width * 0.5).min(rect.height * 0.5);
-    // When radius is half the height (e.g. search capsule), use circular ends (smoothing = 0.0)
-    // for true semicircular capsule geometry; otherwise use Apple continuous curvature G2 smoothing.
-    let is_capsule = (r - rect.height * 0.5).abs() < 1.0;
-    let smoothing = if is_capsule { 0.0 } else { APPLE_CORNER_SMOOTHING };
-    let params = SquircleParams::new(rect.width, rect.height, r).with_smoothing(smoothing);
-    let commands = squircle_path_commands(&params);
-
-    Path::new(move |b| {
-        for cmd in &commands {
-            match *cmd {
-                PathCommand::MoveTo(pt) => b.move_to(Point::new(rect.x + pt.x, rect.y + pt.y)),
-                PathCommand::LineTo(pt) => b.line_to(Point::new(rect.x + pt.x, rect.y + pt.y)),
-                PathCommand::CubicTo { c0, c1, to } => b.bezier_curve_to(
-                    Point::new(rect.x + c0.x, rect.y + c0.y),
-                    Point::new(rect.x + c1.x, rect.y + c1.y),
-                    Point::new(rect.x + to.x, rect.y + to.y),
-                ),
-                PathCommand::Close => b.close(),
-            }
-        }
-    })
-}
-
-/// Fills an authentic Apple squircle on the frame using our continuous curvature library.
-fn fill_squircle<R: iced::advanced::graphics::geometry::Renderer>(
-    frame: &mut Frame<R>,
-    rect: Rectangle,
-    radius: f32,
-    color: Color,
-) {
-    if rect.width <= 0.0 || rect.height <= 0.0 {
-        return;
-    }
-    let path = build_squircle_path(rect, radius);
-    frame.fill(&path, color);
-}
-
-/// Renders the signature Apple Liquid Glass Bevel Optics along the continuous squircle contour:
-/// 1. Unified 360° Outward Normal Calculation:
-///    - Traces every segment (straight lines and cubic Bézier corner approximations) in clockwise order.
-///    - Outward normal N = (nx, ny) is computed exactly for every infinitesimal segment.
-///    - Top specular: energy proportional to (-ny).powf(2.0), squeezing into razor-sharp arcs on corners!
-///    - Left & Right rim darkening: energy proportional to |nx|.powf(1.2), zero on top/bottom, strong on sides.
-///    - Bottom ground bounce: faint ambient bounce proportional to (ny).powf(2.2) * 0.28.
-/// 2. Two-tier Curvature Diffusion (The secret to "soft horizontal, sharp corner"):
-///    - Along the straight horizontal top edge (where curvature κ = 0 and nx = 0), a 2nd soft diffusion
-///      line (inset 1.2px) and a 3rd ambient line (inset 2.2px) create a rich 2.5px wide gradient glow.
-///    - When entering the squircle corner, the inner diffusion lines stop, leaving ONLY the single
-///      curvature-compressed outer specular arc, creating the exact sharp-corner vs. soft-horizontal contrast!
-fn draw_liquid_glass_bevel<R: iced::advanced::graphics::geometry::Renderer>(
-    frame: &mut Frame<R>,
-    rect: Rectangle,
-    radius: f32,
-    is_dark: bool,
-    enable_highlight: bool,
-    enable_dark_rim: bool,
-) {
-    let inset = 0.25f32;
-    let inner_rect = Rectangle {
-        x: rect.x + inset,
-        y: rect.y + inset,
-        width: (rect.width - inset * 2.0).max(0.0),
-        height: (rect.height - inset * 2.0).max(0.0),
-    };
-    let r = (radius - inset).max(1.0).min(inner_rect.width * 0.5).min(inner_rect.height * 0.5);
-    if r <= 0.5 || inner_rect.width <= 1.0 || inner_rect.height <= 1.0 {
-        return;
-    }
-
-    let is_capsule = (r - inner_rect.height * 0.5).abs() < 1.0;
-    let smoothing = if is_capsule { 0.0 } else { APPLE_CORNER_SMOOTHING };
-    let params =
-        SquircleParams::new(inner_rect.width, inner_rect.height, r).with_smoothing(smoothing);
-    let commands = squircle_path_commands(&params);
-    if commands.is_empty() {
-        return;
-    }
-
-    let full_path = Path::new(|builder| {
-        for cmd in &commands {
-            match *cmd {
-                PathCommand::MoveTo(p) => {
-                    builder.move_to(Point::new(inner_rect.x + p.x, inner_rect.y + p.y));
-                }
-                PathCommand::LineTo(p) => {
-                    builder.line_to(Point::new(inner_rect.x + p.x, inner_rect.y + p.y));
-                }
-                PathCommand::CubicTo { c0, c1, to } => builder.bezier_curve_to(
-                    Point::new(inner_rect.x + c0.x, inner_rect.y + c0.y),
-                    Point::new(inner_rect.x + c1.x, inner_rect.y + c1.y),
-                    Point::new(inner_rect.x + to.x, inner_rect.y + to.y),
-                ),
-                PathCommand::Close => builder.close(),
-            }
-        }
-    });
-
-    if enable_dark_rim {
-        let rim_alpha = if is_dark { 0.22 } else { 0.14 };
-        frame.stroke(
-            &full_path,
-            Stroke::default()
-                .with_color(Color::from_rgba(0.0, 0.0, 0.0, rim_alpha))
-                .with_width(0.5),
-        );
-    }
-
-    if enable_highlight {
-        let highlight_alpha = if is_dark { 0.40 } else { 0.60 };
-        frame.stroke(
-            &full_path,
-            Stroke::default()
-                .with_color(Color::from_rgba(1.0, 1.0, 1.0, highlight_alpha))
-                .with_width(0.75),
-        );
-    }
-}
-
 /// State of the Liquid Glass Optics & Dock Showcase.
 #[derive(Debug)]
 pub struct State {
@@ -1987,6 +501,17 @@ pub struct State {
     pub transparency: GlassTransparency,
     pub blur_preset: BlurPreset,
     pub blur_radius: f32,
+    pub clarity: f32,
+    pub p1: f32,
+    pub p2: f32,
+    pub p3: f32,
+    pub width_x: f32,
+    pub height_y: f32,
+    pub amount: f32,
+    pub milkiness: f32,
+    pub highlight_intensity: f32,
+    pub dock_radius: f32,
+    pub corner_smoothing: f32,
     pub pipeline_mode: PipelineMode,
     pub show_grid: bool,
     pub enable_highlight: bool,
@@ -2000,31 +525,10 @@ pub struct State {
     pub last_action: String,
     pub system_wallpaper: Arc<WallpaperBuffer>,
     pub dock_frosted_texture: Option<iced::widget::image::Handle>,
+    pub new_dock_physical_texture: Option<iced::widget::image::Handle>,
+    pub curve_handle: Option<iced::widget::image::Handle>,
     pub search_frosted_texture: Option<iced::widget::image::Handle>,
     pub app_icons: [Option<iced::widget::image::Handle>; 9],
-}
-
-/// Loads authentic macOS application icons directly from disk and processes
-/// them through `squircle-icon-rs` with 10:20:10 curvature and Apple HIG squircle plates.
-fn load_real_app_icons() -> [Option<iced::widget::image::Handle>; 9] {
-    let mut icons: [Option<iced::widget::image::Handle>; 9] = Default::default();
-    for (i, app) in DockApp::ALL.iter().enumerate() {
-        let path = app.system_app_path();
-        if let Some(png_bytes) = app_icon_png(path) {
-            if let Ok(pixmap) = squircle_icon_rs::rasterize_image_data(&png_bytes, 128, 128) {
-                let plated = squircle_icon_rs::apply_squircle_plate(
-                    &pixmap,
-                    squircle_icon_rs::PlateOptions::default(),
-                );
-                let plated_bm = squircle_icon_rs::IconBitmap::from_pixmap(plated);
-                let w = plated_bm.width();
-                let h = plated_bm.height();
-                let rgba = plated_bm.to_straight_rgba();
-                icons[i] = Some(iced::widget::image::Handle::from_rgba(w, h, rgba));
-            }
-        }
-    }
-    icons
 }
 
 impl Default for State {
@@ -2034,7 +538,7 @@ impl Default for State {
         let controller = WindowShellController::new(config, is_dark);
         let scheme = if is_dark { UiColorScheme::Dark } else { UiColorScheme::Light };
         let theme = UiTheme::new(scheme).iced_theme();
-        let system_wallpaper = load_or_create_wallpaper(1240, 820);
+        let system_wallpaper = load_or_create_wallpaper(2480, 1640);
         let app_icons = load_real_app_icons();
 
         let mut s = Self {
@@ -2045,6 +549,17 @@ impl Default for State {
             transparency: GlassTransparency::Ultra,
             blur_preset: BlurPreset::Standard16,
             blur_radius: BlurPreset::Standard16.radius(),
+            clarity: 0.03,            // 97% 清晰!
+            amount: -27.0,            // 扭曲量级 -27px
+            milkiness: 0.0,           // 0% 奶白 (纯透清澈)
+            highlight_intensity: 1.0, // 100% 物理高光打光
+            p1: 0.18,                 // P1 默认 0.18 肩部微凸张力
+            p2: 0.00,
+            p3: 0.00,
+            width_x: 13.0,          // 正好等价于图标边距 dock_padding (13px)
+            height_y: 13.0,         // 正好等价于图标边距 dock_padding (13px)
+            dock_radius: 23.0,      // 严格同心圆心法则: R = padding (13px) + r_icon (10px) = 23px
+            corner_smoothing: 0.20, // 80% 明确圆弧段 + 20% 边缘切线平滑过渡 (兼具圆弧感与收边圆滑)
             pipeline_mode: PipelineMode::GpuLiquidRs,
             show_grid: false,
             enable_highlight: true,
@@ -2058,6 +573,8 @@ impl Default for State {
             last_action: "就绪：GPU liquid-rs 自研物理光学引擎与硬件模糊已接入".to_string(),
             system_wallpaper,
             dock_frosted_texture: None,
+            new_dock_physical_texture: None,
+            curve_handle: Some(generate_bezier_preview(0.18, 0.00, 0.00)),
             search_frosted_texture: None,
             app_icons,
         };
@@ -2068,6 +585,31 @@ impl Default for State {
 
 impl State {
     pub fn regenerate_frosted_textures(&mut self) {
+        let metrics = LayoutMetrics::new(self.window_size, self.hovered_app);
+        let mut render_rect = metrics.new_dock_rect;
+        render_rect.y -= metrics.header_h;
+        self.curve_handle = Some(generate_bezier_preview(self.p1, self.p2, self.p3));
+        let config = PhysicalPlateConfig {
+            clarity: self.clarity,
+            amount: self.amount,
+            p1: self.p1,
+            p2: self.p2,
+            p3: self.p3,
+            width_x: self.width_x,
+            height_y: self.height_y,
+            milkiness: self.milkiness,
+            highlight_intensity: self.highlight_intensity,
+            corner_radius: self.dock_radius,
+            corner_smoothing: self.corner_smoothing,
+        };
+        self.new_dock_physical_texture = Some(generate_physical_dock_plate_texture(
+            self.wallpaper,
+            render_rect,
+            self.window_size,
+            config,
+            self.is_dark(),
+            Some(&self.system_wallpaper),
+        ));
         if self.pipeline_mode == PipelineMode::GpuLiquidRs {
             return;
         }
@@ -2212,7 +754,7 @@ fn build_wallpaper_context_menu(state: &State, scheme: UiColorScheme) -> Context
 
 pub fn boot() -> (State, Task<Message>) {
     let mut state = State::default();
-    state.wallpaper = WallpaperStyle::AuroraMesh;
+    state.wallpaper = WallpaperStyle::DesktopTransparent;
     for arg in std::env::args().skip(1) {
         if arg == "--transparent" || arg == "transparent" {
             state.wallpaper = WallpaperStyle::DesktopTransparent;
@@ -2299,11 +841,114 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.regenerate_frosted_textures();
             Task::none()
         }
+        Message::SetAmount(a) => {
+            state.amount = a;
+            state.regenerate_frosted_textures();
+            state.last_action = format!("调整折射扭曲量级: {:.0}px", a);
+            Task::none()
+        }
+        Message::SetMilkiness(m) => {
+            state.milkiness = m.clamp(0.0, 1.0);
+            state.regenerate_frosted_textures();
+            state.last_action = format!("调整材质奶白染色: {:.0}%", state.milkiness * 100.0);
+            Task::none()
+        }
+        Message::SetHighlightIntensity(h) => {
+            state.highlight_intensity = h.clamp(0.0, 1.0);
+            state.regenerate_frosted_textures();
+            state.last_action =
+                format!("调整物理打光强度: {:.0}%", state.highlight_intensity * 100.0);
+            Task::none()
+        }
+        Message::SetDockRadius(r) => {
+            state.dock_radius = r;
+            state.regenerate_frosted_textures();
+            state.last_action = format!("调整底座圆角半径: {:.0}px", r);
+            Task::none()
+        }
+        Message::SetCornerSmoothing(s) => {
+            state.corner_smoothing = s.clamp(0.0, 1.0);
+            state.regenerate_frosted_textures();
+            state.last_action = format!("调整圆角平滑过渡: {:.2}", s);
+            Task::none()
+        }
+        Message::ApplyIconPaddingPreset => {
+            state.amount = -27.0;
+            state.milkiness = 0.0;
+            state.highlight_intensity = 1.0;
+            state.dock_radius = 23.0;
+            state.corner_smoothing = 0.20;
+            state.p1 = 0.18;
+            state.p2 = 0.0;
+            state.p3 = 0.0;
+            state.width_x = 13.0;
+            state.height_y = 13.0;
+            state.clarity = 0.03;
+            state.regenerate_frosted_textures();
+            state.last_action =
+                "应用图标边距对齐物理参数 (-27px, 奶白0%, 打光100%, 平滑0.20, 13px, 97%清晰)"
+                    .to_string();
+            Task::none()
+        }
+        Message::SetClarity(c) => {
+            state.clarity = c.clamp(0.0, 1.0);
+            state.blur_radius = 14.0 + state.clarity * (65.0 - 14.0);
+            state.regenerate_frosted_textures();
+            state.last_action = format!(
+                "调整官方清晰度: {:.0}% (t = {:.2})",
+                (1.0 - state.clarity) * 100.0,
+                state.clarity
+            );
+            Task::none()
+        }
+        Message::SetP1(v) => {
+            state.p1 = v;
+            state.regenerate_frosted_textures();
+            state.last_action = format!("调整肩部凸度 P1: {:.2}", v);
+            Task::none()
+        }
+        Message::SetP2(v) => {
+            state.p2 = v;
+            state.regenerate_frosted_textures();
+            state.last_action = format!("调整腰身弧度 P2: {:.2}", v);
+            Task::none()
+        }
+        Message::SetP3(v) => {
+            state.p3 = v;
+            state.regenerate_frosted_textures();
+            state.last_action = format!("调整落底平滑 P3: {:.2}", v);
+            Task::none()
+        }
+        Message::SetWidthX(w) => {
+            state.width_x = w;
+            state.regenerate_frosted_textures();
+            state.last_action = format!("调整左右倒角宽度: {:.0}px", w);
+            Task::none()
+        }
+        Message::SetHeightY(h) => {
+            state.height_y = h;
+            state.regenerate_frosted_textures();
+            state.last_action = format!("调整上下倒角高度: {:.0}px", h);
+            Task::none()
+        }
+        Message::SetCurvePreset(p1, p2, p3) => {
+            state.p1 = p1;
+            state.p2 = p2;
+            state.p3 = p3;
+            state.regenerate_frosted_textures();
+            state.last_action = format!("应用曲线预设: P1={:.2}, P2={:.2}, P3={:.2}", p1, p2, p3);
+            Task::none()
+        }
         Message::SetBlurPreset(p) => {
             state.blur_preset = p;
             state.blur_radius = p.radius();
-            state.last_action = format!("切换模糊预设: {} (vibrancy-rs)", p.label());
+            state.clarity = (p.radius() / 64.0).clamp(0.0, 1.0);
             state.regenerate_frosted_textures();
+            state.last_action = format!(
+                "切换模糊预设: {} (清晰度: {:.0}%)",
+                p.label(),
+                (1.0 - state.clarity) * 100.0
+            );
             Task::none()
         }
         Message::ToggleTheme => {
@@ -2510,7 +1155,31 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
     let search_input = view_search_input(state, is_dark, metrics.search_rect);
 
     // Dock interactive touch areas
-    let dock_interactive = view_dock_hitboxes(state, metrics);
+    let dock_interactive = view_dock_hitboxes(state, &metrics);
+
+    // 1. Base Wallpaper Canvas directly targeting the source render layer
+    let wallpaper_canvas = Canvas::new(WallpaperCanvas {
+        style: state.wallpaper,
+        show_grid: state.show_grid,
+        system_wallpaper: Some(state.system_wallpaper.clone()),
+    })
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    // 2. Foreground Icons and Interactive Hitboxes on top of GPU Glass
+    let foreground_icons = liquid_glass::ui::components::glass_foreground(
+        Canvas::new(IconsCanvas {
+            metrics,
+            dock_radius: state.dock_radius,
+            is_dark,
+            enable_highlight: state.enable_highlight,
+            enable_dark_rim: state.enable_dark_rim,
+            app_icons: state.app_icons.clone(),
+            new_dock_physical_texture: state.new_dock_physical_texture.clone(),
+        })
+        .width(Length::Fill)
+        .height(Length::Fill),
+    );
 
     // -------------------------------------------------------------
     // Dual Pipeline Rendering Architecture (GPU liquid-rs vs 2D Canvas Fallback)
@@ -2519,23 +1188,16 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
         Element<'_, Message, Theme, iced_backend::Renderer>,
         Element<'_, Message, Theme, iced_backend::Renderer>,
     ) = if state.pipeline_mode == PipelineMode::GpuLiquidRs {
-        // 1. Base Wallpaper Canvas directly targeting the source render layer
-        let wallpaper_canvas = Canvas::new(WallpaperCanvas {
-            style: state.wallpaper,
-            show_grid: state.show_grid,
-            system_wallpaper: Some(state.system_wallpaper.clone()),
-        })
-        .width(Length::Fill)
-        .height(Length::Fill);
-
         let theme = UiTheme::new(state.scheme());
         let mut search_mat = theme.glass_material(GlassRole::SearchField);
         search_mat.blur.radius = state.blur_radius;
 
         let mut dock_mat = theme.glass_material(GlassRole::FloatingControl);
         dock_mat.blur.radius = state.blur_radius;
+        dock_mat.whiteness = 0.12;
+        dock_mat.refraction.thickness = 28.0;
+        dock_mat.refraction.strength = 0.85;
 
-        // 2. Search Bar GPU Glass Container
         let search_glass = container(
             GlassContainer::new(
                 GlassId(200),
@@ -2556,8 +1218,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
             ..Padding::ZERO
         });
 
-        // 3. Dock Bar GPU Glass Container
-        let dock_glass = container(
+        let old_dock_glass = container(
             GlassContainer::new(
                 GlassId(201),
                 Rect::new(
@@ -2568,7 +1229,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
                 ),
             )
             .shape(GlassShape::RoundedRect { radius: metrics.dock_radius })
-            .corner_curve(CornerCurve::continuous())
+            .corner_curve(CornerCurve::Circular)
             .material(dock_mat)
             .chrome(GlassChrome::transparent()),
         )
@@ -2578,22 +1239,9 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
             ..Padding::ZERO
         });
 
-        // 4. Foreground Icons and Interactive Hitboxes on top of GPU Glass
-        let foreground_icons = liquid_glass::ui::components::glass_foreground(
-            Canvas::new(IconsCanvas {
-                metrics,
-                is_dark,
-                enable_highlight: state.enable_highlight,
-                enable_dark_rim: state.enable_dark_rim,
-                app_icons: state.app_icons.clone(),
-            })
-            .width(Length::Fill)
-            .height(Length::Fill),
-        );
-
         let stage = iced::widget::Stack::new()
             .push(search_glass)
-            .push(dock_glass)
+            .push(old_dock_glass)
             .push(foreground_icons)
             .push(liquid_glass::ui::components::glass_foreground(search_input))
             .push(liquid_glass::ui::components::glass_foreground(dock_interactive))
@@ -2602,38 +1250,252 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
 
         (stage.into(), wallpaper_canvas.into())
     } else {
-        // Fallback 2D Canvas mode (CPU Gaussian blur / 2D Canvas simulation)
-        let glass_canvas = Canvas::new(LiquidGlassCanvas {
-            style: state.wallpaper,
-            metrics,
-            show_grid: state.show_grid,
-            system_wallpaper: Some(state.system_wallpaper.clone()),
-            dock_frosted_texture: state.dock_frosted_texture.clone(),
-            search_frosted_texture: state.search_frosted_texture.clone(),
-            enable_highlight: state.enable_highlight,
-            enable_dark_rim: state.enable_dark_rim,
-            is_dark,
-            transparency: state.transparency,
-            floating_menu_rect,
-            app_icons: state.app_icons.clone(),
-        })
-        .width(Length::Fill)
-        .height(Length::Fill);
-
         let stage = iced::widget::Stack::new()
-            .push(search_input)
-            .push(dock_interactive)
+            .push(foreground_icons)
+            .push(liquid_glass::ui::components::glass_foreground(search_input))
+            .push(liquid_glass::ui::components::glass_foreground(dock_interactive))
             .width(Length::Fill)
             .height(Length::Fill);
 
-        (stage.into(), glass_canvas.into())
+        (stage.into(), wallpaper_canvas.into())
     };
 
     let header = view_header(state, is_dark);
     let status_bar = view_status_bar(state, is_dark);
 
+    // Curve tuning capsule bar directly accessible right below header
+    let p1_col = column![
+        text(format!("P1 (肩部): {:.2}", state.p1))
+            .size(10)
+            .font(font::ui_font(Weight::Medium))
+            .color(if is_dark {
+                Color::from_rgb(0.9, 0.9, 0.95)
+            } else {
+                Color::from_rgb(0.1, 0.1, 0.2)
+            }),
+        iced::widget::slider(0.0..=2.0, state.p1, Message::SetP1)
+            .step(0.02)
+            .width(Length::Fixed(80.0)),
+    ]
+    .spacing(1);
+
+    let p2_col = column![
+        text(format!("P2 (腰身): {:.2}", state.p2))
+            .size(10)
+            .font(font::ui_font(Weight::Medium))
+            .color(if is_dark {
+                Color::from_rgb(0.9, 0.9, 0.95)
+            } else {
+                Color::from_rgb(0.1, 0.1, 0.2)
+            }),
+        iced::widget::slider(0.0..=2.0, state.p2, Message::SetP2)
+            .step(0.02)
+            .width(Length::Fixed(80.0)),
+    ]
+    .spacing(1);
+
+    let p3_col = column![
+        text(format!("P3 (落底): {:.2}", state.p3))
+            .size(10)
+            .font(font::ui_font(Weight::Medium))
+            .color(if is_dark {
+                Color::from_rgb(0.9, 0.9, 0.95)
+            } else {
+                Color::from_rgb(0.1, 0.1, 0.2)
+            }),
+        iced::widget::slider(0.0..=1.0, state.p3, Message::SetP3)
+            .step(0.02)
+            .width(Length::Fixed(70.0)),
+    ]
+    .spacing(1);
+
+    let wx_col = column![
+        text(format!("左右宽: {:.0}px", state.width_x))
+            .size(10)
+            .font(font::ui_font(Weight::Medium))
+            .color(if is_dark {
+                Color::from_rgb(0.9, 0.9, 0.95)
+            } else {
+                Color::from_rgb(0.1, 0.1, 0.2)
+            }),
+        iced::widget::slider(4.0..=50.0, state.width_x, Message::SetWidthX)
+            .step(1.0)
+            .width(Length::Fixed(70.0)),
+    ]
+    .spacing(1);
+
+    let hy_col = column![
+        text(format!("上下高: {:.0}px", state.height_y))
+            .size(10)
+            .font(font::ui_font(Weight::Medium))
+            .color(if is_dark {
+                Color::from_rgb(0.9, 0.9, 0.95)
+            } else {
+                Color::from_rgb(0.1, 0.1, 0.2)
+            }),
+        iced::widget::slider(4.0..=50.0, state.height_y, Message::SetHeightY)
+            .step(1.0)
+            .width(Length::Fixed(70.0)),
+    ]
+    .spacing(1);
+
+    let curve_presets = row![
+        button(text("图标边距对齐(13px)").size(10))
+            .padding(Padding { top: 2.0, right: 6.0, bottom: 2.0, left: 6.0 })
+            .on_press(Message::ApplyIconPaddingPreset),
+        button(text("标准水滴").size(10))
+            .padding(Padding { top: 2.0, right: 6.0, bottom: 2.0, left: 6.0 })
+            .on_press(Message::SetCurvePreset(1.00, 0.75, 0.30)),
+        button(text("饱满圆珠").size(10))
+            .padding(Padding { top: 2.0, right: 6.0, bottom: 2.0, left: 6.0 })
+            .on_press(Message::SetCurvePreset(1.25, 0.95, 0.40)),
+        button(text("平缓S角").size(10))
+            .padding(Padding { top: 2.0, right: 6.0, bottom: 2.0, left: 6.0 })
+            .on_press(Message::SetCurvePreset(0.80, 0.30, 0.05)),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
+
+    let amount_col = column![
+        text(format!("扭曲: {:.0}px", state.amount))
+            .size(10)
+            .font(font::ui_font(Weight::Medium))
+            .color(if is_dark {
+                Color::from_rgb(0.9, 0.9, 0.95)
+            } else {
+                Color::from_rgb(0.1, 0.1, 0.2)
+            }),
+        iced::widget::slider(-80.0..=0.0, state.amount, Message::SetAmount)
+            .step(1.0)
+            .width(Length::Fixed(60.0)),
+    ]
+    .spacing(1);
+
+    let milk_col = column![
+        text(format!("奶白: {:.0}%", state.milkiness * 100.0))
+            .size(10)
+            .font(font::ui_font(Weight::Medium))
+            .color(if is_dark {
+                Color::from_rgb(0.9, 0.9, 0.95)
+            } else {
+                Color::from_rgb(0.1, 0.1, 0.2)
+            }),
+        iced::widget::slider(0.0..=0.40, state.milkiness, Message::SetMilkiness)
+            .step(0.01)
+            .width(Length::Fixed(60.0)),
+    ]
+    .spacing(1);
+
+    let highlight_col = column![
+        text(format!("打光: {:.0}%", state.highlight_intensity * 100.0))
+            .size(10)
+            .font(font::ui_font(Weight::Medium))
+            .color(if is_dark {
+                Color::from_rgb(0.9, 0.9, 0.95)
+            } else {
+                Color::from_rgb(0.1, 0.1, 0.2)
+            }),
+        iced::widget::slider(0.0..=1.00, state.highlight_intensity, Message::SetHighlightIntensity)
+            .step(0.02)
+            .width(Length::Fixed(60.0)),
+    ]
+    .spacing(1);
+
+    let radius_col = column![
+        text(format!("圆角: {:.0}px", state.dock_radius))
+            .size(10)
+            .font(font::ui_font(Weight::Medium))
+            .color(if is_dark {
+                Color::from_rgb(0.9, 0.9, 0.95)
+            } else {
+                Color::from_rgb(0.1, 0.1, 0.2)
+            }),
+        iced::widget::slider(12.0..=33.0, state.dock_radius, Message::SetDockRadius)
+            .step(1.0)
+            .width(Length::Fixed(55.0)),
+    ]
+    .spacing(1);
+
+    let smoothing_col = column![
+        text(format!("平滑: {:.2}", state.corner_smoothing))
+            .size(10)
+            .font(font::ui_font(Weight::Medium))
+            .color(if is_dark {
+                Color::from_rgb(0.9, 0.9, 0.95)
+            } else {
+                Color::from_rgb(0.1, 0.1, 0.2)
+            }),
+        iced::widget::slider(0.0..=0.60, state.corner_smoothing, Message::SetCornerSmoothing)
+            .step(0.02)
+            .width(Length::Fixed(50.0)),
+    ]
+    .spacing(1);
+
+    let curve_tuning_pill = container(
+        row![
+            text("物理微调:").size(10).font(font::ui_font(Weight::Bold)).color(if is_dark {
+                Color::from_rgb(0.95, 0.85, 0.45)
+            } else {
+                Color::from_rgb(0.6, 0.4, 0.1)
+            }),
+            amount_col,
+            milk_col,
+            highlight_col,
+            radius_col,
+            smoothing_col,
+            p1_col,
+            p2_col,
+            p3_col,
+            wx_col,
+            hy_col,
+            curve_presets,
+            if let Some(handle) = &state.curve_handle {
+                container(
+                    row![
+                        text("剖面:").size(10).font(font::ui_font(Weight::Medium)).color(
+                            if is_dark {
+                                Color::from_rgb(0.7, 0.8, 0.9)
+                            } else {
+                                Color::from_rgb(0.2, 0.3, 0.4)
+                            }
+                        ),
+                        iced::widget::image(handle.clone())
+                            .width(Length::Fixed(140.0))
+                            .height(Length::Fixed(34.0)),
+                    ]
+                    .spacing(4)
+                    .align_y(Alignment::Center),
+                )
+            } else {
+                container(space().width(Length::Fixed(0.0)))
+            },
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    )
+    .padding(Padding { top: 3.0, right: 10.0, bottom: 3.0, left: 10.0 })
+    .style(move |_theme| container::Style {
+        background: Some(Background::Color(if is_dark {
+            Color::from_rgba(0.06, 0.08, 0.12, 0.65)
+        } else {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.65)
+        })),
+        border: Border::default().rounded(14.0).width(0.5).color(if is_dark {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.15)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.10)
+        }),
+        ..Default::default()
+    });
+
+    let top_section = column![
+        header,
+        container(curve_tuning_pill).padding(Padding { top: 2.0, left: 14.0, ..Padding::ZERO })
+    ]
+    .spacing(4.0);
+
     let page_content =
-        column![header, stage_area, status_bar].width(Length::Fill).height(Length::Fill);
+        column![top_section, stage_area, status_bar].width(Length::Fill).height(Length::Fill);
 
     let mut layers: Vec<Element<'_, Message, Theme, iced_backend::Renderer>> = Vec::new();
 
@@ -2807,6 +1669,45 @@ fn view_header(
         ..Default::default()
     });
 
+    // Apple Official Clarity Continuous Slider Pill (0% clearest t=0 <-> 100% blurriest t=1)
+    let clarity_pill = container(
+        row![
+            text(if state.clarity <= 0.03 {
+                "清晰度: 100% 极清纯透".to_string()
+            } else if state.clarity >= 0.97 {
+                "清晰度: 0% 浓郁深磨砂".to_string()
+            } else {
+                format!("清晰度: {:.0}%", (1.0 - state.clarity) * 100.0)
+            })
+            .size(11)
+            .font(font::ui_font(Weight::Semibold))
+            .color(if is_dark {
+                Color::from_rgb(0.95, 0.85, 0.45)
+            } else {
+                Color::from_rgb(0.70, 0.45, 0.10)
+            }),
+            iced::widget::slider(0.0..=1.0, state.clarity, Message::SetClarity)
+                .step(0.01)
+                .width(Length::Fixed(100.0)),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .padding(Padding { top: 2.0, right: 8.0, bottom: 2.0, left: 8.0 })
+    .style(move |_theme| container::Style {
+        background: Some(Background::Color(if is_dark {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.35)
+        } else {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.45)
+        })),
+        border: Border::default().rounded(14.0).width(0.5).color(if is_dark {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.16)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.10)
+        }),
+        ..Default::default()
+    });
+
     // Blur Presets Pill (vibrancy-rs Dual Kawase & Gaussian convolution)
     let blur_pill = container(
         row(BlurPreset::ALL.iter().map(|&p| {
@@ -2971,6 +1872,8 @@ fn view_header(
         space().width(Length::Fixed(4.0)),
         wallpaper_pill,
         space().width(Length::Fixed(4.0)),
+        clarity_pill,
+        space().width(Length::Fixed(4.0)),
         blur_pill,
         space().width(Length::Fixed(4.0)),
         transparency_btn,
@@ -3054,10 +1957,10 @@ fn view_search_input(
 }
 
 /// Builds interactive hitboxes over the dock app icons with hover tooltip cards.
-fn view_dock_hitboxes(
-    state: &State,
-    metrics: LayoutMetrics,
-) -> Element<'_, Message, Theme, iced_backend::Renderer> {
+fn view_dock_hitboxes<'a>(
+    state: &'a State,
+    metrics: &LayoutMetrics,
+) -> Element<'a, Message, Theme, iced_backend::Renderer> {
     let mut hitboxes = Vec::new();
 
     for (i, &app) in DockApp::ALL.iter().enumerate() {
@@ -3216,6 +2119,8 @@ fn main() -> iced::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use liquid_glass::dock::{create_procedural_redwood_buffer, perform_separable_gaussian_blur};
+    use vibrancy_rs::{MaterialKind, VibrancyAppearance};
 
     #[test]
     fn test_transparency_defaults_and_cycling() {
@@ -3545,12 +2450,12 @@ mod tests {
 
     #[test]
     fn test_scheme_a_squircle_icon_integration() {
-        let _state = State::default();
+        let state = State::default();
         #[cfg(target_os = "macos")]
         {
             // At least Finder and Safari should be resolved and processed via squircle-icon-rs
-            assert!(_state.app_icons[0].is_some(), "Finder icon should be loaded");
-            assert!(_state.app_icons[1].is_some(), "Safari icon should be loaded");
+            assert!(state.app_icons[0].is_some(), "Finder icon should be loaded");
+            assert!(state.app_icons[1].is_some(), "Safari icon should be loaded");
         }
     }
 
