@@ -22,7 +22,7 @@ iced = { version = "0.14.0", default-features = false, features = ["advanced", "
 image = { version = "0.25.10" }
 squircle-icon-rs = { git = "https://github.com/Erizeez/squircle-icon-rs", tag = "v0.1.14" }
 vibrancy-rs = { git = "https://github.com/Erizeez/vibrancy-rs", tag = "v0.1.1" }
-liquid-glass-ui = { git = "https://github.com/Erizeez/bmol-glass-ui", tag = "v0.1.4" }
+liquid-glass-ui = { git = "https://github.com/Erizeez/bmol-glass-ui", tag = "v0.1.5" }
 
 [lints]
 workspace = true

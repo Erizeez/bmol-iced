@@ -1993,8 +1993,8 @@ dependencies = [
 
 [[package]]
 name = "liquid-glass-ui"
-version = "0.1.4"
-source = "git+https://github.com/Erizeez/bmol-glass-ui?tag=v0.1.4#0cb936b122a219b571bce00c64b5a7f4ce927480"
+version = "0.1.5"
+source = "git+https://github.com/Erizeez/bmol-glass-ui?tag=v0.1.5#13497c6139b57ceb839c8f470d120dc74e0ab58f"
 dependencies = [
  "bmol-designs",
  "iced",
