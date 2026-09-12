@@ -9,11 +9,11 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-liquid-rs = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.3" }
-liquid-glass-animation = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.3" }
+liquid-rs = { git = "https://github.com/Erizeez/liquid-rs", branch = "main" }
+liquid-glass-animation = { git = "https://github.com/Erizeez/liquid-rs", branch = "main" }
 squircle-rs = { git = "https://github.com/Erizeez/squircle-rs", tag = "v0.1.2" }
-liquid-glass-render = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.3" }
-liquid-glass-scene = { git = "https://github.com/Erizeez/liquid-rs", tag = "v0.1.3" }
+liquid-glass-render = { git = "https://github.com/Erizeez/liquid-rs", branch = "main" }
+liquid-glass-scene = { git = "https://github.com/Erizeez/liquid-rs", branch = "main" }
 bmol-window-shell = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.8" }
 bmol-window-platform = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.8" }
 bmol-window-native = { git = "https://github.com/Erizeez/bmol-window-shell", tag = "v0.1.8" }
