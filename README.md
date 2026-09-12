@@ -50,7 +50,8 @@ cargo run -p liquid-glass-playground --bin liquid-glass-iced-demo
 
 ### 2. Window Controls & Traffic Lights Demo
 ```bash
-cargo run -p liquid-glass-playground --bin liquid-glass-window-controls-demo
+# the traffic-light laboratory lives in bmol-window-shell:
+#   cd ../bmol-window-shell && cargo run --example window_controls_demo
 ```
 
 ### 3. Shader Comparison Demo
