@@ -2487,7 +2487,7 @@ pub fn view(state: &State) -> Element<'_, Message, Theme, iced_backend::Renderer
     for (index, &id) in WINDOW_CONTROL_NATIVE_IDS.iter().enumerate() {
         iced_backend::set_window_control_scale(
             id,
-            state.controller.traffic_lights.press_springs[index].value(),
+            state.controller.traffic_lights.press_scale(index),
         );
     }
     iced_backend::set_window_control_group_progress(
@@ -2987,9 +2987,10 @@ fn view_header(
         44.0,
         header_row,
         Message::DragWindow,
-        Some(Message::TrafficLights(TrafficLightsEvent::Action(
-            bmol_window_shell::WindowControlAction::Zoom,
-        ))),
+        Some(Message::TrafficLights(TrafficLightsEvent::PressEnd {
+            index: 2,
+            committed: true,
+        })),
     )
 }
 

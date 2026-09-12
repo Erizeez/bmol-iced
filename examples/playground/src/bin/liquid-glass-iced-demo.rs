@@ -255,7 +255,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             for (index, &id) in WINDOW_CONTROL_NATIVE_IDS.iter().enumerate() {
                 iced_backend::set_window_control_scale(
                     id,
-                    state.controller.traffic_lights.press_springs[index].value(),
+                    state.controller.traffic_lights.press_scale(index),
                 );
             }
             iced_backend::set_window_control_group_progress(
